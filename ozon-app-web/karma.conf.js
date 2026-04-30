@@ -1,0 +1,43 @@
+module.exports = function (config) {
+  config.set({
+    basePath: '',
+    frameworks: ['jasmine', '@angular-devkit/build-angular'],
+    plugins: [
+      require('karma-jasmine'),
+      require('karma-chrome-launcher'),
+      require('karma-jasmine-html-reporter'),
+      require('karma-coverage'),
+      require('@angular-devkit/build-angular/plugins/karma')
+    ],
+    client: {
+      jasmine: {
+        random: false
+      },
+      clearContext: false
+    },
+    jasmineHtmlReporter: {
+      suppressAll: true
+    },
+    coverageReporter: {
+      dir: require('path').join(__dirname, './coverage/ozon-app-web'),
+      subdir: '.',
+      reporters: [
+        { type: 'html' },
+        { type: 'text-summary' }
+      ]
+    },
+    reporters: ['progress', 'kjhtml'],
+    hostname: '127.0.0.1',
+    listenAddress: '127.0.0.1',
+    port: 9876,
+    colors: true,
+    logLevel: config.LOG_INFO,
+    browserDisconnectTimeout: 120000,
+    browserNoActivityTimeout: 120000,
+    browserDisconnectTolerance: 2,
+    autoWatch: true,
+    browsers: ['Chrome'],
+    singleRun: false,
+    restartOnFileChange: true
+  });
+};

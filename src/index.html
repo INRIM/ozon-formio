@@ -1,0 +1,1471 @@
+<!doctype html>
+<html class="no-js">
+<head>
+    <meta charset="utf-8">
+    <title></title>
+    <meta name="viewport" content="width=device-width">
+
+    <script id="loader" type="text/template">
+
+    </script>
+    <script src="lib/flatpickr/flatpickr.min.js" inline></script>
+    <script src="lib/formiojs/formio.form.min.js" inline></script>
+    <script src="lib/seamless/seamless.child.min.js" inline></script>
+    <script src="lib/moment/min/moment-with-locales.min.js" inline></script>
+    <script src="lib/moment-timezone/builds/moment-timezone-with-data.min.js" inline></script>
+    <script src="runtime-config.js"></script>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="stylesheet" href="lib/bootstrap/css/bootstrap.min.css" inline/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-italia@2.16.0/dist/css/bootstrap-italia.min.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/tabulator-tables@6.3.1/dist/css/tabulator.min.css"/>
+    <script src="https://unpkg.com/tabulator-tables@6.3.1/dist/js/tabulator.min.js"></script>
+    <script type="text/javascript">
+        var query = {};
+        var parts = [];
+        var paths = [];
+        var src = '';
+        var runtimeConfig = window.__OZON_APP_CONFIG__ || {};
+        var ozonBackendUrl = query.backendurl || runtimeConfig.backendurl || 'http://localhost:8002';
+        var ozonBaseToken = query.basetocken || query.token || runtimeConfig.basetocken || '';
+        var ozonTokenHeader = query.tokenheader || query.TOKEN_HEADER || runtimeConfig.tokenheader || runtimeConfig.TOKEN_HEADER || 'Authorization';
+        var ozonTokenPrefix = query.tokenprefix || query.TOKEN_PREFIX || runtimeConfig.tokenprefix || runtimeConfig.TOKEN_PREFIX || '';
+        moment.locale("it");
+        if (moment.tz) {
+            moment.tz.setDefault('Europe/Rome');
+        }
+
+        var hashes = location.hash.substr(1).replace(/\?/g, '&').split("&");
+
+        // Search the location search for query parameters.
+        location.search.substring(1).split("&").forEach(function (item) {
+            parts = item.split('=');
+            if (parts.length > 1) {
+                query[parts[0]] = parts[1] && decodeURIComponent(parts[1]);
+            }
+        });
+
+        // Also search hashes.
+        hashes.forEach(function (item) {
+            var parts = item.split("=");
+            if (parts.length > 1) {
+                query[parts[0]] = parts[1] && decodeURIComponent(parts[1]);
+            } else if (item.indexOf('/') === 0) {
+                paths = item.substring(1).split('/');
+            }
+        });
+
+        ozonBackendUrl = query.backendurl || ozonBackendUrl;
+        ozonBaseToken = query.basetocken || query.token || ozonBaseToken;
+        ozonTokenHeader = query.tokenheader || query.TOKEN_HEADER || ozonTokenHeader;
+        ozonTokenPrefix = query.tokenprefix || query.TOKEN_PREFIX || ozonTokenPrefix;
+
+        var protocol = query.protocol || 'https';
+        var host = query.host || 'api.form.io';
+        var baseUrl = protocol + '://' + host;
+        Formio.setBaseUrl(baseUrl);
+
+        if (query.src) {
+            src = query.src;
+        }
+
+        // Allow them to provide SSO tokens to the form viewer.
+        if (query.token) {
+            localStorage.setItem('formioToken', query.token);
+            localStorage.removeItem('formioAppUser');
+            localStorage.removeItem('formioUser');
+        }
+
+        if (query.theme) {
+            var cssLink = '<link rel="stylesheet" href="lib/bootswatch/dist/';
+            cssLink += query.theme;
+            cssLink += '/bootstrap.min.css" />';
+            document.write(cssLink);
+        }
+    </script>
+    <link rel="stylesheet" href="lib/font-awesome/css/font-awesome.min.css" inline/>
+    <link rel="stylesheet" href="lib/flatpickr/flatpickr.min.css" inline/>
+    <link rel="stylesheet" href="lib/formiojs/formio.form.min.css" inline/>
+    <style type="text/css">
+        .page-break-after {
+
+            page-break-after: always;
+            break-after: page;
+        }
+
+        .page-break-before, .page-break {
+
+            page-break-before: always;
+            break-before: page;
+            margin-top: 10px;
+        }
+
+        .main {
+            margin-top: 10px;
+        }
+
+        .ozon-controls .form-label {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .ozon-controls .status {
+            min-height: 1.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .ozon-record-table {
+            border: 1px solid #d9e3f2;
+            border-radius: 6px;
+            min-height: 220px;
+            overflow: hidden;
+            background: #ffffff;
+        }
+
+        .ozon-record-meta {
+            min-height: 1.5rem;
+        }
+
+        .iframe.notheme {
+            background-color: transparent;
+        }
+
+        .iframe .main {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+        }
+
+        .iframe.hasheader .main {
+            margin-bottom: 55px;
+        }
+
+        .iframe .navbar .container {
+            margin: 0;
+            width: 100%;
+        }
+
+        .navbar .container .navbar-right {
+            margin-right: 0;
+        }
+
+        .navbar {
+            margin-bottom: 0px;
+        }
+
+        [ref="input"] {
+            white-space: pre-wrap;
+        }
+
+        /* Components where we want to allow auto page breaks inside,
+        because they could have a very long content or other components inside*/
+        .formio-component-container,
+        .formio-component-fieldset,
+        .formio-component-columns,
+        .formio-component-tabs,
+        .formio-component-table,
+        .formio-component-panel,
+        .formio-component-panel .card-body,
+        .formio-component-htmlelement,
+        .formio-component-textarea,
+        .formio-component.formio-component-datagrid {
+            page-break-inside: auto;
+            break-inside: auto !important;
+        }
+
+        .formio-component-panel .card {
+            display: block !important;
+            width: 100%;
+        }
+
+        .table {
+            table-layout: fixed;
+        }
+
+        .formio-component {
+            word-wrap: break-word;
+        }
+
+        .formio-component-panel .border {
+            border-bottom: none !important;
+        }
+
+        .formio-component.formio-component-datagrid tr {
+            page-break-inside: avoid;
+        }
+
+        .fa-spin-custom, .glyphicon-spin {
+            -webkit-animation: spin 1000ms infinite linear;
+            animation: spin 1000ms infinite linear;
+        }
+
+        input[type=radio]:checked {
+            filter: brightness(0.5);
+        }
+
+        @-webkit-keyframes spin {
+            0% {
+                -webkit-transform: rotate(0deg);
+                transform: rotate(0deg);
+            }
+            100% {
+                -webkit-transform: rotate(359deg);
+                transform: rotate(359deg);
+            }
+        }
+
+        @keyframes spin {
+            0% {
+                -webkit-transform: rotate(0deg);
+                transform: rotate(0deg);
+            }
+            100% {
+                -webkit-transform: rotate(359deg);
+                transform: rotate(359deg);
+            }
+        }
+    </style>
+    <style id="premiumStyles"></style>
+    <script id="premiumScript"></script>
+</head>
+<body>
+<script id="branding" type="text/template">
+    <div class="text-center text-muted mt-2 mb-2">Ozon Form Viewer</div>
+</script>
+<nav class="navbar navbar-expand-lg navbar-light bg-light d-print-block">
+    <div class="container-fluid">
+                <span class="navbar-brand mb-0 h1" id="form-title">
+                    <img src="assets/logo.png" style="display: inline-block; height: 1.3em;"/> Form Viewer
+                </span>
+    </div>
+</nav>
+<hr/>
+<h4 class="text-center text-muted">powered by <img src="assets/logo.png" style="height: 1.2em;"/>
+</h4>
+<div class="container-fluid ozon-controls">
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="row g-2 align-items-end">
+                <div class="col-md-5">
+                    <label class="form-label" for="backendUrlInput">Backend URL</label>
+                    <input id="backendUrlInput" type="text" class="form-control" placeholder="http://localhost:8002"/>
+                </div>
+                <div class="col-md-5">
+                    <label class="form-label" for="baseTokenInput">Token</label>
+                    <input id="baseTokenInput" type="password" class="form-control" placeholder="header: token"/>
+                </div>
+                <div class="col-md-2 d-grid">
+                    <button id="loadModelsBtn" type="button" class="btn btn-primary">Carica modelli</button>
+                </div>
+            </div>
+            <div class="row g-2 align-items-end mt-2">
+                <div class="col-md-3">
+                    <label class="form-label" for="modelSelect">Model</label>
+                    <select id="modelSelect" class="form-select">
+                        <option value="">Seleziona model</option>
+                    </select>
+                </div>
+                <div class="col-md-3 d-grid">
+                    <button id="loadSchemaBtn" type="button" class="btn btn-secondary">Leggi schema</button>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label" for="skipInput">Skip</label>
+                    <input id="skipInput" type="number" class="form-control" min="0" value="0"/>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label" for="limitInput">Limit</label>
+                    <input id="limitInput" type="number" class="form-control" min="1" value="20"/>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label" for="orderInput">Order</label>
+                    <input id="orderInput" type="text" class="form-control" value="rec_name asc"/>
+                </div>
+            </div>
+            <div class="row g-2 align-items-end mt-2">
+                <div class="col-md-10">
+                    <label class="form-label" for="queryInput">Query JSON</label>
+                    <input id="queryInput" type="text" class="form-control" value="{}"/>
+                </div>
+                <div class="col-md-2 d-grid">
+                    <button id="loadRecordsBtn" type="button" class="btn btn-secondary">Lista record</button>
+                </div>
+            </div>
+            <div class="row mt-3">
+                <div class="col-12">
+                    <label class="form-label" for="recordsTable">Lista record (stream)</label>
+                    <div id="recordsTable" class="ozon-record-table"></div>
+                </div>
+            </div>
+            <div class="row g-2 align-items-end mt-2">
+                <div class="col-md-9">
+                    <div id="selectedRecordInfo" class="small text-muted ozon-record-meta">Nessun record selezionato</div>
+                </div>
+                <div class="col-md-2 d-grid">
+                    <button id="openRecordBtn" type="button" class="btn btn-success" disabled>Apri record</button>
+                </div>
+            </div>
+            <div id="apiStatus" class="status small text-muted"></div>
+        </div>
+    </div>
+</div>
+<div class="container-fluid main pf" id="main">
+    <div id="preform"></div>
+</div>
+<div class="loader-wrapper d-none">
+    <div class="loader text-center"></div>
+</div>
+
+<script type="text/javascript">
+    var mainElem = document.getElementById('main');
+    var preFormElem = document.getElementById('preform');
+    var loader = document.getElementById('loader');
+    var titleElem = document.getElementById("form-title");
+    var apiStatusElem = document.getElementById('apiStatus');
+    var backendUrlInput = document.getElementById('backendUrlInput');
+    var baseTokenInput = document.getElementById('baseTokenInput');
+    var modelSelect = document.getElementById('modelSelect');
+    var queryInput = document.getElementById('queryInput');
+    var skipInput = document.getElementById('skipInput');
+    var limitInput = document.getElementById('limitInput');
+    var orderInput = document.getElementById('orderInput');
+    var recordsTableElem = document.getElementById('recordsTable');
+    var selectedRecordInfoElem = document.getElementById('selectedRecordInfo');
+    var openRecordBtn = document.getElementById('openRecordBtn');
+    var selectedRecordName = '';
+    var recordListTable = null;
+    var recordTableColumnsInitialized = false;
+    var recordRowCounter = 0;
+    var formioElem = null;
+    var pageBreak = false;
+    if (preFormElem) {
+        preFormElem.innerHTML = loader.innerHTML;
+    }
+
+    backendUrlInput.value = ozonBackendUrl;
+    baseTokenInput.value = ozonBaseToken;
+    setSelectedRecordName('');
+
+    function setStatus(message, isError) {
+        if (!apiStatusElem) {
+            return;
+        }
+        apiStatusElem.textContent = message || '';
+        apiStatusElem.classList.remove('text-muted', 'text-danger', 'text-success');
+        if (!message) {
+            apiStatusElem.classList.add('text-muted');
+            return;
+        }
+        apiStatusElem.classList.add(isError ? 'text-danger' : 'text-success');
+    }
+
+    function setSelectedRecordName(value) {
+        selectedRecordName = (value || '').trim();
+        if (openRecordBtn) {
+            openRecordBtn.disabled = !selectedRecordName;
+        }
+        if (selectedRecordInfoElem) {
+            selectedRecordInfoElem.textContent = selectedRecordName
+                ? ('Record selezionato: ' + selectedRecordName)
+                : 'Nessun record selezionato';
+        }
+    }
+
+    function escapeHtml(value) {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function toDisplayValue(value) {
+        if (value === null || value === undefined) {
+            return '';
+        }
+        if (typeof value === 'object') {
+            try {
+                return JSON.stringify(value);
+            } catch (error) {
+                return String(value);
+            }
+        }
+        return String(value);
+    }
+
+    function buildRecordTableColumns(sampleRow) {
+        var keys = Object.keys(sampleRow || {}).filter(function (key) {
+            return key !== '__rowid' && key !== '__rec_name';
+        });
+        var columns = [
+            {
+                title: 'Record',
+                field: '__rec_name',
+                headerFilter: 'input',
+                width: 260,
+                frozen: true
+            }
+        ];
+        keys.forEach(function (key) {
+            columns.push({
+                title: key,
+                field: key,
+                headerFilter: 'input',
+                formatter: function (cell) {
+                    return escapeHtml(toDisplayValue(cell.getValue()));
+                }
+            });
+        });
+        return columns;
+    }
+
+    function ensureRecordTable() {
+        if (recordListTable || !recordsTableElem) {
+            return recordListTable;
+        }
+        if (!window.Tabulator) {
+            recordsTableElem.innerHTML = '<div class="p-3 text-danger">Tabella non disponibile (libreria Tabulator non caricata).</div>';
+            return null;
+        }
+        recordListTable = new Tabulator(recordsTableElem, {
+            index: '__rowid',
+            layout: 'fitDataStretch',
+            height: '340px',
+            placeholder: 'Nessun record',
+            pagination: true,
+            paginationSize: 20,
+            movableColumns: true,
+            selectableRows: 1,
+            columns: [
+                {title: 'Record', field: '__rec_name', width: 260}
+            ]
+        });
+        recordListTable.on('rowClick', function (_event, row) {
+            var data = row.getData();
+            setSelectedRecordName(data && data.__rec_name ? String(data.__rec_name) : '');
+        });
+        recordListTable.on('rowDblClick', function (_event, row) {
+            var data = row.getData();
+            setSelectedRecordName(data && data.__rec_name ? String(data.__rec_name) : '');
+            loadSelectedRecord();
+        });
+        return recordListTable;
+    }
+
+    function resetRecordTable() {
+        setSelectedRecordName('');
+        recordRowCounter = 0;
+        recordTableColumnsInitialized = false;
+        var table = ensureRecordTable();
+        if (!table) {
+            return;
+        }
+        table.clearData();
+        table.setColumns([{title: 'Record', field: '__rec_name', width: 260}]);
+    }
+
+    function appendRecordToTable(rawRecord) {
+        var table = ensureRecordTable();
+        if (!table) {
+            return;
+        }
+        var record = extractRecord(rawRecord);
+        if (record === null || record === undefined) {
+            return;
+        }
+        if (typeof record !== 'object' || Array.isArray(record)) {
+            record = {value: record};
+        }
+        recordRowCounter += 1;
+        var recName = getRecordName(record, recordRowCounter - 1);
+        var row = Object.assign({}, record, {
+            __rowid: recordRowCounter,
+            __rec_name: recName
+        });
+        if (!recordTableColumnsInitialized) {
+            table.setColumns(buildRecordTableColumns(row));
+            recordTableColumnsInitialized = true;
+        }
+        table.addData([row], false);
+    }
+
+    function resetFormContainer() {
+        mainElem.innerHTML = '<div id="preform"></div>';
+        preFormElem = document.getElementById('preform');
+        if (preFormElem) {
+            preFormElem.innerHTML = loader.innerHTML;
+        }
+        formioElem = null;
+        pageBreak = false;
+    }
+
+    function normalizeBackendUrl(value) {
+        return (value || '').trim().replace(/\/+$/, '');
+    }
+
+    function getBackendUrl() {
+        return normalizeBackendUrl(backendUrlInput.value || ozonBackendUrl);
+    }
+
+    function getBaseToken() {
+        return (baseTokenInput.value || ozonBaseToken || '').trim();
+    }
+
+    function getTokenHeaderName() {
+        var rawHeader = (ozonTokenHeader || '').trim();
+        if (!rawHeader || !/^[A-Za-z0-9-]+$/.test(rawHeader)) {
+            return 'Authorization';
+        }
+        return rawHeader;
+    }
+
+    function getEffectiveTokenValue() {
+        var token = getBaseToken();
+        if (!token) {
+            return '';
+        }
+        var prefix = (ozonTokenPrefix || '').trim();
+        if (!prefix) {
+            return token;
+        }
+        if (token.toLowerCase().startsWith(prefix.toLowerCase() + ' ')) {
+            return token;
+        }
+        return prefix + ' ' + token;
+    }
+
+    function getApiHeaders() {
+        var tokenValue = getEffectiveTokenValue();
+        var headers = {
+            Accept: 'application/json'
+        };
+        if (tokenValue) {
+            headers[getTokenHeaderName()] = tokenValue;
+        }
+        return headers;
+    }
+
+    function isCrossOriginBackend(backendUrl) {
+        try {
+            var resolvedBackend = new URL(backendUrl, window.location.origin);
+            return resolvedBackend.origin !== window.location.origin;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function buildEndpointUrl(endpointPath, queryParams) {
+        var backendUrl = getBackendUrl();
+        if (!backendUrl) {
+            throw new Error('backendurl mancante');
+        }
+
+        var searchParams = new URLSearchParams();
+        Object.keys(queryParams || {}).forEach(function (key) {
+            if (queryParams[key] !== undefined && queryParams[key] !== null) {
+                searchParams.set(key, String(queryParams[key]));
+            }
+        });
+
+        if (isCrossOriginBackend(backendUrl)) {
+            searchParams.set('__backend', normalizeBackendUrl(backendUrl));
+            return '/__ozon_proxy' + endpointPath + (searchParams.toString() ? '?' + searchParams.toString() : '');
+        }
+
+        var endpointUrl = normalizeBackendUrl(backendUrl) + endpointPath;
+        return endpointUrl + (searchParams.toString() ? '?' + searchParams.toString() : '');
+    }
+
+    function stringifyApiDetail(detail) {
+        if (detail === undefined || detail === null || detail === '') {
+            return '';
+        }
+        if (typeof detail === 'string') {
+            return detail;
+        }
+        try {
+            return JSON.stringify(detail);
+        } catch (error) {
+            return String(detail);
+        }
+    }
+
+    function createApiError(statusCode, payload, fallbackText) {
+        var detail = payload && typeof payload === 'object'
+            ? (payload.detail !== undefined ? payload.detail : (payload.message !== undefined ? payload.message : payload))
+            : fallbackText;
+        var detailText = stringifyApiDetail(detail);
+        var error = new Error('Errore API ' + statusCode + (detailText ? ': ' + detailText : ''));
+        error.status = statusCode;
+        error.detail = detail;
+        error.payload = payload;
+        return error;
+    }
+
+    function fetchRaw(endpointPath, options) {
+        var requestOptions = options || {};
+        var method = (requestOptions.method || 'GET').toUpperCase();
+        var queryParams = requestOptions.queryParams || null;
+        var body = requestOptions.body;
+        var extraHeaders = requestOptions.headers || {};
+        var endpointUrl;
+        try {
+            endpointUrl = buildEndpointUrl(endpointPath, queryParams);
+        } catch (error) {
+            return Promise.reject(error);
+        }
+
+        var headers = getApiHeaders();
+        var requestInit = {
+            headers: headers,
+            method: method
+        };
+        Object.keys(extraHeaders).forEach(function (headerName) {
+            headers[headerName] = extraHeaders[headerName];
+        });
+        if (body !== undefined) {
+            headers['Content-Type'] = 'application/json';
+            requestInit.body = JSON.stringify(body);
+        }
+
+        return fetch(endpointUrl, requestInit);
+    }
+
+    function parseJsonOrText(text) {
+        if (!text) {
+            return '';
+        }
+        try {
+            return JSON.parse(text);
+        } catch (error) {
+            return text;
+        }
+    }
+
+    var responseWrappers = ['content', 'payload', 'response', 'result', 'action'];
+
+    function isRecord(value) {
+        return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+    }
+
+    function parseJsonMaybe(value) {
+        if (typeof value !== 'string') {
+            return null;
+        }
+        var trimmed = value.trim();
+        if (!trimmed || (trimmed[0] !== '{' && trimmed[0] !== '[')) {
+            return null;
+        }
+        try {
+            return JSON.parse(trimmed);
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function asRecord(value) {
+        if (isRecord(value)) {
+            return value;
+        }
+        var parsed = parseJsonMaybe(value);
+        return isRecord(parsed) ? parsed : null;
+    }
+
+    function toOptionalBooleanFlag(value) {
+        if (typeof value === 'boolean') {
+            return value;
+        }
+        if (typeof value === 'number') {
+            return value > 0;
+        }
+        if (typeof value === 'string') {
+            var normalized = value.trim().toLowerCase();
+            if (!normalized) {
+                return null;
+            }
+            if (['1', 'true', 'yes', 'on'].indexOf(normalized) !== -1) {
+                return true;
+            }
+            if (['0', 'false', 'no', 'off'].indexOf(normalized) !== -1) {
+                return false;
+            }
+        }
+        return null;
+    }
+
+    function readFirstString() {
+        for (var i = 0; i < arguments.length; i += 1) {
+            var entry = arguments[i];
+            if (typeof entry === 'string' && entry.trim()) {
+                return entry.trim();
+            }
+        }
+        return '';
+    }
+
+    function collectResponseNodes(payload, maxDepth) {
+        if (!isRecord(payload)) {
+            return [];
+        }
+        var depthLimit = typeof maxDepth === 'number' ? maxDepth : 8;
+        var queue = [{node: payload, depth: 0}];
+        var nodes = [];
+        var visited = [];
+
+        while (queue.length) {
+            var current = queue.shift();
+            if (!current || !isRecord(current.node)) {
+                continue;
+            }
+            var node = current.node;
+            if (visited.indexOf(node) !== -1) {
+                continue;
+            }
+            visited.push(node);
+            nodes.push(node);
+
+            if (current.depth >= depthLimit) {
+                continue;
+            }
+
+            var nestedData = asRecord(node.data);
+            if (nestedData) {
+                queue.push({node: nestedData, depth: current.depth + 1});
+            }
+            responseWrappers.forEach(function (wrapper) {
+                var nested = asRecord(node[wrapper]);
+                if (nested) {
+                    queue.push({node: nested, depth: current.depth + 1});
+                }
+            });
+        }
+
+        return nodes;
+    }
+
+    function isEnvelopeNode(node) {
+        if (!asRecord(node.content)) {
+            return false;
+        }
+        return Object.prototype.hasOwnProperty.call(node, 'fail')
+            || Object.prototype.hasOwnProperty.call(node, 'message')
+            || !Object.prototype.hasOwnProperty.call(node, 'mode');
+    }
+
+    function readEnvelopeFailureMessage(payload) {
+        var nodes = collectResponseNodes(payload, 4);
+        var failureMessage = '';
+        nodes.some(function (node) {
+            var hasEnvelopeSignature = Boolean(asRecord(node.content))
+                || (
+                    Object.prototype.hasOwnProperty.call(node, 'fail')
+                    && (
+                        Object.prototype.hasOwnProperty.call(node, 'message')
+                        || Object.prototype.hasOwnProperty.call(node, 'content')
+                    )
+                );
+            if (!hasEnvelopeSignature) {
+                return false;
+            }
+            var failed = toOptionalBooleanFlag(node.fail);
+            if (failed !== true) {
+                return false;
+            }
+            var data = asRecord(node.data);
+            failureMessage = readFirstString(node.message, data && data.message, 'Operazione fallita');
+            return true;
+        });
+        return failureMessage;
+    }
+
+    function fetchJson(endpointPath, options) {
+        return fetchRaw(endpointPath, options).then(function (response) {
+            return response.text().then(function (textBody) {
+                var parsed = parseJsonOrText(textBody);
+                if (!response.ok) {
+                    throw createApiError(response.status, parsed, textBody);
+                }
+                var envelopeError = readEnvelopeFailureMessage(parsed);
+                if (envelopeError) {
+                    throw new Error(envelopeError);
+                }
+                return parsed;
+            });
+        });
+    }
+
+    function parseNdjsonLine(line) {
+        var trimmed = String(line || '').trim();
+        if (!trimmed) {
+            return null;
+        }
+        try {
+            return JSON.parse(trimmed);
+        } catch (error) {
+            throw new Error('Stream NDJSON non valido: ' + trimmed.slice(0, 180));
+        }
+    }
+
+    function extractResponseMode(payload) {
+        var mode = '';
+        collectResponseNodes(payload, 3).some(function (node) {
+            if (typeof node.mode !== 'string' || !node.mode.trim()) {
+                return false;
+            }
+            mode = node.mode.trim().toLowerCase();
+            return true;
+        });
+        return mode;
+    }
+
+    function consumeNdjsonResponse(response, onItem, onEnvelope) {
+        if (!response.body || !response.body.getReader) {
+            return response.text().then(function (text) {
+                var count = 0;
+                var first = true;
+                String(text || '').split(/\r?\n/).forEach(function (line) {
+                    var item = parseNdjsonLine(line);
+                    if (item === null) {
+                        return;
+                    }
+                    if (first) {
+                        first = false;
+                        if (extractResponseMode(item)) {
+                            if (typeof onEnvelope === 'function') {
+                                onEnvelope(item);
+                            }
+                            return;
+                        }
+                    }
+                    onItem(item);
+                    count += 1;
+                });
+                return count;
+            });
+        }
+
+        var reader = response.body.getReader();
+        var decoder = new TextDecoder();
+        var buffer = '';
+        var count = 0;
+        var first = true;
+
+        function flushBufferLines(forceFlush) {
+            var parts = buffer.split(/\r?\n/);
+            if (!forceFlush) {
+                buffer = parts.pop();
+            } else {
+                buffer = '';
+            }
+            parts.forEach(function (line) {
+                var item = parseNdjsonLine(line);
+                if (item === null) {
+                    return;
+                }
+                if (first) {
+                    first = false;
+                    if (extractResponseMode(item)) {
+                        if (typeof onEnvelope === 'function') {
+                            onEnvelope(item);
+                        }
+                        return;
+                    }
+                }
+                onItem(item);
+                count += 1;
+            });
+        }
+
+        function pump() {
+            return reader.read().then(function (result) {
+                if (result.done) {
+                    buffer += decoder.decode();
+                    flushBufferLines(true);
+                    return count;
+                }
+                buffer += decoder.decode(result.value, {stream: true});
+                flushBufferLines(false);
+                return pump();
+            });
+        }
+
+        return pump();
+    }
+
+    function fetchRecordListRequest(modelName, listPayload, onItem) {
+        return fetchRaw('/list/' + encodeURIComponent(modelName), {
+            method: 'POST',
+            headers: {
+                Accept: 'application/x-ndjson,application/json'
+            },
+            body: listPayload
+        }).then(function (response) {
+            var contentType = (response.headers.get('content-type') || '').toLowerCase();
+            if (!response.ok) {
+                return response.text().then(function (textBody) {
+                    throw createApiError(response.status, parseJsonOrText(textBody), textBody);
+                });
+            }
+
+            if (contentType.indexOf('application/x-ndjson') !== -1) {
+                return consumeNdjsonResponse(response, onItem).then(function (count) {
+                    return {
+                        count: count,
+                        contentType: contentType,
+                        order: response.headers.get('x-order') || '',
+                        skip: response.headers.get('x-skip') || '',
+                        limit: response.headers.get('x-limit') || ''
+                    };
+                });
+            }
+
+            return response.text().then(function (textBody) {
+                var parsed = parseJsonOrText(textBody);
+                var records = normalizeRecordList(parsed);
+                records.forEach(function (record) {
+                    onItem(record);
+                });
+                return {
+                    count: records.length,
+                    contentType: contentType,
+                    order: response.headers.get('x-order') || '',
+                    skip: response.headers.get('x-skip') || '',
+                    limit: response.headers.get('x-limit') || ''
+                };
+            });
+        });
+    }
+
+    function normalizeModelList(payload) {
+        var source = [];
+        if (Array.isArray(payload)) {
+            source = payload;
+        } else {
+            collectResponseNodes(payload).some(function (node) {
+                var candidates = [node.models, node.items, node.data, node.result];
+                for (var i = 0; i < candidates.length; i += 1) {
+                    if (!Array.isArray(candidates[i])) {
+                        continue;
+                    }
+                    source = candidates[i];
+                    return true;
+                }
+                return false;
+            });
+        }
+
+        return source.map(function (entry) {
+            if (typeof entry === 'string') {
+                return {name: entry, label: entry};
+            }
+            if (!entry || typeof entry !== 'object') {
+                return null;
+            }
+            var name = entry.model || entry.name || entry.model_name || entry.key || entry.rec_name || entry._id || entry.id;
+            if (!name) {
+                return null;
+            }
+            var label = entry.label || entry.title || name;
+            return {name: String(name), label: String(label)};
+        }).filter(Boolean);
+    }
+
+    function normalizeRecordList(payload) {
+        if (Array.isArray(payload)) {
+            return payload;
+        }
+
+        var list = null;
+        collectResponseNodes(payload).some(function (node) {
+            var candidates = [node.records, node.items, node.data, node.result];
+            for (var i = 0; i < candidates.length; i += 1) {
+                if (!Array.isArray(candidates[i])) {
+                    continue;
+                }
+                list = candidates[i];
+                return true;
+            }
+            return false;
+        });
+        if (Array.isArray(list)) {
+            return list;
+        }
+
+        return [];
+    }
+
+    function extractRecord(payload) {
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+            return payload;
+        }
+        var record = null;
+        collectResponseNodes(payload).some(function (node) {
+            var directRecord = asRecord(node.record);
+            if (directRecord) {
+                record = directRecord;
+                return true;
+            }
+            var directItem = asRecord(node.item);
+            if (directItem) {
+                record = directItem;
+                return true;
+            }
+            var dataRecord = asRecord(node.data);
+            if (dataRecord && !isEnvelopeNode(node)) {
+                record = dataRecord;
+                return true;
+            }
+            if (!isEnvelopeNode(node)) {
+                record = node;
+                return true;
+            }
+            return false;
+        });
+        return record || payload;
+    }
+
+    function getRecordName(record, index) {
+        if (typeof record === 'string') {
+            return record;
+        }
+        if (!record || typeof record !== 'object') {
+            return 'record_' + (index + 1);
+        }
+        return String(record.rec_name || record.name || record.key || record._id || record.id || ('record_' + (index + 1)));
+    }
+
+    function extractFormSchema(payload) {
+        if (!payload || typeof payload !== 'object') {
+            return null;
+        }
+        var schema = null;
+        collectResponseNodes(payload).some(function (node) {
+            var dataNode = asRecord(node.data);
+            var candidates = [
+                node.formio,
+                node.schema,
+                node.components,
+                dataNode ? dataNode.formio : null,
+                dataNode ? dataNode.schema : null,
+                dataNode ? dataNode.components : null
+            ];
+            for (var i = 0; i < candidates.length; i += 1) {
+                var parsed = parseJsonMaybe(candidates[i]);
+                var normalized = parsed || candidates[i];
+                if (Array.isArray(normalized)) {
+                    schema = {
+                        display: 'form',
+                        components: normalized
+                    };
+                    return true;
+                }
+                if (isRecord(normalized) && Array.isArray(normalized.components)) {
+                    schema = normalized;
+                    return true;
+                }
+            }
+            return false;
+        });
+        if (schema) {
+            return schema;
+        }
+        return null;
+    }
+
+    function normalizeSubmission(payload) {
+        var record = extractRecord(payload);
+        if (!record || typeof record !== 'object') {
+            return null;
+        }
+        if (record.data && typeof record.data === 'object') {
+            return record;
+        }
+        return {data: record};
+    }
+
+    function populateModels(models) {
+        modelSelect.innerHTML = '<option value="">Seleziona model</option>';
+        models.forEach(function (model) {
+            var option = document.createElement('option');
+            option.value = model.name;
+            option.textContent = model.label;
+            modelSelect.appendChild(option);
+        });
+    }
+
+    function loadModels() {
+        setStatus('Caricamento modelli...');
+        return fetchJson('/models/distinct').then(function (payload) {
+            var models = normalizeModelList(payload);
+            populateModels(models);
+            setStatus('Modelli caricati: ' + models.length, false);
+        }).catch(function (error) {
+            setStatus(error.message, true);
+        });
+    }
+
+    function readSchemaForModel(modelName) {
+        return fetchJson('/record/' + encodeURIComponent(modelName)).then(function (payload) {
+            var schema = extractFormSchema(payload);
+            if (!schema) {
+                throw new Error('Schema Formio non trovato per model "' + modelName + '"');
+            }
+            return schema;
+        });
+    }
+
+    function loadSchemaForSelection() {
+        var modelName = modelSelect.value;
+        if (!modelName) {
+            setStatus('Seleziona un model', true);
+            return;
+        }
+        setStatus('Caricamento schema...');
+        readSchemaForModel(modelName).then(function (schema) {
+            resetFormContainer();
+            return window.setForm(schema);
+        }).then(function () {
+            setStatus('Schema caricato: ' + modelName, false);
+        }).catch(function (error) {
+            setStatus(error.message, true);
+        });
+    }
+
+    function parseQueryInput() {
+        var raw = (queryInput.value || '').trim();
+        if (!raw) {
+            return {};
+        }
+        var parsed;
+        try {
+            parsed = JSON.parse(raw);
+        } catch (error) {
+            throw new Error('Query JSON non valida');
+        }
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('Query JSON deve essere un oggetto');
+        }
+        return parsed;
+    }
+
+    function parseOrderJsonValue(rawOrderValue) {
+        var value = (rawOrderValue || '').trim();
+        if (!value) {
+            return null;
+        }
+        if ((value[0] !== '{' || value[value.length - 1] !== '}') && (value[0] !== '[' || value[value.length - 1] !== ']')) {
+            return null;
+        }
+        try {
+            return JSON.parse(value);
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function parseOrderStringToObject(orderValue) {
+        var raw = (orderValue || '').trim();
+        if (!raw) {
+            return null;
+        }
+        var match = raw.match(/^([A-Za-z0-9_.-]+)(?:\s+(asc|desc|1|-1))?$/i);
+        if (!match) {
+            return null;
+        }
+        var fieldName = match[1];
+        var directionToken = (match[2] || 'asc').toLowerCase();
+        var direction = (directionToken === 'desc' || directionToken === '-1') ? -1 : 1;
+        var orderObject = {};
+        orderObject[fieldName] = direction;
+        return orderObject;
+    }
+
+    function addListPayloadCandidate(candidates, seen, label, payload) {
+        var key = JSON.stringify(payload);
+        if (seen[key]) {
+            return;
+        }
+        seen[key] = true;
+        candidates.push({
+            label: label,
+            payload: payload
+        });
+    }
+
+    function buildListPayloadCandidates(queryObject, skip, limit, orderValue) {
+        var candidates = [];
+        var seen = Object.create(null);
+        var basePayload = {
+            query: queryObject,
+            skip: skip,
+            limit: limit
+        };
+
+        addListPayloadCandidate(candidates, seen, 'order-string', Object.assign({}, basePayload, {order: orderValue}));
+
+        var orderJsonValue = parseOrderJsonValue(orderValue);
+        if (orderJsonValue !== null) {
+            addListPayloadCandidate(candidates, seen, 'order-json', Object.assign({}, basePayload, {order: orderJsonValue}));
+        }
+
+        var orderObjectValue = parseOrderStringToObject(orderValue);
+        if (orderObjectValue) {
+            addListPayloadCandidate(candidates, seen, 'order-object', Object.assign({}, basePayload, {order: orderObjectValue}));
+            addListPayloadCandidate(candidates, seen, 'order-object-array', Object.assign({}, basePayload, {order: [orderObjectValue]}));
+            var fieldName = Object.keys(orderObjectValue)[0];
+            addListPayloadCandidate(candidates, seen, 'order-tuple-array', Object.assign({}, basePayload, {order: [[fieldName, orderObjectValue[fieldName]]]}));
+        }
+
+        addListPayloadCandidate(candidates, seen, 'order-empty-array', Object.assign({}, basePayload, {order: []}));
+        addListPayloadCandidate(candidates, seen, 'without-order', Object.assign({}, basePayload));
+        addListPayloadCandidate(candidates, seen, 'query-string-order-string', {
+            query: JSON.stringify(queryObject),
+            skip: skip,
+            limit: limit,
+            order: orderValue
+        });
+        addListPayloadCandidate(candidates, seen, 'query-string-without-order', {
+            query: JSON.stringify(queryObject),
+            skip: skip,
+            limit: limit
+        });
+
+        return candidates;
+    }
+
+    function fetchRecordListWithFallback(modelName, payloadCandidates, index, onItem) {
+        var candidate = payloadCandidates[index];
+        return fetchRecordListRequest(modelName, candidate.payload, onItem).then(function (result) {
+            return {
+                candidate: candidate,
+                retries: index,
+                result: result
+            };
+        }).catch(function (error) {
+            var canRetry = error && error.status === 422 && index < payloadCandidates.length - 1;
+            if (!canRetry) {
+                throw error;
+            }
+            return fetchRecordListWithFallback(modelName, payloadCandidates, index + 1, onItem);
+        });
+    }
+
+    function loadRecordListForSelection() {
+        var modelName = modelSelect.value;
+        if (!modelName) {
+            setStatus('Seleziona un model', true);
+            return;
+        }
+
+        var skip = parseInt(skipInput.value || '0', 10);
+        var limit = parseInt(limitInput.value || '20', 10);
+        if (isNaN(skip) || skip < 0) {
+            skip = 0;
+        }
+        if (isNaN(limit) || limit < 1) {
+            limit = 20;
+        }
+
+        var queryObject;
+        try {
+            queryObject = parseQueryInput();
+        } catch (error) {
+            setStatus(error.message, true);
+            return;
+        }
+
+        var orderValue = (orderInput.value || '').trim();
+        if (!orderValue) {
+            orderValue = 'rec_name asc';
+        }
+
+        var payloadCandidates = buildListPayloadCandidates(queryObject, skip, limit, orderValue);
+        resetRecordTable();
+        setStatus('Caricamento record (stream)...');
+        fetchRecordListWithFallback(modelName, payloadCandidates, 0, function (item) {
+            appendRecordToTable(item);
+        }).then(function (result) {
+            var fallbackInfo = result.retries > 0 ? ' (fallback payload: ' + result.candidate.label + ')' : '';
+            var headersInfo = '';
+            if (result.result && (result.result.order || result.result.skip || result.result.limit)) {
+                headersInfo = ' [order=' + (result.result.order || '-') + ', skip=' + (result.result.skip || '-') + ', limit=' + (result.result.limit || '-') + ']';
+            }
+            setStatus('Record caricati: ' + (result.result ? result.result.count : 0) + fallbackInfo + headersInfo, false);
+        }).catch(function (error) {
+            setStatus(error.message, true);
+        });
+    }
+
+    function loadSelectedRecord() {
+        var modelName = modelSelect.value;
+        if (!modelName) {
+            setStatus('Seleziona un model', true);
+            return;
+        }
+        var recName = selectedRecordName;
+        if (!recName) {
+            setStatus('Seleziona un record dalla tabella', true);
+            return;
+        }
+        setStatus('Caricamento record "' + recName + '"...');
+
+        fetchJson('/record/' + encodeURIComponent(modelName) + '/' + encodeURIComponent(recName)).then(function (recordPayload) {
+            var schema = extractFormSchema(recordPayload);
+            var submission = normalizeSubmission(recordPayload);
+            if (!schema) {
+                throw new Error('Schema non trovato nel payload record');
+            }
+            if (!submission) {
+                throw new Error('Record "' + recName + '" non valido');
+            }
+            resetFormContainer();
+            return window.setForm(schema, submission).then(function () {
+                return recordPayload;
+            });
+        }).then(function (recordPayload) {
+            var loadedRecName = recordPayload && recordPayload.rec_name ? String(recordPayload.rec_name) : recName;
+            setStatus('Record caricato: ' + loadedRecName, false);
+        }).catch(function (error) {
+            setStatus(error.message, true);
+        });
+    }
+
+    var createFormPage = function (form, submission, options) {
+        if (preFormElem) {
+            preFormElem.innerHTML = loader.innerHTML;
+        }
+        options = options || {};
+        options.language = "it";
+        if (Array.isArray(form)) {
+            form = {
+                display: 'form',
+                components: form
+            };
+        }
+        if (!form) {
+            console.warn('No form object provided');
+        }
+
+        // Create the formio element.
+        if (formioElem) {
+            pageBreak = true;
+        }
+        formioElem = document.createElement('div');
+        if (pageBreak) {
+            formioElem.setAttribute('class', 'page-break-before');
+        }
+        mainElem.appendChild(formioElem);
+
+        // If the form is a string, then load it first and then try again.
+        if (typeof form === 'string') {
+            var formio = new Formio(form);
+
+            formio.formUrl = form;
+            formio.loadForm().then((formObj) => {
+                if (!submission && formio.submissionId) {
+                    formio.loadSubmission().then(function (subObj) {
+                        formObj.src = form;
+                        window.setForm(formObj.schema, subObj, options);
+                    });
+                } else {
+                    formObj.src = form;
+                    window.setForm(formObj, submission, options);
+                }
+
+            });
+            return;
+        }
+
+        options.show = {};
+        options.hide = {};
+        FormioUtils.eachComponent(form.components, function (component) {
+            if (component.tags && component.tags.length) {
+                if (component.tags.includes('viewer:show')) {
+                    options.show[component.key] = true;
+                }
+                if (component.tags.includes('viewer:hide')) {
+                    options.hide[component.key] = true;
+                }
+            }
+        }, true);
+
+        Formio.icons = 'fontawesome';
+        return Formio.createForm(formioElem, form, options).then(function (instance) {
+            if (preFormElem) {
+                // Remove the entire preform element.
+                mainElem.removeChild(preFormElem);
+                preFormElem = null;
+            }
+
+            // Set the source of the form if it is provided.
+            if (form.src) {
+                instance.url = form.src;
+                instance.nosubmit = false;
+            }
+
+            if (titleElem) {
+                titleElem.innerHTML = instance.form.title;
+            }
+            if (!submission) {
+                return instance;
+            }
+
+            return new Formio.Promise(function (resolve) {
+                instance.setSubmission(submission).then(function () {
+                    instance.dataReady.then(function () {
+                        instance.checkData(instance.data, {
+                            noValidate: true
+                        });
+                        window.requestAnimationFrame(resolve);
+                    });
+                });
+            });
+        });
+    };
+
+    // You must keep "window.setForm = function(form, submission, options)". This
+    // is what the PDF renderer uses to generate a form with predefined form, submission, and options.
+    window.setForm = function (form, submission, options) {
+        if (Array.isArray(submission) && submission.length) {
+            var promises = [];
+            submission.forEach(function (sub) {
+                promises.push(createFormPage(form, sub, options));
+            });
+            return Formio.Promise.all(promises);
+        }
+        return createFormPage(form, submission, options);
+    };
+
+    document.getElementById('loadModelsBtn').addEventListener('click', function () {
+        loadModels();
+    });
+    document.getElementById('loadSchemaBtn').addEventListener('click', function () {
+        loadSchemaForSelection();
+    });
+    document.getElementById('loadRecordsBtn').addEventListener('click', function () {
+        loadRecordListForSelection();
+    });
+    if (openRecordBtn) {
+        openRecordBtn.addEventListener('click', function () {
+            loadSelectedRecord();
+        });
+    }
+    modelSelect.addEventListener('change', function () {
+        setSelectedRecordName('');
+        resetRecordTable();
+    });
+
+    if (src) {
+        resetFormContainer();
+        window.setForm(src);
+    } else {
+        loadModels();
+    }
+
+    var brandingElem = document.getElementById('branding');
+    if (brandingElem && (!query.hasOwnProperty('branding') || parseInt(query.branding, 10)) && query.format !== 'html') {
+        document.write(brandingElem.innerHTML);
+    }
+</script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap-italia@2.16.0/dist/js/bootstrap-italia.bundle.min.js"></script>
+</body>
+</html>

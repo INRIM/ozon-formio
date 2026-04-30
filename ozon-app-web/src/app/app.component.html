@@ -1,0 +1,291 @@
+<div class="ozon-shell">
+  <header class="ozon-brandbar">
+    <div class="ozon-brand">
+      <div class="ozon-logo-box">
+        <img *ngIf="appLogoUrl; else defaultLogo" [src]="appLogoUrl" alt="Application logo" />
+        <ng-template #defaultLogo>{{ logoFallbackText }}</ng-template>
+      </div>
+      <div class="ozon-brand-copy">
+        <div class="ozon-brand-title">{{ brandTitle }}</div>
+        <div class="ozon-brand-subtitle">{{ brandSubtitle }}</div>
+      </div>
+    </div>
+    <div class="d-flex align-items-center gap-2 ozon-theme-switch">
+      <span class="small text-muted">Tema {{ currentThemeLabel }}</span>
+      <p-inputSwitch
+        [ngModel]="isDarkTheme"
+        (ngModelChange)="onThemeSwitchChanged($event)"
+        inputId="theme-switch"
+        ariaLabel="Toggle tema chiaro/scuro"
+      >
+      </p-inputSwitch>
+    </div>
+  </header>
+
+  <nav class="ozon-topnav">
+    <button type="button" class="ozon-home-btn" *ngIf="showHomeButton" (click)="resetNavigation()">
+      <i class="pi pi-building"></i>
+    </button>
+
+    <div class="ozon-nav-groups" *ngIf="showTopMenu">
+      <div class="ozon-nav-item" *ngFor="let card of topMenuCards">
+        <button
+          type="button"
+          class="ozon-nav-link"
+          [class.is-active]="activeDashboardGroup === card.group_id"
+          (click)="openTopMenu(card)"
+        >
+          <span>{{ card.title }}</span>
+          <i class="pi pi-angle-down"></i>
+        </button>
+
+        <div class="ozon-nav-dropdown" *ngIf="openedNavMenuGroup === card.group_id">
+          <ng-container *ngIf="menuDrilldownGroups(card) as drilldownGroups">
+            <div class="ozon-nav-dropdown-group" *ngFor="let group of drilldownGroups">
+              <div class="ozon-nav-dropdown-group-title" *ngIf="drilldownGroups.length > 1">
+                {{ group.title }}
+              </div>
+              <a
+                class="ozon-nav-dropdown-item"
+                *ngFor="let button of group.buttons"
+                [class.is-disabled]="!canRunMenuAction(button)"
+                [attr.href]="menuActionHref(button)"
+                (click)="onMenuActionAnchorClick(button, $event)"
+              >
+                <ng-container *ngIf="resolveBootstrapItaliaIconSrc(button) as navIconSrc; else navClassIcon">
+                  <img class="ozon-bi-icon ozon-nav-dropdown-icon" [src]="navIconSrc" alt="" aria-hidden="true" />
+                </ng-container>
+                <ng-template #navClassIcon>
+                  <i [class]="resolveButtonIconClass(button)"></i>
+                </ng-template>
+                <span>{{ button.label }}</span>
+                <span *ngIf="button.number" class="ozon-menu-badge">{{ button.number }}</span>
+              </a>
+            </div>
+          </ng-container>
+        </div>
+      </div>
+    </div>
+
+    <div class="ozon-user-menu-wrap">
+      <button type="button" class="ozon-user-toggle" (click)="toggleUserMenu()">
+        <span class="ozon-avatar">
+          <img *ngIf="userAvatarUrl; else initialsTpl" [src]="userAvatarUrl" alt="User avatar" />
+          <ng-template #initialsTpl>{{ userInitials }}</ng-template>
+        </span>
+        <span>{{ userDisplayName }}</span>
+        <i class="pi pi-angle-up"></i>
+      </button>
+      <div class="ozon-user-dropdown" *ngIf="userMenuOpen">
+        <div class="ozon-builder-toggle-row" *ngIf="showBuilderToggle">
+          <span>Builder</span>
+          <div class="d-flex align-items-center gap-2">
+            <span class="ozon-builder-flag">{{ builderSwitchLabel }}</span>
+            <p-inputSwitch
+              [ngModel]="builderEnabled"
+              (ngModelChange)="onBuilderSwitchChanged($event)"
+              inputId="builder-switch"
+              ariaLabel="Toggle builder mode"
+            >
+            </p-inputSwitch>
+          </div>
+        </div>
+        <button *ngIf="showLoginButton" type="button" class="ozon-auth-btn" (click)="login()">Login</button>
+        <button *ngIf="showLogoutButton" type="button" class="ozon-auth-btn" (click)="logout()">Logout</button>
+      </div>
+    </div>
+  </nav>
+
+  <section class="ozon-dashboard-grid" *ngIf="isDashboardPage && nonAdminDashboardCards.length">
+    <article class="ozon-dashboard-card" *ngFor="let card of nonAdminDashboardCards">
+      <div class="ozon-card-actions">
+        <a
+          *ngFor="let button of card.buttons"
+          class="ozon-card-action"
+          [class.is-disabled]="!canRunMenuAction(button)"
+          [attr.href]="menuActionHref(button)"
+          (click)="onMenuActionAnchorClick(button, $event)"
+        >
+          <span class="ozon-card-action-icon-wrap">
+            <ng-container *ngIf="resolveBootstrapItaliaIconSrc(button) as cardIconSrc; else cardClassIcon">
+              <img class="ozon-card-action-icon ozon-card-action-icon-svg ozon-bi-icon" [src]="cardIconSrc" alt="" aria-hidden="true" />
+            </ng-container>
+            <ng-template #cardClassIcon>
+              <i [class]="resolveButtonIconClass(button)" class="ozon-card-action-icon"></i>
+            </ng-template>
+            <span *ngIf="button.number !== undefined" class="ozon-menu-badge">{{ button.number }}</span>
+          </span>
+          <span class="ozon-card-action-label">{{ button.label }}</span>
+        </a>
+      </div>
+      <div class="ozon-card-title">{{ card.title }}</div>
+    </article>
+  </section>
+
+  <section class="card ozon-workspace-card" *ngIf="isListPage">
+    <div class="card-body">
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+        <div>
+          <div class="ozon-workspace-title">{{ dashboardTitle }}</div>
+          <div class="small text-muted">{{ selectedInfo }}</div>
+        </div>
+        <div class="small text-muted text-md-end">
+          Stream: {{ streamCount }} | Totale: {{ tableTotalRecords }} | Limit: {{ limit }}
+        </div>
+      </div>
+
+      <div class="d-flex flex-wrap gap-2 align-items-end mb-2">
+        <div class="flex-fill">
+          <label class="form-label mb-1">Record table</label>
+          <input
+            [(ngModel)]="filterText"
+            (ngModelChange)="onFilterChanged()"
+            class="form-control form-control-sm"
+            type="text"
+            placeholder="Filtra righe..."
+          />
+        </div>
+        <div class="d-grid">
+          <button class="btn btn-success" type="button" [disabled]="!canOpenRecord" (click)="openRecordFromListSelection()">
+            Apri record
+          </button>
+        </div>
+        <div class="d-grid">
+          <button class="btn btn-primary" type="button" [disabled]="!canOpenNewRecord" (click)="openNewRecord()">
+            Nuovo record
+          </button>
+        </div>
+      </div>
+
+      <div *ngIf="!tableColumns.length" class="text-danger text-center py-2">
+        Header `X-Columns` mancante o non valido
+      </div>
+      <div class="ozon-table-wrap">
+        <p-table
+          [value]="tableRows"
+          [columns]="tableColumns"
+          dataKey="__rowid"
+          [(selection)]="selectedRows"
+          [lazy]="true"
+          [lazyLoadOnInit]="false"
+          [paginator]="true"
+          [first]="skip"
+          [rows]="pageSize"
+          [totalRecords]="tableTotalRecords"
+          [rowsPerPageOptions]="pageSizeOptions"
+          [showCurrentPageReport]="true"
+          currentPageReportTemplate="Mostra {first} - {last} di {totalRecords}"
+          [scrollable]="true"
+          scrollHeight="420px"
+          [sortField]="primeSortField"
+          [sortOrder]="primeSortOrder"
+          styleClass="p-datatable-sm p-datatable-gridlines ozon-prime-table"
+          (onLazyLoad)="onTableLazyLoad($event)"
+          (onRowReorder)="onRowReorder($event)"
+          (selectionChange)="onTableSelectionChange($event)"
+        >
+          <ng-template pTemplate="header" let-columns>
+            <tr>
+              <th style="width: 3.5rem">
+                <p-tableHeaderCheckbox></p-tableHeaderCheckbox>
+              </th>
+              <th style="width: 2.5rem"></th>
+              <th *ngFor="let column of columns; trackBy: trackColumnBy" [pSortableColumn]="column.field">
+                {{ column.title }}
+                <p-sortIcon [field]="column.field"></p-sortIcon>
+              </th>
+              <th *ngIf="showTableRowCopyAction" style="width: 4rem">Copia</th>
+              <th *ngIf="showTableRowRemoveAction" style="width: 5rem">Rimuovi</th>
+            </tr>
+          </ng-template>
+
+          <ng-template pTemplate="body" let-rowData let-columns="columns" let-rowIndex="rowIndex">
+            <tr
+              [pReorderableRow]="rowIndex"
+              (click)="onTableRowClick(rowData, $event)"
+              (dblclick)="onTableRowDblClick(rowData, $event)"
+              [class.ozon-row-selected]="selectedRecordName === rowData.__rec_name"
+            >
+              <td>
+                <p-tableCheckbox [value]="rowData"></p-tableCheckbox>
+              </td>
+              <td class="ozon-row-handle">
+                <span class="pi pi-bars" pReorderableRowHandle aria-label="Riordina"></span>
+              </td>
+              <td *ngFor="let column of columns; trackBy: trackColumnBy">
+                {{ displayCell(rowData, column.field) }}
+              </td>
+              <td class="text-center" *ngIf="showTableRowCopyAction">
+                <button
+                  pButton
+                  type="button"
+                  icon="pi pi-copy"
+                  class="p-button-sm p-button-text"
+                  (click)="onCopyRow(rowData, $event)"
+                  aria-label="Copia record"
+                ></button>
+              </td>
+              <td class="text-center" *ngIf="showTableRowRemoveAction">
+                <button
+                  pButton
+                  type="button"
+                  icon="pi pi-trash"
+                  class="p-button-sm p-button-text p-button-danger"
+                  (click)="onRemoveRow(rowData, $event)"
+                  aria-label="Rimuovi record"
+                ></button>
+              </td>
+            </tr>
+          </ng-template>
+
+          <ng-template pTemplate="emptymessage">
+            <tr>
+              <td [attr.colspan]="tableColumnCount + tableExtraColumnCount" class="text-muted text-center py-4">
+                Nessun record
+              </td>
+            </tr>
+          </ng-template>
+        </p-table>
+      </div>
+
+      <div class="small mt-2" [class.text-danger]="statusError" [class.text-success]="!statusError">
+        {{ statusText }}
+      </div>
+    </div>
+  </section>
+
+  <div class="card mt-3" *ngIf="isFormPage && showFormBuilder">
+    <div class="card-header d-flex align-items-center justify-content-between gap-2">
+      <span>Form Builder</span>
+      <button class="btn btn-sm btn-outline-secondary" type="button" (click)="disableFormBuilderMode()">
+        Vista form
+      </button>
+    </div>
+    <div class="card-body">
+      <form-builder
+        [form]="builderSchemaForm"
+        [formbuilder]="formBuilderConfig"
+        (change)="onFormBuilderChanged($event)"
+      ></form-builder>
+    </div>
+  </div>
+
+  <div class="card mt-3" *ngIf="isFormPage && formSchema && !showFormBuilder">
+    <div class="card-header d-flex align-items-center justify-content-between gap-2">
+      <span>Form Viewer</span>
+      <button *ngIf="canEditCurrentForm" class="btn btn-sm btn-outline-primary" type="button" (click)="enableFormBuilderMode()">
+        Modifica form
+      </button>
+    </div>
+    <div class="card-body">
+      <formio [form]="formSchema" [submission]="formSubmission" (change)="onFormSubmissionChanged($event)"></formio>
+    </div>
+  </div>
+
+  <div class="ozon-transition-loader" *ngIf="isTransitionLoading" aria-live="polite" aria-busy="true">
+    <div class="ozon-transition-loader-box">
+      <div class="spinner-border text-primary" role="status" aria-hidden="true"></div>
+      <span>Caricamento...</span>
+    </div>
+  </div>
+</div>

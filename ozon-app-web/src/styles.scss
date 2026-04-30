@@ -1,0 +1,330 @@
+@import 'bootstrap-italia/dist/css/bootstrap-italia.min.css';
+@import 'primeicons/primeicons.css';
+
+:root {
+  --ozon-bg: #f4f7fb;
+  --ozon-surface: #ffffff;
+  --ozon-surface-soft: #f3f7fb;
+  --ozon-border: #d9e3f2;
+  --ozon-text: #17324d;
+  --ozon-muted: #5f7082;
+  --ozon-accent: #0053a6;
+}
+
+:root[data-theme='dark'] {
+  --ozon-bg: #0f1723;
+  --ozon-surface: #162131;
+  --ozon-surface-soft: #1b2b40;
+  --ozon-border: #2f435c;
+  --ozon-text: #e6edf5;
+  --ozon-muted: #b6c3d3;
+  --ozon-accent: #6fb6ff;
+  --bs-body-color: var(--ozon-text);
+  --bs-body-bg: var(--ozon-bg);
+  --bs-border-color: var(--ozon-border);
+  --bs-secondary-color: var(--ozon-muted);
+  --bs-tertiary-color: var(--ozon-muted);
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--ozon-bg);
+  color: var(--ozon-text);
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.formio-component.ozon-form-table,
+.formio-component.ozon-form-datagrid {
+  overflow-x: auto;
+}
+
+.formio-component.ozon-form-table .table,
+.formio-component.ozon-form-datagrid .table {
+  min-width: 640px;
+}
+
+:root[data-theme='dark'] .card {
+  background-color: var(--ozon-surface);
+  border-color: var(--ozon-border);
+  color: var(--ozon-text);
+}
+
+:root[data-theme='dark'] .card-header {
+  background-color: var(--ozon-surface-soft);
+  border-color: var(--ozon-border);
+}
+
+:root[data-theme='dark'] .form-control,
+:root[data-theme='dark'] .form-select {
+  background-color: var(--ozon-surface);
+  border-color: var(--ozon-border);
+  color: var(--ozon-text);
+}
+
+:root[data-theme='dark'] .form-control:focus,
+:root[data-theme='dark'] .form-select:focus {
+  border-color: #8ec7ff;
+  box-shadow: 0 0 0 0.2rem rgba(111, 182, 255, 0.3);
+}
+
+:root[data-theme='dark'] .form-control::placeholder {
+  color: #9dafc5;
+}
+
+:root[data-theme='dark'] label,
+:root[data-theme='dark'] .form-label,
+:root[data-theme='dark'] .col-form-label,
+:root[data-theme='dark'] .form-check-label,
+:root[data-theme='dark'] .control-label,
+:root[data-theme='dark'] .field-label,
+:root[data-theme='dark'] .field-label--right,
+:root[data-theme='dark'] legend,
+:root[data-theme='dark'] .form-text {
+  color: var(--ozon-text) !important;
+}
+
+:root[data-theme='dark'] .formio-form :where(label, legend, .form-text, .control-label, .field-label, .form-check-label) {
+  color: var(--ozon-text) !important;
+}
+
+:root[data-theme='dark'] .formio-form .formio-component-content .image > figcaption {
+  color: var(--ozon-text);
+  background-color: var(--ozon-surface-soft);
+}
+
+:root[data-theme='dark'] .table {
+  --bs-table-bg: transparent;
+  --bs-table-color: var(--ozon-text);
+  --bs-table-striped-bg: rgba(255, 255, 255, 0.035);
+  --bs-table-hover-bg: rgba(255, 255, 255, 0.08);
+}
+
+:root[data-theme='dark'] .table-active {
+  --bs-table-active-bg: rgba(111, 182, 255, 0.2);
+  --bs-table-active-color: var(--ozon-text);
+}
+
+:root[data-theme='dark'] .text-muted {
+  color: var(--ozon-muted) !important;
+}
+
+:root[data-theme='dark'] query-builder .ruleset,
+:root[data-theme='dark'] query-builder .rule {
+  background: var(--ozon-surface);
+  border-color: var(--ozon-border) !important;
+}
+
+:root[data-theme='dark'] query-builder select,
+:root[data-theme='dark'] query-builder input {
+  background: var(--ozon-surface-soft);
+  border-color: var(--ozon-border);
+  color: var(--ozon-text);
+}
+
+:root[data-theme='dark'] query-builder button {
+  border-color: var(--ozon-border);
+}
+
+:root[data-theme='dark'] .p-paginator {
+  background: var(--ozon-surface);
+  color: var(--ozon-text);
+  border-color: var(--ozon-border);
+}
+
+:root[data-theme='dark'] .p-paginator .p-paginator-current,
+:root[data-theme='dark'] .p-paginator .p-paginator-page,
+:root[data-theme='dark'] .p-paginator .p-paginator-first,
+:root[data-theme='dark'] .p-paginator .p-paginator-prev,
+:root[data-theme='dark'] .p-paginator .p-paginator-next,
+:root[data-theme='dark'] .p-paginator .p-paginator-last {
+  color: var(--ozon-text);
+}
+
+:root[data-theme='dark'] .p-paginator .p-paginator-page.p-highlight {
+  background: rgba(111, 182, 255, 0.25);
+  color: var(--ozon-text);
+  border-color: var(--ozon-border);
+}
+
+:root[data-theme='dark'] .p-paginator .p-paginator-rpp-dropdown,
+:root[data-theme='dark'] .p-paginator .p-select,
+:root[data-theme='dark'] .p-paginator .p-dropdown,
+:root[data-theme='dark'] .p-paginator .p-inputtext,
+:root[data-theme='dark'] .p-paginator .p-inputnumber-input {
+  background: var(--ozon-surface-soft);
+  color: var(--ozon-text);
+  border-color: var(--ozon-border);
+}
+
+:root[data-theme='dark'] .p-select-overlay,
+:root[data-theme='dark'] .p-dropdown-panel {
+  background: var(--ozon-surface);
+  color: var(--ozon-text);
+  border-color: var(--ozon-border);
+}
+
+:root[data-theme='dark'] .p-select-overlay .p-select-option,
+:root[data-theme='dark'] .p-dropdown-panel .p-dropdown-item {
+  color: var(--ozon-text);
+}
+
+:root[data-theme='dark'] .p-select-overlay .p-select-option.p-focus,
+:root[data-theme='dark'] .p-select-overlay .p-select-option.p-selected,
+:root[data-theme='dark'] .p-dropdown-panel .p-dropdown-item.p-highlight {
+  background: rgba(111, 182, 255, 0.2);
+  color: var(--ozon-text);
+}
+
+/* =========================================================
+   Form.io & Choices.js Dark Theme Overrides
+   ========================================================= */
+:root[data-theme='dark'] {
+
+  // 1. Input Group (Prefissi e Suffissi nei campi)
+  .input-group-text {
+    background-color: var(--ozon-surface-soft);
+    border-color: var(--ozon-border);
+    color: var(--ozon-text);
+  }
+
+  // 2. Stati disabilitati o in sola lettura
+  .form-control:disabled,
+  .form-control[readonly],
+  .form-select:disabled {
+    background-color: var(--ozon-surface-soft);
+    opacity: 0.8;
+  }
+
+  // 3. Checkbox e Radio button
+  .form-check-input {
+    background-color: var(--ozon-surface);
+    border-color: var(--ozon-border);
+  }
+  .form-check-input:checked {
+    background-color: var(--ozon-accent);
+    border-color: var(--ozon-accent);
+  }
+
+  // 4. Tabelle Form.io (es. DataGrid) - Forza i bordi
+  .table-bordered > :not(caption) > * > * {
+    border-color: var(--ozon-border) !important;
+  }
+
+  // 5. Choices.js (Il componente Select avanzato usato da Form.io)
+  .choices__inner {
+    background-color: var(--ozon-surface);
+    border-color: var(--ozon-border);
+    color: var(--ozon-text);
+    min-height: 2.45rem;
+  }
+  .choices__input {
+    background-color: transparent;
+    color: var(--ozon-text);
+  }
+  .choices__input::placeholder {
+    color: var(--ozon-muted);
+  }
+  .choices__list--dropdown,
+  .choices__list[aria-expanded] {
+    background-color: var(--ozon-surface);
+    border-color: var(--ozon-border);
+    color: var(--ozon-text);
+    z-index: 1000;
+  }
+  // Elementi della tendina Select
+  .choices__list--dropdown .choices__item--selectable,
+  .choices__list[aria-expanded] .choices__item--selectable {
+    color: var(--ozon-text);
+    border-bottom: 1px solid rgba(230, 237, 245, 0.07);
+  }
+  // Highlight e Hover sulla Select
+  .choices__list--dropdown .choices__item--selectable.is-highlighted,
+  .choices__list[aria-expanded] .choices__item--selectable.is-highlighted {
+    background-color: rgba(111, 182, 255, 0.34);
+    color: var(--ozon-text);
+  }
+  .choices__list--dropdown .choices__item--selectable[aria-selected='true'],
+  .choices__list[aria-expanded] .choices__item--selectable[aria-selected='true'] {
+    background-color: rgba(111, 182, 255, 0.25);
+    color: #ffffff;
+  }
+  // Scritte "Nessun risultato" o badge di item scelti
+  .choices__item[data-value] {
+    color: var(--ozon-text);
+  }
+  .choices__item--placeholder {
+    opacity: 0.85;
+    color: var(--ozon-muted);
+  }
+  .choices[data-type*='select-one']::after {
+    border-color: #c8d8eb transparent transparent transparent;
+  }
+  .choices[data-type*='select-one'].is-open::after {
+    border-color: transparent transparent #c8d8eb transparent;
+  }
+  .choices__button {
+    filter: invert(1) brightness(1.2);
+    opacity: 0.9;
+  }
+
+  // Selezioni multiple (badge/chips)
+  .choices[data-type*='select-multiple'] .choices__button,
+  .choices[data-type*='text'] .choices__button {
+    border-left: 1px solid var(--ozon-border);
+    filter: invert(1); // Fa diventare bianca l'icona 'X' che solitamente è nera
+  }
+  .choices__list--multiple .choices__item {
+    background-color: var(--ozon-accent);
+    border-color: var(--ozon-border);
+    color: #fff;
+  }
+
+  // 6. Alert di Validazione / Errori
+  .alert-danger {
+    background-color: rgba(220, 53, 69, 0.15); // Un rosso più tenue
+    border-color: rgba(220, 53, 69, 0.3);
+    color: #ff8c97;
+  }
+
+  // 7. Modali interne (es. componenti Signature o modali di conferma)
+  .formio-dialog-content {
+    background-color: var(--ozon-surface);
+    border-color: var(--ozon-border);
+    color: var(--ozon-text);
+  }
+
+  // 8. Bottoni form: contrasti più leggibili
+  .btn-warning,
+  .btn.btn-warning {
+    background-color: #d08a00;
+    border-color: #d08a00;
+    color: #0b1828;
+    font-weight: 600;
+  }
+  .btn-warning:hover,
+  .btn-warning:focus,
+  .btn.btn-warning:hover,
+  .btn.btn-warning:focus {
+    background-color: #e49a00;
+    border-color: #e49a00;
+    color: #081420;
+  }
+  .btn-outline-primary,
+  .btn-outline-secondary {
+    color: #d9e7f6;
+    border-color: #7daedc;
+  }
+  .btn-outline-primary:hover,
+  .btn-outline-secondary:hover {
+    color: #0f1723;
+    background-color: #9fc8ef;
+    border-color: #9fc8ef;
+  }
+}
