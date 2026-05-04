@@ -17,7 +17,7 @@ Compilazione Angular consigliata via Docker (Node LTS):
 - `npm run start:angular:docker`
 - `./angular-docker.sh start`
 
-`start` usa `docker-compose.angular.yml`, passa automaticamente `.env` e collega il frontend alla rete esterna `${BACKEND_DOCKER_NETWORK}` (default `backend_default`).
+`start` usa `docker-compose.angular.yml`, esegue la build dell'immagine frontend e serve gli asset statici con `nginx`. Non usa `ng serve`. Passa automaticamente `.env` e collega il frontend alla rete esterna `${BACKEND_DOCKER_NETWORK}` (default `backend_default`).
 
 ## Setup
 

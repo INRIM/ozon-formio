@@ -3,9 +3,20 @@ import { ApplicationConfig } from '@angular/core';
 import { provideAnimationsAsync } from '@angular/platform-browser/animations/async';
 import { provideRouter, withDisabledInitialNavigation } from '@angular/router';
 import { provideDesignAngularKit } from 'design-angular-kit';
+import { FORMIO_CONFIG, FormioAppConfig } from '@formio/angular';
 import Aura from '@primeuix/themes/aura';
 import { providePrimeNG } from 'primeng/config';
 import { routes } from './app.routes';
+import { RuntimeConfigService } from './core/runtime-config.service';
+
+function buildFormioConfig(runtimeConfig: RuntimeConfigService): { apiUrl: string; appUrl: string } {
+  const config = runtimeConfig.getConfig();
+  const baseUrl = config.useProxy ? '/api' : config.backendUrl.replace(/\/+$/, '');
+  return {
+    apiUrl: baseUrl,
+    appUrl: baseUrl
+  };
+}
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -15,6 +26,8 @@ export const appConfig: ApplicationConfig = {
     provideHttpClient(withInterceptorsFromDi()),
     provideAnimationsAsync(),
     provideDesignAngularKit(),
+    { provide: FORMIO_CONFIG, useFactory: buildFormioConfig, deps: [RuntimeConfigService] },
+    FormioAppConfig,
     providePrimeNG({
       ripple: true,
       theme: {

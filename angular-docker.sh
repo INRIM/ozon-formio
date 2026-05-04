@@ -16,11 +16,8 @@ clean() {
   echo "Stopping Angular stack..."
   "$RUNNER" stop || true
 
-  echo "Removing Angular container (if exists)..."
-  docker rm -f ozon-app-web 2>/dev/null || true
-
   echo "Removing Angular image (if exists)..."
-  docker image rm ozon-app-web 2>/dev/null || true
+  docker image rm ozon-app-web:local 2>/dev/null || true
 
   echo "Pruning Docker builder cache..."
   docker builder prune -f || true

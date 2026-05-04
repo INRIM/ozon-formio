@@ -129,6 +129,21 @@ function pickSiteUrl(localEnv, parentEnv) {
   );
 }
 
+function pickSessionCacheTtlMs(localEnv, parentEnv) {
+  const raw = pickFirstString(
+    process.env.sessioncachettlms,
+    process.env.SESSION_CACHE_TTL_MS,
+    localEnv.sessioncachettlms,
+    localEnv.SESSION_CACHE_TTL_MS,
+    parentEnv.sessioncachettlms,
+    parentEnv.SESSION_CACHE_TTL_MS,
+    '30000'
+  );
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) return 30000;
+  return Math.floor(parsed);
+}
+
 function pickAllowedOrigins(localEnv, parentEnv, backendTarget, siteUrl) {
   const configuredOrigins = parseOriginList(
     pickFirstString(
@@ -150,12 +165,13 @@ function pickAllowedOrigins(localEnv, parentEnv, backendTarget, siteUrl) {
   ]);
 }
 
-function buildRuntimeConfig(localEnv, parentEnv, backendTarget, siteUrl, allowedOrigins) {
+function buildRuntimeConfig(localEnv, parentEnv, backendTarget, siteUrl, allowedOrigins, sessionCacheTtlMs) {
   return {
     backendurl: backendTarget,
     siteurl: siteUrl,
     allowedorigins: allowedOrigins,
     useproxy: true,
+    sessioncachettlms: sessionCacheTtlMs,
     authmode: 'keycloak',
     authloginpath: pickFirstString(
       process.env.authloginpath,
@@ -164,7 +180,7 @@ function buildRuntimeConfig(localEnv, parentEnv, backendTarget, siteUrl, allowed
       localEnv.AUTH_LOGIN_PATH,
       parentEnv.authloginpath,
       parentEnv.AUTH_LOGIN_PATH,
-      '/login'
+      '/api/login'
     ),
     authlogoutpath: pickFirstString(
       process.env.authlogoutpath,
@@ -173,7 +189,7 @@ function buildRuntimeConfig(localEnv, parentEnv, backendTarget, siteUrl, allowed
       localEnv.AUTH_LOGOUT_PATH,
       parentEnv.authlogoutpath,
       parentEnv.AUTH_LOGOUT_PATH,
-      '/logout'
+      '/api/logout'
     ),
     authrefreshpath: pickFirstString(
       process.env.authrefreshpath,
@@ -203,6 +219,24 @@ function writeProxyConfig(target) {
       pathRewrite: {
         '^/api': ''
       }
+    },
+    '/auth': {
+      target,
+      secure: false,
+      changeOrigin: true,
+      logLevel: 'warn'
+    },
+    '/login': {
+      target,
+      secure: false,
+      changeOrigin: true,
+      logLevel: 'warn'
+    },
+    '/logout': {
+      target,
+      secure: false,
+      changeOrigin: true,
+      logLevel: 'warn'
     }
   };
 
@@ -213,8 +247,9 @@ function writeProxyConfig(target) {
 const { localEnv, parentEnv } = loadFileEnv();
 const target = pickBackendTarget(localEnv, parentEnv);
 const siteUrl = pickSiteUrl(localEnv, parentEnv);
+const sessionCacheTtlMs = pickSessionCacheTtlMs(localEnv, parentEnv);
 const allowedOrigins = pickAllowedOrigins(localEnv, parentEnv, target, siteUrl);
-const runtimeConfig = buildRuntimeConfig(localEnv, parentEnv, target, siteUrl, allowedOrigins);
+const runtimeConfig = buildRuntimeConfig(localEnv, parentEnv, target, siteUrl, allowedOrigins, sessionCacheTtlMs);
 writeProxyConfig(target);
 writeRuntimeConfigAsset(runtimeConfig);
 console.log(`[ozon-app-web] Angular proxy configured: /api -> ${target}`);

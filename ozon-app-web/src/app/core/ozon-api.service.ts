@@ -26,15 +26,25 @@ class ApiError extends Error {
     }
 }
 
+export interface GetSessionOptions {
+    force?: boolean;
+    maxAgeMs?: number;
+}
+
 @Injectable({ providedIn: 'root' })
 export class OzonApiService {
     private static readonly FORMIO_AUTH_PLUGIN_NAME = 'ozon-formio-auth-headers';
     private static formioAuthPluginRegistered = false;
+    private static readonly DEFAULT_SESSION_CACHE_TTL_MS = 30000;
 
     private readonly unauthorizedSubject = new Subject<void>();
     readonly unauthorized$ = this.unauthorizedSubject.asObservable();
 
     private remotePayloads = new Map<string, { payload: any; headers: Record<string, string> }>();
+    private sessionRequestInFlight: Promise<unknown> | null = null;
+    private lastSessionPayload: unknown = null;
+    private lastSessionFetchedAt = 0;
+    private hasSessionCache = false;
 
     constructor(private readonly runtimeConfig: RuntimeConfigService) {
         this.configureFormioSdk();
@@ -43,6 +53,7 @@ export class OzonApiService {
     getRuntimeConfig(): RuntimeConfig { return this.runtimeConfig.getConfig(); }
     updateRuntimeConfig(p: Partial<RuntimeConfig>): RuntimeConfig {
         const u = this.runtimeConfig.updateConfig(p);
+        this.clearSessionCache();
         this.configureFormioSdk(u);
         return u;
     }
@@ -64,8 +75,37 @@ export class OzonApiService {
         return [];
     }
 
-    getSession(): Promise<unknown> {
-        return this.fetchJson('/get_session');
+    getSession(options: GetSessionOptions = {}): Promise<unknown> {
+        const maxAgeMs = this.resolveSessionCacheTtlMs(options.maxAgeMs);
+        if (!options.force && this.hasSessionCache && (Date.now() - this.lastSessionFetchedAt) < maxAgeMs) {
+            return Promise.resolve(this.lastSessionPayload);
+        }
+        if (this.sessionRequestInFlight) {
+            return this.sessionRequestInFlight;
+        }
+
+        this.sessionRequestInFlight = this.fetchJson('/get_session')
+            .then((payload) => {
+                this.lastSessionPayload = payload;
+                this.lastSessionFetchedAt = Date.now();
+                this.hasSessionCache = true;
+                return payload;
+            })
+            .catch((error) => {
+                this.clearSessionCache();
+                throw error;
+            })
+            .finally(() => {
+                this.sessionRequestInFlight = null;
+            });
+        return this.sessionRequestInFlight;
+    }
+
+    clearSessionCache(): void {
+        this.sessionRequestInFlight = null;
+        this.lastSessionPayload = null;
+        this.lastSessionFetchedAt = 0;
+        this.hasSessionCache = false;
     }
 
     resolveApiUrl(path: string): string {
@@ -215,6 +255,13 @@ export class OzonApiService {
         return this.fetchJson(path, { method: 'POST', body: payload });
     }
 
+    postActionPath(path: string, payload: Record<string, unknown>): Promise<unknown> {
+        const normalized = String(path ?? '').trim();
+        if (!normalized) throw new Error('path action mancante');
+        const prefixed = normalized.startsWith('/') ? normalized : `/${normalized}`;
+        return this.fetchJson(prefixed, { method: 'POST', body: payload });
+    }
+
     deleteAction(name: string, recName: string, payload: Record<string, unknown> = {}): Promise<unknown> {
         const actionName = encodeURIComponent(String(name ?? '').trim());
         const normalizedRec = encodeURIComponent(String(recName ?? '').trim());
@@ -342,7 +389,6 @@ export class OzonApiService {
     }
 
     private attachTokenToFormioRequest(args: any): void {
-        const cfg = this.runtimeConfig.getConfig();
         let url = String(args?.url ?? '');
 
         args.opts = args.opts || {};
@@ -376,15 +422,23 @@ export class OzonApiService {
             } catch (e) { console.error('Interceptor Error:', e); }
         }
 
-        const t = cfg.baseToken ? String(cfg.baseToken).trim() : '';
-        if (t && (args.url.includes('__ozon_remote__') || args.url.startsWith('/') || args.url.includes(cfg.backendUrl))) {
-            headers['Authorization'] = t;
-            headers['Content-Type'] = 'application/json';
-            headers['Accept'] = 'application/json';
-        }
+        const csrf = this.readCsrfCookie();
+        if (csrf) headers['X-CSRF-Token'] = csrf;
+        headers['Content-Type'] = 'application/json';
+        headers['Accept'] = 'application/json';
 
         args.opts.headers = headers;
         args.headers = headers;
+    }
+
+    private resolveSessionCacheTtlMs(override?: number): number {
+        const configured = Number.isFinite(Number(override))
+            ? Number(override)
+            : Number(this.runtimeConfig.getConfig().sessionCacheTtlMs);
+        if (!Number.isFinite(configured) || configured < 0) {
+            return OzonApiService.DEFAULT_SESSION_CACHE_TTL_MS;
+        }
+        return Math.floor(configured);
     }
 
     private async fetchJson(path: string, opt?: any): Promise<any> {
@@ -398,9 +452,9 @@ export class OzonApiService {
     }
 
     private async fetchRaw(path: string, opt?: any): Promise<Response> {
-        let url = this.buildEndpointUrl(path), h = this.buildHeaders(opt?.headers, opt?.skipAuthHeader === true);
+        let url = this.buildEndpointUrl(path), h = this.buildHeaders(opt?.headers);
         const method = String(opt?.method || 'GET').toUpperCase();
-        const init: RequestInit = { method, headers: h };
+        const init: RequestInit = { method, headers: h, credentials: 'include' };
         const explicitRedirect = opt?.redirect as RequestRedirect | undefined;
         init.redirect = explicitRedirect ?? 'manual';
         if (opt?.body) { h.set('Content-Type', 'application/json'); init.body = JSON.stringify(opt.body); }
@@ -438,13 +492,19 @@ export class OzonApiService {
         }
     }
 
-    private buildHeaders(extra?: any, skipAuthHeader = false): Headers {
-        const cfg = this.runtimeConfig.getConfig(), h = new Headers();
+    private buildHeaders(extra?: any): Headers {
+        const h = new Headers();
         h.set('Accept', 'application/json');
         if (extra) Object.entries(extra).forEach(([k, v]: any) => h.set(k, v));
-        const t = String(cfg.baseToken ?? '').trim();
-        if (!skipAuthHeader && t) h.set('Authorization', t);
+        const csrf = this.readCsrfCookie();
+        if (csrf) h.set('X-CSRF-Token', csrf);
         return h;
+    }
+
+    private readCsrfCookie(): string {
+        if (typeof document === 'undefined') return '';
+        const match = document.cookie.match(/(?:^|;\s*)ozon_csrf=([^;]*)/);
+        return match ? decodeURIComponent(match[1]) : '';
     }
 
     private resolveFollowUpUrl(currentUrl: string, location: string): string {

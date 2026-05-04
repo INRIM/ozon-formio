@@ -1,0 +1,453 @@
+import { Injectable } from '@angular/core';
+import { RuntimeAuthMode } from '../models/ozon.types';
+import { OzonApiService } from '../core/ozon-api.service';
+import { BackendAuthService } from '../core/backend-auth.service';
+import { MainManagerService } from '../core/main-manager.service';
+import { AppViewMode, MenuButton, MenuCard } from '../models/app.types';
+
+@Injectable()
+export class AppManagerService {
+    backendUrl = '';
+    baseToken = '';
+    authMode: RuntimeAuthMode = 'keycloak';
+
+    models: string[] = [];
+    selectedModel = '';
+
+    statusText = '';
+    statusError = false;
+    serverErrorRetryVisible = false;
+
+    dashboardMenu: MenuCard[] = [];
+    dashboardCards: MenuCard[] = [];
+    contextualActions: MenuButton[] = [];
+    layoutName = '';
+    layoutSchema: Record<string, unknown> | null = null;
+    appModuleName = 'Mci Service';
+    appVersion = '';
+    appLogoUrl = '';
+    currentUserName = 'Utente';
+    userAvatarUrl = '';
+    isAdminUser = false;
+    builderFeatureEnabled = false;
+    viewMode: AppViewMode = 'dashboard';
+    builderEnabled = false;
+    openedNavMenuGroup = '';
+    userMenuOpen = false;
+    activeDashboardGroup = '';
+    backendSessionReady = false;
+    actionMenuIntegrated = false;
+    actionRouterActive = false;
+
+    sessionLocale = 'it';
+    sessionTimezone = '';
+    sessionAppSettings: Record<string, unknown> = {};
+    userNameSource: 'default' | 'session' | 'layout' = 'default';
+    initialBuilderPreference = false;
+
+    private readonly BUILDER_STORAGE_KEY = 'ozon-app-web.builder';
+
+    constructor(
+        private readonly api: OzonApiService,
+        private readonly backendAuth: BackendAuthService,
+        private readonly mainManager: MainManagerService
+    ) {}
+
+    setStatus(m: string, e: boolean): void { this.statusText = m; this.statusError = e; }
+    errorMessage(e: unknown): string { return e instanceof Error ? e.message : String(e); }
+    isRecord(v: unknown): v is Record<string, unknown> { return !!v && typeof v === 'object' && !Array.isArray(v); }
+
+    applyRuntime(config: { backendUrl: string; baseToken: string; authMode: RuntimeAuthMode }): void {
+        this.backendUrl = config.backendUrl;
+        this.baseToken = config.baseToken;
+        this.authMode = config.authMode;
+    }
+
+    initializeBuilderPreference(): void {
+        const fromQuery = this.readBuilderFromQuery();
+        const fromStorage = this.readBuilderFromStorage();
+        this.initialBuilderPreference = fromQuery ?? fromStorage ?? false;
+        this.setBuilderEnabled(this.initialBuilderPreference, false);
+    }
+
+    setBuilderEnabled(enabled: boolean, persist: boolean): void {
+        const canEnable = this.isAdminUser;
+        this.builderEnabled = canEnable ? Boolean(enabled) : false;
+        if (!this.builderEnabled) {
+            this.openedNavMenuGroup = '';
+        }
+        if (persist && typeof window !== 'undefined') {
+            window.localStorage.setItem(this.BUILDER_STORAGE_KEY, this.builderEnabled ? '1' : '0');
+        }
+    }
+
+    private readBuilderFromQuery(): boolean | null {
+        if (typeof window === 'undefined') return null;
+        const value = new URLSearchParams(window.location.search).get('builder');
+        if (value == null) return null;
+        const normalized = value.trim().toLowerCase();
+        if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+        if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+        return null;
+    }
+
+    private readBuilderFromStorage(): boolean | null {
+        if (typeof window === 'undefined') return null;
+        const value = window.localStorage.getItem(this.BUILDER_STORAGE_KEY);
+        if (value == null) return null;
+        const normalized = value.trim().toLowerCase();
+        if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+        if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+        return null;
+    }
+
+    async loadSession(preloadedPayload?: unknown): Promise<void> {
+        try {
+            const payload = preloadedPayload ?? await this.api.getSession();
+            const session = this.extractSessionRecord(payload);
+            if (!session) return;
+
+            const user = this.isRecord(session['user']) ? session['user'] : {};
+            this.sessionLocale = this.resolveSessionLocale(session);
+            this.sessionTimezone = this.resolveSessionTimezone(session);
+            const sessionUserName = this.resolveSessionUserName(session);
+            if (sessionUserName) {
+                this.currentUserName = sessionUserName;
+                this.userNameSource = 'session';
+            }
+            this.userAvatarUrl = this.readFirstString(user['avatar'], this.userAvatarUrl);
+            this.isAdminUser = this.resolveSessionAdminFlag(session);
+            this.builderFeatureEnabled = this.isAdminUser;
+            this.sessionAppSettings = this.extractSessionSettings(session);
+            this.applySessionSettings(this.sessionAppSettings);
+            this.setBuilderEnabled(this.initialBuilderPreference, false);
+        } catch {
+            this.sessionLocale = 'it';
+            this.sessionTimezone = '';
+            this.isAdminUser = false;
+            this.builderFeatureEnabled = false;
+            this.setBuilderEnabled(false, false);
+        }
+    }
+
+    login(): boolean {
+        if (typeof window === 'undefined') return false;
+        const loginUrl = this.backendAuth.getLoginUrl();
+        if (!loginUrl) return false;
+        window.location.href = loginUrl;
+        return true;
+    }
+
+    hardReloadToUrl(url: string): { reloaded: boolean; blocked: boolean; targetUrl: string } {
+        return this.mainManager.hardReloadToUrl(url);
+    }
+
+    getLoginUrl(): string {
+        return this.backendAuth.getLoginUrl();
+    }
+
+    logout(): { redirectUrl: string } {
+        return this.backendAuth.logout();
+    }
+
+    async bootstrap(): Promise<{ authenticated: boolean; serverError: boolean }> {
+        return this.backendAuth.bootstrap();
+    }
+
+    consumeSessionPayload(): unknown {
+        return this.backendAuth.consumeSessionPayload();
+    }
+
+    resetClientState(statusMessage: string): void {
+        this.baseToken = '';
+        this.dashboardMenu = [];
+        this.dashboardCards = [];
+        this.contextualActions = [];
+        this.selectedModel = '';
+        this.currentUserName = 'Utente';
+        this.userAvatarUrl = '';
+        this.sessionLocale = 'it';
+        this.sessionTimezone = '';
+        this.isAdminUser = false;
+        this.builderFeatureEnabled = false;
+        this.userNameSource = 'default';
+        this.viewMode = 'dashboard';
+        this.actionMenuIntegrated = false;
+        this.actionRouterActive = false;
+        this.userMenuOpen = false;
+        this.backendSessionReady = false;
+        this.openedNavMenuGroup = '';
+        this.setStatus(statusMessage, false);
+    }
+
+    toggleUserMenu(): void {
+        this.userMenuOpen = !this.userMenuOpen;
+    }
+
+    openTopMenu(card: MenuCard): void {
+        if (!card?.group_id) return;
+        this.activeDashboardGroup = card.group_id;
+        this.openedNavMenuGroup = this.openedNavMenuGroup === card.group_id ? '' : card.group_id;
+    }
+
+    closeTopMenu(): void {
+        this.openedNavMenuGroup = '';
+    }
+
+    syncActiveDashboardGroup(topMenuCards: MenuCard[]): void {
+        if (!topMenuCards.length) {
+            this.activeDashboardGroup = '';
+            this.openedNavMenuGroup = '';
+            return;
+        }
+        if (!topMenuCards.some(card => card.group_id === this.activeDashboardGroup)) {
+            this.activeDashboardGroup = topMenuCards[0].group_id;
+        }
+        if (this.openedNavMenuGroup && !topMenuCards.some(card => card.group_id === this.openedNavMenuGroup)) {
+            this.openedNavMenuGroup = '';
+        }
+    }
+
+    applyLayoutResponse(
+        payload: unknown,
+        extractActionResponse: (p: unknown) => (Record<string, unknown> & { mode?: string; data?: unknown }) | null,
+        normalizeActionMenuCards: (d: unknown) => MenuCard[],
+        cloneSchema: (s: Record<string, unknown>) => Record<string, unknown>,
+        topMenuCards: MenuCard[]
+    ): void {
+        const response = extractActionResponse(payload);
+        if (!response || String(response['mode'] ?? '').trim() !== 'layout') {
+            throw new Error('Risposta layout non valida');
+        }
+        this.actionRouterActive = true;
+        const data = this.isRecord(response['data']) ? response['data'] : {};
+        const schema = this.isRecord(data['schema']) ? data['schema'] : null;
+        this.layoutName = this.readFirstString(data['layout'], schema?.['rec_name'], this.layoutName || 'default') || 'default';
+        this.layoutSchema = schema ? cloneSchema(schema) : null;
+
+        const layoutSettings = this.isRecord(data['settings']) ? data['settings'] : {};
+        const settings = { ...this.sessionAppSettings, ...layoutSettings };
+        const moduleName = this.readFirstString(
+            settings['module_name'],
+            settings['module_label'],
+            settings['moduleName'],
+            this.appModuleName
+        );
+        this.appModuleName = moduleName || this.appModuleName;
+        this.appVersion = this.readFirstString(settings['app_version'], settings['version'], this.appVersion);
+        const logoRaw = this.readFirstString(settings['logo'], settings['logo_img_url'], settings['logo_img'], settings['logo_url']);
+        this.appLogoUrl = this.resolveBrandAssetUrl(logoRaw);
+
+        const runtimeUser = this.readFirstString(settings['user_name'], settings['username'], settings['user']);
+        if (runtimeUser && this.userNameSource === 'default') {
+            this.currentUserName = runtimeUser;
+            this.userNameSource = 'layout';
+        }
+
+        const menus = normalizeActionMenuCards(data['menu']);
+        this.dashboardMenu = menus;
+        this.actionMenuIntegrated = menus.length > 0;
+        this.syncActiveDashboardGroup(topMenuCards);
+    }
+
+    applyMenuResponse(
+        payload: unknown,
+        extractActionResponse: (p: unknown) => (Record<string, unknown> & { mode?: string; data?: unknown }) | null,
+        normalizeActionMenuCards: (d: unknown) => MenuCard[],
+        topMenuCards: MenuCard[]
+    ): void {
+        const response = extractActionResponse(payload);
+        if (!response || String(response['mode'] ?? '').trim() !== 'menu') {
+            throw new Error('Risposta menu non valida');
+        }
+        this.actionRouterActive = true;
+        this.dashboardMenu = normalizeActionMenuCards(response['data']);
+        this.syncActiveDashboardGroup(topMenuCards);
+        this.actionMenuIntegrated = this.dashboardMenu.length > 0;
+    }
+
+    applyDashboardResponse(
+        payload: unknown,
+        extractActionResponse: (p: unknown) => (Record<string, unknown> & { mode?: string; data?: unknown }) | null,
+        normalizeActionCards: (d: unknown) => MenuCard[]
+    ): void {
+        const response = extractActionResponse(payload);
+        if (!response || String(response['mode'] ?? '').trim() !== 'card') {
+            throw new Error('Risposta dashboard non valida');
+        }
+        this.actionRouterActive = true;
+        this.dashboardCards = normalizeActionCards(response['data']);
+    }
+
+    applySessionSettings(settings: Record<string, unknown>): void {
+        if (!settings || !Object.keys(settings).length) return;
+        const moduleName = this.readFirstString(settings['module_name'], settings['module_label'], this.appModuleName);
+        if (moduleName) this.appModuleName = moduleName;
+        const version = this.readFirstString(settings['app_version'], settings['version'], this.appVersion);
+        if (version) this.appVersion = version;
+        const logo = this.readFirstString(settings['logo'], settings['logo_img_url'], settings['logo_img'], settings['logo_url']);
+        if (logo) this.appLogoUrl = this.resolveBrandAssetUrl(logo);
+    }
+
+    resolveBrandAssetUrl(raw: string): string {
+        const value = String(raw ?? '').trim();
+        if (!value) return '';
+        if (/^(https?:)?\/\//i.test(value) || value.startsWith('data:')) return value;
+        const normalized = `/${value.replace(/^\/+/, '')}`;
+        if (normalized.startsWith('/api/')) return normalized;
+        if (this.backendUrl && /^https?:\/\//i.test(this.backendUrl)) {
+            try {
+                return new URL(normalized, this.backendUrl).toString();
+            } catch {
+                return normalized;
+            }
+        }
+        return `/api${normalized}`;
+    }
+
+    readFirstString(...candidates: unknown[]): string {
+        for (const entry of candidates) {
+            if (typeof entry === 'string' && entry.trim()) return entry.trim();
+        }
+        return '';
+    }
+
+    toOptionalBooleanFlag(value: unknown): boolean | null {
+        if (typeof value === 'boolean') return value;
+        if (typeof value === 'number') return value > 0;
+        if (typeof value === 'string') {
+            const normalized = value.trim().toLowerCase();
+            if (!normalized) return null;
+            if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+            if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+            return null;
+        }
+        return null;
+    }
+
+    toBooleanFlag(value: unknown): boolean {
+        if (typeof value === 'boolean') return value;
+        if (typeof value === 'number') return value > 0;
+        if (typeof value === 'string') {
+            const normalized = value.trim().toLowerCase();
+            if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+            if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+        }
+        return Boolean(value);
+    }
+
+    private resolveSessionUserName(session: Record<string, unknown>): string {
+        const user = this.isRecord(session['user']) ? session['user'] : {};
+        const profile = this.isRecord(session['profile']) ? session['profile'] : {};
+        return this.readFirstString(
+            session['name'], session['full_name'], session['display_name'], session['uid'], session['user_name'],
+            user['name'], user['full_name'], user['display_name'], user['uid'], user['user_name'],
+            profile['name'], profile['full_name'], profile['display_name'], profile['username']
+        );
+    }
+
+    private resolveSessionAdminFlag(session: Record<string, unknown>): boolean {
+        if (this.toOptionalBooleanFlag(session['is_admin']) === true) return true;
+        const topGroups = Array.isArray(session['groups']) ? session['groups'] as unknown[] : [];
+        const userObj = this.isRecord(session['user']) ? session['user'] : {};
+        const userGroups = Array.isArray(userObj['groups']) ? userObj['groups'] as unknown[] : [];
+        const allGroups = [...topGroups, ...userGroups];
+        console.log('[admin] is_admin=%s groups=%o', session['is_admin'], allGroups);
+        const result = allGroups.some(g => {
+            const name = typeof g === 'string' ? g : (this.isRecord(g) ? String((g as Record<string, unknown>)['name'] ?? '') : '');
+            return name === 'Admins' || name === '/Admins';
+        });
+        console.log('[admin] resolveSessionAdminFlag=%s', result);
+        return result;
+    }
+
+    private resolveSessionLocale(session: Record<string, unknown>): string {
+        const user = this.isRecord(session['user']) ? session['user'] : {};
+        const profile = this.isRecord(session['profile']) ? session['profile'] : {};
+        const settings = this.extractSessionSettings(session);
+        const locale = this.readFirstString(
+            session['locale'], session['lang'], session['language'], session['user_locale'],
+            user['locale'], user['lang'], user['language'], user['user_locale'],
+            profile['locale'], profile['lang'], profile['language'], profile['user_locale'],
+            settings['locale'], settings['lang'], settings['language']
+        );
+        return this.normalizeSessionLocale(locale);
+    }
+
+    private resolveSessionTimezone(session: Record<string, unknown>): string {
+        const user = this.isRecord(session['user']) ? session['user'] : {};
+        const profile = this.isRecord(session['profile']) ? session['profile'] : {};
+        const settings = this.extractSessionSettings(session);
+        const timezone = this.readFirstString(
+            session['tz'], session['timezone'],
+            user['tz'], user['timezone'],
+            profile['tz'], profile['timezone'],
+            settings['tz'], settings['timezone']
+        );
+        return this.normalizeSessionTimezone(timezone);
+    }
+
+    private normalizeSessionLocale(value: unknown): string {
+        const raw = String(value ?? '').trim();
+        if (!raw) return 'it';
+        const normalized = raw.replace(/_/g, '-');
+        try {
+            const [canonical] = Intl.getCanonicalLocales(normalized);
+            return canonical || 'it';
+        } catch {
+            return 'it';
+        }
+    }
+
+    private normalizeSessionTimezone(value: unknown): string {
+        const raw = String(value ?? '').trim();
+        if (!raw) return '';
+        try {
+            new Intl.DateTimeFormat('it', { timeZone: raw }).format(new Date());
+            return raw;
+        } catch {
+            return '';
+        }
+    }
+
+    private extractSessionSettings(session: Record<string, unknown>): Record<string, unknown> {
+        const app = this.isRecord(session['app']) ? session['app'] : {};
+        const settings = this.isRecord(app['settings']) ? app['settings'] : {};
+        const settingsDataValue = this.isRecord(settings['data_value']) ? settings['data_value'] : {};
+        return { ...settings, ...settingsDataValue };
+    }
+
+    private scoreSessionRecord(record: Record<string, unknown>): number {
+        const user = this.isRecord(record['user']) ? record['user'] : {};
+        const settings = this.extractSessionSettings(record);
+        let score = 0;
+        if (Object.keys(user).length) score += 3;
+        if (this.resolveSessionUserName(record)) score += 3;
+        if (this.resolveSessionAdminFlag(record)) score += 2;
+        if (this.isRecord(record['app'])) score += 1;
+        if (Object.keys(settings).length) score += 1;
+        return score;
+    }
+
+    private extractSessionRecord(payload: unknown): Record<string, unknown> | null {
+        let target: unknown = payload;
+        for (let i = 0; i < 4; i += 1) {
+            if (this.isRecord(target) && this.isRecord(target['content'])) {
+                target = target['content']['data'] ?? target['content'];
+                continue;
+            }
+            if (this.isRecord(target) && Array.isArray(target['data'])) {
+                target = target['data'];
+                continue;
+            }
+            break;
+        }
+        if (Array.isArray(target)) {
+            const records = target.filter((entry): entry is Record<string, unknown> => this.isRecord(entry));
+            if (!records.length) return null;
+            records.sort((left, right) => this.scoreSessionRecord(right) - this.scoreSessionRecord(left));
+            return records[0];
+        }
+        return this.isRecord(target) ? target : null;
+    }
+}

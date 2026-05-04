@@ -32,7 +32,7 @@ cd ..
 BACKEND_DOCKER_NETWORK=nome_rete_backend ./angular-docker.sh start
 ```
 
-Il compose usa e passa automaticamente il file `.env` del progetto root.
+Il compose usa e passa automaticamente il file `.env` del progetto root, builda l'app Angular e la serve come sito statico tramite `nginx`. Non usa `ng serve`.
 
 ## Tema UI
 
@@ -60,6 +60,7 @@ Builder mode:
 
 Auth Keycloak:
 - `authMode=keycloak` abilita il bootstrap sessione tramite `GET /get_session`
+- `sessionCacheTtlMs` applica throttling/caching a `GET /get_session` con default `30000ms`
 - `ozon-formio` non costruisce mai `x-remote-user`: l'header trusted deve arrivare dal reverse proxy
 - il token interno ritornato da `get_session` viene solo riallineato nel runtime locale
 - login/logout restano endpoint configurabili del boundary proxy (`authLoginPath`, `authLogoutPath`)
@@ -83,4 +84,4 @@ Action router alignment:
 ## Note API
 
 `POST /list/{model}`: il client gestisce sia JSON sia `application/x-ndjson` a stream.
-Per evitare CORS durante sviluppo Angular, il client usa `/api/*` e `ng serve` lo inoltra verso `backendurl` (generato in `proxy.conf.json` all'avvio).
+Per evitare CORS durante sviluppo Angular locale, il client usa `/api/*` e `ng serve` lo inoltra verso `backendurl` (generato in `proxy.conf.json` all'avvio). Nel compose Docker, invece, il proxy viene gestito direttamente da `nginx`.

@@ -6,6 +6,7 @@ window.__OZON_APP_CONFIG__ = Object.assign(window.__OZON_APP_CONFIG__ || {}, {
     "http://ozon-env-app:8000"
   ],
   "useproxy": true,
+  "sessioncachettlms": 30000,
   "authmode": "keycloak",
   "authloginpath": "/login",
   "authlogoutpath": "/logout",

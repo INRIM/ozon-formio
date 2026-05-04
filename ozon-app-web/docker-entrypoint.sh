@@ -2,9 +2,10 @@
 set -e
 
 SITE_URL="${SITE_URL:-}"
-AUTH_LOGIN_PATH="${AUTH_LOGIN_PATH:-/login}"
-AUTH_LOGOUT_PATH="${AUTH_LOGOUT_PATH:-/logout}"
-AUTH_REFRESH_PATH="${AUTH_REFRESH_PATH:-/refresh}"
+SESSION_CACHE_TTL_MS="${SESSION_CACHE_TTL_MS:-30000}"
+AUTH_LOGIN_PATH="${AUTH_LOGIN_PATH:-/api/login}"
+AUTH_LOGOUT_PATH="${AUTH_LOGOUT_PATH:-/api/logout}"
+AUTH_REFRESH_PATH="${AUTH_REFRESH_PATH:-/api/auth/refresh}"
 BACKEND_UPSTREAM="${BACKEND_UPSTREAM:-http://app:8000}"
 
 # Inject runtime config for the Angular app
@@ -12,6 +13,7 @@ cat > /usr/share/nginx/html/assets/runtime-config.js << JSEOF
 window.__OZON_APP_CONFIG__ = Object.assign(window.__OZON_APP_CONFIG__ || {}, {
   "siteurl": "${SITE_URL}",
   "useproxy": true,
+  "sessioncachettlms": "${SESSION_CACHE_TTL_MS}",
   "authmode": "keycloak",
   "authloginpath": "${AUTH_LOGIN_PATH}",
   "authlogoutpath": "${AUTH_LOGOUT_PATH}",

@@ -12,6 +12,7 @@ describe('BackendAuthService', () => {
     window.localStorage.clear();
     apiMock = jasmine.createSpyObj<OzonApiService>('OzonApiService', [
       'getSession',
+      'clearSessionCache',
       'resolveApiUrl'
     ]);
     apiMock.resolveApiUrl.and.callFake((path: string) => `/api${String(path ?? '').replace(/^\/api/, '')}`);
@@ -28,6 +29,7 @@ describe('BackendAuthService', () => {
       authLoginPath: '/login',
       authLogoutPath: '/logout',
       authRefreshPath: '/refresh',
+      sessionCacheTtlMs: 30000,
       baseToken: ''
     });
     service = TestBed.inject(BackendAuthService);
@@ -87,8 +89,19 @@ describe('BackendAuthService', () => {
 
     expect(result.authenticated).toBeFalse();
     expect(result.loginRequired).toBeTrue();
-    expect(result.redirectUrl).toBe('/api/login');
+    expect(result.redirectUrl).toBe(`${window.location.origin}/login`);
     expect(runtimeConfig.getConfig().baseToken).toBe('');
+  });
+
+  it('should ask for login when get_session resolves to non-session payload', async () => {
+    apiMock.getSession.and.resolveTo('<html>keycloak login</html>');
+
+    const result = await service.bootstrap();
+
+    expect(result.authenticated).toBeFalse();
+    expect(result.loginRequired).toBeTrue();
+    expect(result.redirectUrl).toBe(`${window.location.origin}/login`);
+    expect(service.consumeSessionPayload()).toBeNull();
   });
 
   it('should clear token and expose logout navigation url', () => {
@@ -96,7 +109,20 @@ describe('BackendAuthService', () => {
 
     const result = service.logout();
 
-    expect(result.redirectUrl).toBe('/api/logout');
+    expect(result.redirectUrl).toBe(`${window.location.origin}/logout`);
     expect(runtimeConfig.getConfig().baseToken).toBe('');
+    expect(apiMock.clearSessionCache).toHaveBeenCalled();
+  });
+
+  it('should force get_session on explicit refresh', async () => {
+    apiMock.getSession.and.resolveTo({
+      uid: 'alice',
+      token: 'kc-token'
+    });
+
+    const result = await service.refresh();
+
+    expect(result.authenticated).toBeTrue();
+    expect(apiMock.getSession).toHaveBeenCalledOnceWith({ force: true });
   });
 });

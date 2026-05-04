@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import { EMPTY } from 'rxjs';
 import { AppComponent } from './app.component';
 import { OzonApiService } from './core/ozon-api.service';
 import { MainManagerService } from './core/main-manager.service';
@@ -7,11 +8,10 @@ import { BackendAuthService } from './core/backend-auth.service';
 const runtimeConfig = {
   backendUrl: '',
   siteUrl: '',
-  allowedOrigins: [],
+  allowedOrigins: [] as string[],
   baseToken: '',
-  tokenHeader: 'Authorization',
-  tokenPrefix: '',
   useProxy: true,
+  sessionCacheTtlMs: 30000,
   authMode: 'none' as const,
   authLoginPath: '/login',
   authLogoutPath: '/logout',
@@ -71,6 +71,7 @@ describe('AppComponent', () => {
       payloadLabel: 'default',
       retries: 0
     });
+    (apiMock as any).unauthorized$ = EMPTY;
     mainManagerMock = jasmine.createSpyObj<MainManagerService>('MainManagerService', [
       'hardReloadToUrl'
     ]);
@@ -91,14 +92,16 @@ describe('AppComponent', () => {
       loginRequired: false,
       redirectUrl: '',
       remoteUser: '',
-      refreshed: false
+      refreshed: false,
+      serverError: false
     });
     backendAuthMock.logout.and.returnValue({
       authenticated: false,
       loginRequired: false,
       redirectUrl: '/api/logout',
       remoteUser: '',
-      refreshed: false
+      refreshed: false,
+      serverError: false
     });
     backendAuthMock.getLoginUrl.and.returnValue('/api/login');
     backendAuthMock.isEnabled.and.returnValue(false);
@@ -139,7 +142,7 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance;
     app.ngOnInit();
 
-    expect(app.themeMode).toBe('dark');
+    expect(app.theme.themeMode).toBe('dark');
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
     expect(document.documentElement.getAttribute('data-bs-theme')).toBe('dark');
   });
@@ -149,12 +152,12 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance;
 
     app.onThemeSwitchChanged(true);
-    expect(app.themeMode).toBe('dark');
+    expect(app.theme.themeMode).toBe('dark');
     expect(window.localStorage.getItem('ozon-app-web.theme')).toBe('dark');
     expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
 
     app.onThemeSwitchChanged(false);
-    expect(app.themeMode).toBe('light');
+    expect(app.theme.themeMode).toBe('light');
     expect(window.localStorage.getItem('ozon-app-web.theme')).toBe('light');
     expect(document.documentElement.getAttribute('data-theme')).toBe('light');
   });
@@ -168,7 +171,8 @@ describe('AppComponent', () => {
       loginRequired: false,
       redirectUrl: '',
       remoteUser: 'alice',
-      refreshed: true
+      refreshed: true,
+      serverError: false
     });
 
     app.ngOnInit();
@@ -181,7 +185,7 @@ describe('AppComponent', () => {
   it('should redirect to backend login endpoint in keycloak mode', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
-    app.authMode = 'keycloak';
+    app.appManager.authMode = 'keycloak';
 
     app.login();
 
@@ -192,10 +196,10 @@ describe('AppComponent', () => {
   it('should load models without a static token when keycloak mode is enabled', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
-    app.authMode = 'keycloak';
+    app.appManager.authMode = 'keycloak';
     apiMock.getModels.and.resolveTo(['res.partner']);
 
-    await app.loadModels();
+    await app.actionManager.loadModels();
 
     expect(apiMock.getModels).toHaveBeenCalled();
     expect(app.models).toEqual(['res.partner']);
@@ -225,7 +229,7 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance;
     app.selectedModel = 'anagrafica';
 
-    await app.loadSchema();
+    await app.actionManager.loadSchema();
 
     expect(apiMock.getRemoteSelect).toHaveBeenCalledWith(
       jasmine.objectContaining({
@@ -248,6 +252,43 @@ describe('AppComponent', () => {
     expect((selectComponent['data'] as Record<string, unknown>)['values']).toEqual([
       { label: 'Italia', value: 'IT' },
       { label: 'Francia', value: 'FR' }
+    ]);
+  });
+
+  it('should preserve inline dataSrc values options without calling remote select endpoint', async () => {
+    apiMock.getRecordSchema.and.resolveTo({
+      content: {
+        mode: 'form',
+        schema: [
+          {
+            type: 'select',
+            key: 'status',
+            dataSrc: 'values',
+            data: {
+              values: [
+                { label: 'Attivo', value: 'active' },
+                { label: 'Inattivo', value: 'inactive' }
+              ]
+            }
+          }
+        ]
+      }
+    });
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    app.selectedModel = 'anagrafica';
+
+    await app.actionManager.loadSchema();
+
+    expect(apiMock.getRemoteSelect).not.toHaveBeenCalled();
+    const schema = app.formSchema as Record<string, unknown>;
+    const components = schema['components'] as Array<Record<string, unknown>>;
+    const select = components[0];
+    expect(select['dataSrc']).toBe('values');
+    expect((select['data'] as Record<string, unknown>)['values']).toEqual([
+      { label: 'Attivo', value: 'active' },
+      { label: 'Inattivo', value: 'inactive' }
     ]);
   });
 
@@ -277,9 +318,9 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance;
     app.selectedModel = 'anagrafica';
 
-    await app.loadSchema();
-    app.selectedRecordName = 'r1';
-    await app.openSelectedRecord();
+    await app.actionManager.loadSchema();
+    app.tableManager.selectedRecordName = 'r1';
+    await app.actionManager.openSelectedRecord();
 
     expect(apiMock.getRemoteSelect.calls.count()).toBe(1);
   });
@@ -305,7 +346,7 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance;
     app.selectedModel = 'ordine';
 
-    await app.loadSchema();
+    await app.actionManager.loadSchema();
 
     expect(apiMock.getRemoteSelect).toHaveBeenCalledWith(
       jasmine.objectContaining({
@@ -350,7 +391,7 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance;
     app.selectedModel = 'ordine';
 
-    await app.loadSchema();
+    await app.actionManager.loadSchema();
 
     const schema = app.formSchema as Record<string, unknown>;
     const components = schema['components'] as Array<Record<string, unknown>>;
@@ -375,12 +416,12 @@ describe('AppComponent', () => {
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
-    await app.loadActionMenu();
+    await app.actionManager.loadActionMenu();
 
-    expect(app.dashboardMenu.length).toBe(1);
-    expect(app.dashboardMenu[0].title).toBe('Main');
-    expect(app.dashboardMenu[0].group_id).toBe('Main');
-    expect(app.dashboardMenu[0].buttons[0].url_action).toBe('/action/open_anagrafica');
+    expect(app.appManager.dashboardMenu.length).toBe(1);
+    expect(app.appManager.dashboardMenu[0].title).toBe('Main');
+    expect(app.appManager.dashboardMenu[0].group_id).toBe('Main');
+    expect(app.appManager.dashboardMenu[0].buttons[0].url_action).toBe('/action/open_anagrafica');
   });
 
   it('should group flat menu payload by menu_group', async () => {
@@ -395,10 +436,10 @@ describe('AppComponent', () => {
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
-    await app.loadActionMenu();
+    await app.actionManager.loadActionMenu();
 
-    expect(app.dashboardMenu.length).toBe(2);
-    const configGroup = app.dashboardMenu.find((entry) => entry.group_id === 'Config');
+    expect(app.appManager.dashboardMenu.length).toBe(2);
+    const configGroup = app.appManager.dashboardMenu.find((entry) => entry.group_id === 'Config');
     expect(configGroup).toBeTruthy();
     expect(configGroup?.buttons.length).toBe(2);
     expect(configGroup?.buttons.map(button => button.url_action)).toEqual([
@@ -419,11 +460,11 @@ describe('AppComponent', () => {
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
-    await app.loadActionMenu();
+    await app.actionManager.loadActionMenu();
 
-    expect(app.dashboardMenu.length).toBe(1);
-    expect(app.dashboardMenu[0].group_id).toBe('Admin');
-    const drillDownGroups = app.menuDrilldownGroups(app.dashboardMenu[0]);
+    expect(app.appManager.dashboardMenu.length).toBe(1);
+    expect(app.appManager.dashboardMenu[0].group_id).toBe('Admin');
+    const drillDownGroups = app.menuDrilldownGroups(app.appManager.dashboardMenu[0]);
     expect(drillDownGroups.length).toBe(2);
     expect(drillDownGroups.map(group => group.group_id)).toEqual(['Config', 'Documenti']);
     expect(drillDownGroups[0].buttons.length).toBe(2);
@@ -444,19 +485,19 @@ describe('AppComponent', () => {
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
-    await app.loadActionMenu();
-    app.builderEnabled = true;
+    await app.actionManager.loadActionMenu();
+    app.appManager.builderEnabled = true;
     const originalPath = window.location.pathname;
 
     try {
-      expect(app.dashboardMenu.length).toBe(1);
-      expect(app.dashboardMenu[0].group_id).toBe('Design');
+      expect(app.appManager.dashboardMenu.length).toBe(1);
+      expect(app.appManager.dashboardMenu[0].group_id).toBe('Design');
 
-      app.openTopMenu(app.dashboardMenu[0]);
+      app.openTopMenu(app.appManager.dashboardMenu[0]);
       expect(app.openedNavMenuGroup).toBe('Design');
       expect(apiMock.getAction).not.toHaveBeenCalled();
 
-      const drillDownGroups = app.menuDrilldownGroups(app.dashboardMenu[0]);
+      const drillDownGroups = app.menuDrilldownGroups(app.appManager.dashboardMenu[0]);
       expect(drillDownGroups.length).toBe(1);
       expect(drillDownGroups[0].buttons.map(button => button.label)).toEqual(['Form', 'Resource', 'Layout']);
       expect(drillDownGroups[0].buttons.map(button => button.action_type)).toEqual(['window', 'window', 'window']);
@@ -466,7 +507,7 @@ describe('AppComponent', () => {
         '/action/list_layout'
       ]);
 
-      await app.runMenuAction(drillDownGroups[0].buttons[0]);
+      await app.actionManager.runMenuAction(drillDownGroups[0].buttons[0]);
       expect(apiMock.getAction).toHaveBeenCalledWith(
         'list_form',
         jasmine.objectContaining({ recName: '' })
@@ -496,7 +537,7 @@ describe('AppComponent', () => {
 
     expect(app.menuActionHref(button)).toBe('/action/right_path');
 
-    await app.runMenuAction(button);
+    await app.actionManager.runMenuAction(button);
     expect(apiMock.getAction).toHaveBeenCalledWith(
       'right_path',
       jasmine.objectContaining({ recName: '' })
@@ -517,7 +558,7 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    expect(app.resolveBootstrapItaliaIconHref({ leftIcon: '/bootstrap-italia/dist/svg/sprites.svg#it-search' })).toBe(
+    expect(app.actionManager.resolveBootstrapItaliaIconHref({ leftIcon: '/bootstrap-italia/dist/svg/sprites.svg#it-search' })).toBe(
       '/bootstrap-italia/dist/svg/sprites.svg#it-search'
     );
   });
@@ -529,7 +570,7 @@ describe('AppComponent', () => {
 
     try {
       window.history.replaceState({}, '', '/api/action/form_form_doc_bene_servizi/ORDINE63423');
-      await app['handleLocationRoute'](false);
+      await app.actionManager["handleLocationRoute"](false);
     } finally {
       window.history.replaceState({}, '', originalPath || '/');
     }
@@ -559,7 +600,7 @@ describe('AppComponent', () => {
     const originalPath = window.location.pathname;
 
     try {
-      await app['runActionRoute']('/action/list_doc_beni_servizi/ORDINE132873');
+      await app.actionManager["runActionRoute"]('/action/list_doc_beni_servizi/ORDINE132873');
     } finally {
       window.history.replaceState({}, '', originalPath || '/');
     }
@@ -604,7 +645,7 @@ describe('AppComponent', () => {
     const originalPath = window.location.pathname;
 
     try {
-      await app['runActionRoute']('/action/list_doc_beni_servizi/ORDINE132873');
+      await app.actionManager["runActionRoute"]('/action/list_doc_beni_servizi/ORDINE132873');
     } finally {
       window.history.replaceState({}, '', originalPath || '/');
     }
@@ -624,7 +665,7 @@ describe('AppComponent', () => {
 
     try {
       window.history.replaceState({}, '', '/action/form_form_doc_bene_servizi/ORDINE63423');
-      await app['bootstrapAppData']();
+      await app.actionManager["bootstrapAppData"]();
     } finally {
       window.history.replaceState({}, '', originalPath || '/');
     }
@@ -653,7 +694,7 @@ describe('AppComponent', () => {
 
     try {
       window.history.replaceState({}, '', '/action/form_form_doc_bene_servizi/ORDINE63423');
-      await app['handleLocationRoute'](false);
+      await app.actionManager["handleLocationRoute"](false);
     } finally {
       window.history.replaceState({}, '', originalPath || '/');
     }
@@ -687,7 +728,7 @@ describe('AppComponent', () => {
 
     try {
       window.history.replaceState({}, '', '/action/form_form_doc_bene_servizi/ORDINE63423');
-      await app['handleLocationRoute'](false);
+      await app.actionManager["handleLocationRoute"](false);
     } finally {
       window.history.replaceState({}, '', originalPath || '/');
     }
@@ -724,7 +765,7 @@ describe('AppComponent', () => {
 
     try {
       window.history.replaceState({}, '', '/action/form_form_doc_bene_servizi/ORDINE63423');
-      await app['handleLocationRoute'](false);
+      await app.actionManager["handleLocationRoute"](false);
     } finally {
       window.history.replaceState({}, '', originalPath || '/');
     }
@@ -789,7 +830,7 @@ describe('AppComponent', () => {
 
     try {
       window.history.replaceState({}, '', '/action/form_form_doc_bene_servizi/ORDINE63423');
-      await app['handleLocationRoute'](false);
+      await app.actionManager["handleLocationRoute"](false);
     } finally {
       window.history.replaceState({}, '', originalPath || '/');
     }
@@ -818,10 +859,10 @@ describe('AppComponent', () => {
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
-    app.currentActionName = 'form_form_doc_bene_servizi';
-    app.selectedRecordName = 'ORDINE63423';
+    app.actionManager.currentActionName = 'form_form_doc_bene_servizi';
+    app.tableManager.selectedRecordName = 'ORDINE63423';
 
-    await app['applyActionResponse'](actionResponse);
+    await app.actionManager["applyActionResponse"](actionResponse);
 
     expect(app.viewMode).toBe('form');
     expect(app.formSchema).toBeTruthy();
@@ -853,7 +894,7 @@ describe('AppComponent', () => {
 
     try {
       window.history.replaceState({}, '', '/action/form_form_doc_bene_servizi/ORDINE63424');
-      await app['handleLocationRoute'](false);
+      await app.actionManager["handleLocationRoute"](false);
     } finally {
       window.history.replaceState({}, '', originalPath || '/');
     }
@@ -886,7 +927,7 @@ describe('AppComponent', () => {
 
     try {
       window.history.replaceState({}, '', '/action/form_form_doc_bene_servizi/ORDINE63425');
-      await app['handleLocationRoute'](false);
+      await app.actionManager["handleLocationRoute"](false);
     } finally {
       window.history.replaceState({}, '', originalPath || '/');
     }
@@ -907,8 +948,8 @@ describe('AppComponent', () => {
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
-    app.currentActionName = 'list_posizione';
-    app.viewMode = 'list';
+    app.actionManager.currentActionName = 'list_posizione';
+    app.appManager.viewMode = 'list';
 
     const row = { __rowid: 1, __rec_name: 'Gov.30459', rec_name: 'Gov.30459' };
     await app.onTableRowDblClick(row as any, new MouseEvent('dblclick'));
@@ -965,8 +1006,8 @@ describe('AppComponent', () => {
     const originalPath = window.location.pathname;
 
     try {
-      app.currentActionName = 'list_posizione';
-      await app['runNextActionRoute'](['list_posizione', 'Gov.30459']);
+      app.actionManager.currentActionName = 'list_posizione';
+      await app.actionManager["runNextActionRoute"](['list_posizione', 'Gov.30459']);
     } finally {
       window.history.replaceState({}, '', originalPath || '/');
     }
@@ -996,9 +1037,9 @@ describe('AppComponent', () => {
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
-    app.currentActionName = 'list_posizione';
+    app.actionManager.currentActionName = 'list_posizione';
 
-    await app['runNextActionRoute'](['list_posizione', 'Gov.30459']);
+    await app.actionManager["runNextActionRoute"](['list_posizione', 'Gov.30459']);
 
     expect(mainManagerMock.hardReloadToUrl).toHaveBeenCalledWith(
       '/action/form_form_list_posizione/Gov.30459'
@@ -1024,9 +1065,9 @@ describe('AppComponent', () => {
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
-    app.currentActionName = 'list_doc_beni_servizi';
+    app.actionManager.currentActionName = 'list_doc_beni_servizi';
 
-    await app['runNextActionRoute'](['list_doc_beni_servizi', 'ORDINE63417']);
+    await app.actionManager["runNextActionRoute"](['list_doc_beni_servizi', 'ORDINE63417']);
 
     expect(mainManagerMock.hardReloadToUrl).toHaveBeenCalledWith(
       '/action/form_form_doc_bene_servizi/ORDINE63417'
@@ -1047,7 +1088,7 @@ describe('AppComponent', () => {
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
-    app.currentActionName = 'list_posizione';
+    app.actionManager.currentActionName = 'list_posizione';
 
     await app.openNewRecord();
 
@@ -1074,11 +1115,11 @@ describe('AppComponent', () => {
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
-    await app.loadActionDashboard();
+    await app.actionManager.loadActionDashboard();
 
-    expect(app.dashboardCards.length).toBe(1);
+    expect(app.appManager.dashboardCards.length).toBe(1);
     expect(app.nonAdminDashboardCards.length).toBe(1);
-    expect(app.dashboardCards[0].title).toBe('Documenti');
+    expect(app.appManager.dashboardCards[0].title).toBe('Documenti');
   });
 
   it('should show cards only for non-admin menus and gate admin menus by builder flag', () => {
@@ -1086,7 +1127,7 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance as any;
     app.isAdminUser = true;
     app.builderFeatureEnabled = true;
-    app.dashboardMenu = [
+    app.appManager.dashboardMenu = [
       {
         model: 'component',
         group_id: 'design',
@@ -1104,7 +1145,7 @@ describe('AppComponent', () => {
         buttons: [{ key: 'l', label: 'Lista', action_type: 'window', url_action: '/action/list_docs', builder: false, type: 'button' }]
       }
     ];
-    app.dashboardCards = [
+    app.appManager.dashboardCards = [
       {
         model: 'component',
         group_id: 'design',
@@ -1136,7 +1177,7 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance as any;
     app.isAdminUser = true;
     app.builderFeatureEnabled = true;
-    app.builderEnabled = false;
+    app.appManager.builderEnabled = false;
 
     expect(app.showTopMenu).toBeFalse();
 
@@ -1157,7 +1198,7 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await app.applyActionResponse({
+    await app.actionManager.applyActionResponse({
       mode: 'list',
       fields: {
         in_form: true,
@@ -1173,7 +1214,7 @@ describe('AppComponent', () => {
     expect(app.showTableRowRemoveAction).toBeFalse();
     expect(app.tableExtraColumnCount).toBe(3);
 
-    await app.applyActionResponse({
+    await app.actionManager.applyActionResponse({
       mode: 'list',
       fields: {
         in_form: true,
@@ -1189,7 +1230,7 @@ describe('AppComponent', () => {
     expect(app.showTableRowRemoveAction).toBeTrue();
     expect(app.tableExtraColumnCount).toBe(4);
 
-    await app.applyActionResponse({
+    await app.actionManager.applyActionResponse({
       mode: 'list',
       fields: {
         in_form: false,
@@ -1210,7 +1251,7 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await app.applyActionResponse({
+    await app.actionManager.applyActionResponse({
       mode: 'list',
       fields: {
         in_form: true,
@@ -1270,7 +1311,7 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
     app.selectedModel = 'ordine';
-    app.formSchema = {
+    app.renderer.formSchema = {
       display: 'form',
       components: [
         {
@@ -1285,7 +1326,7 @@ describe('AppComponent', () => {
         }
       ]
     };
-    app.formSubmission = { data: { cliente: 'A', fornitore: 'OLD' } };
+    app.renderer.formSubmission = { data: { cliente: 'A', fornitore: 'OLD' } };
 
     await app.onFormSubmissionChanged({
       data: { cliente: 'B', fornitore: 'OLD' },
@@ -1313,7 +1354,7 @@ describe('AppComponent', () => {
   it('should keep existing submission fields when form change event is partial', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
-    app.formSchema = {
+    app.renderer.formSchema = {
       display: 'form',
       components: [
         { type: 'textfield', key: 'cliente' },
@@ -1321,7 +1362,7 @@ describe('AppComponent', () => {
         { type: 'textfield', key: 'totale' }
       ]
     };
-    app.formSubmission = {
+    app.renderer.formSubmission = {
       data: {
         cliente: 'A',
         descrizione: 'Ordine di prova',
@@ -1345,7 +1386,7 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await app.applyActionResponse({
+    await app.actionManager.applyActionResponse({
       mode: 'list',
       model: 'ordine',
       columns: [['rec_name', 'Record']],
@@ -1412,7 +1453,7 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await app.loadSession();
+    await app.appManager.loadSession();
     app.applyLayoutResponse({
       mode: 'layout',
       data: {
@@ -1441,9 +1482,9 @@ describe('AppComponent', () => {
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
-    await app.loadSession();
+    await app.appManager.loadSession();
 
-    await app.applyActionResponse({
+    await app.actionManager.applyActionResponse({
       mode: 'list',
       model: 'ordine',
       columns: [
@@ -1493,7 +1534,7 @@ describe('AppComponent', () => {
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
-    await app.loadSession();
+    await app.appManager.loadSession();
 
     expect(app.sessionLocale).toBe('it');
     expect(app.sessionTimezone).toBe('Europe/Rome');
@@ -1514,7 +1555,7 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await app.loadSession();
+    await app.appManager.loadSession();
 
     expect(app.currentUserName).toBe('Giulia Verdi');
   });
@@ -1532,7 +1573,7 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await app.loadSession();
+    await app.appManager.loadSession();
 
     expect(app.isAdminUser).toBeTrue();
     expect(app.showBuilderToggle).toBeTrue();
@@ -1554,7 +1595,7 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await app.loadSession();
+    await app.appManager.loadSession();
 
     expect(app.isAdminUser).toBeFalse();
     expect(app.showBuilderToggle).toBeFalse();
@@ -1576,7 +1617,7 @@ describe('AppComponent', () => {
       is_admin: true
     };
 
-    app.builderEnabled = false;
+    app.appManager.builderEnabled = false;
     expect(app.canRunMenuAction(adminButton)).toBeFalse();
 
     app.onBuilderSwitchChanged(true);
@@ -1586,9 +1627,9 @@ describe('AppComponent', () => {
   it('should open eligible design form actions in viewer mode even when builder is on', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
-    app.builderEnabled = true;
+    app.appManager.builderEnabled = true;
 
-    await app.applyActionResponse({
+    await app.actionManager.applyActionResponse({
       mode: 'form',
       fields: { component_type: 'form', action_name: 'design_form' },
       data: { rec_name: 'component.form.demo' },
@@ -1603,9 +1644,9 @@ describe('AppComponent', () => {
   it('should enter builder mode only after explicit user action', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
-    app.builderEnabled = true;
+    app.appManager.builderEnabled = true;
 
-    await app.applyActionResponse({
+    await app.actionManager.applyActionResponse({
       mode: 'form',
       fields: { component_type: 'form', action_name: 'design_form' },
       data: { rec_name: 'component.form.demo' },
@@ -1695,11 +1736,11 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
     app.selectedModel = 'anagrafica';
-    app.limit = 20;
-    app.queryMode = 'json';
-    app.queryText = '{}';
+    app.tableManager.limit = 20;
+    app.tableManager.queryMode = 'json';
+    app.tableManager.queryText = '{}';
 
-    await app.loadRecords();
+    await app.actionManager.loadRecords();
 
     expect(app.limit).toBe(30);
     expect(app.tableTotalRecords).toBe(240);
@@ -1736,10 +1777,10 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
     app.selectedModel = 'posizione';
-    app.queryMode = 'json';
-    app.queryText = '{}';
+    app.tableManager.queryMode = 'json';
+    app.tableManager.queryText = '{}';
 
-    await app.loadRecords();
+    await app.actionManager.loadRecords();
 
     expect(app.tableRows.length).toBe(1);
     expect((app.tableRows[0] as any).rec_name).toBe('Gov.30459');
@@ -1750,7 +1791,7 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await app.applyActionResponse({
+    await app.actionManager.applyActionResponse({
       mode: 'list',
       model: 'ordine',
       columns: [
@@ -1790,7 +1831,7 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await app.applyActionResponse({
+    await app.actionManager.applyActionResponse({
       mode: 'list',
       model: 'anagrafica',
       columns: [
@@ -1825,7 +1866,7 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await app.applyActionResponse({
+    await app.actionManager.applyActionResponse({
       mode: 'list',
       model: 'ordine',
       columns: [
@@ -1864,7 +1905,7 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await app.applyActionResponse({
+    await app.actionManager.applyActionResponse({
       mode: 'list',
       model: 'ordine',
       columns: [
@@ -1898,7 +1939,7 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await app.applyActionResponse({
+    await app.actionManager.applyActionResponse({
       mode: 'list',
       model: 'ordine',
       columns: [
@@ -1960,7 +2001,7 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
     app.selectedModel = 'anagrafica';
-    app.queryMode = 'builder';
+    app.tableManager.queryMode = 'builder';
     app.queryBuilderConfig = {
       fields: {
         status: { name: 'Stato', type: 'string' },
@@ -1975,7 +2016,7 @@ describe('AppComponent', () => {
       ]
     };
 
-    await app.loadRecords();
+    await app.actionManager.loadRecords();
 
     expect(apiMock.streamList).toHaveBeenCalled();
   });
@@ -1994,7 +2035,7 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance;
     app.selectedModel = 'anagrafica';
 
-    await app.loadSchema();
+    await app.actionManager.loadSchema();
 
     const schema = app.formSchema as Record<string, unknown>;
     const components = schema['components'] as Array<Record<string, unknown>>;
@@ -2039,7 +2080,7 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance;
     app.selectedModel = 'anagrafica';
 
-    await app.loadSchema();
+    await app.actionManager.loadSchema();
 
     const schema = app.formSchema as Record<string, unknown>;
     const components = schema['components'] as Array<Record<string, unknown>>;

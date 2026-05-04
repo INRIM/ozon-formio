@@ -7,5 +7,23 @@
     "pathRewrite": {
       "^/api": ""
     }
+  },
+  "/auth": {
+    "target": "http://ozon-env-app:8000",
+    "secure": false,
+    "changeOrigin": true,
+    "logLevel": "warn"
+  },
+  "/login": {
+    "target": "http://ozon-env-app:8000",
+    "secure": false,
+    "changeOrigin": true,
+    "logLevel": "warn"
+  },
+  "/logout": {
+    "target": "http://ozon-env-app:8000",
+    "secure": false,
+    "changeOrigin": true,
+    "logLevel": "warn"
   }
 }

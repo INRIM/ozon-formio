@@ -41,9 +41,9 @@ describe('AppComponent next_action redirect mode', () => {
   it('should hard reload using next_page when next_action returns mode redirect', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
-    app.currentActionName = 'list_posizione';
+    app.actionManager.currentActionName = 'list_posizione';
 
-    await app['runNextActionRoute'](['list_posizione', 'Gov.30459']);
+    await app.actionManager['runNextActionRoute'](['list_posizione', 'Gov.30459']);
 
     expect(mainManagerMock.hardReloadToUrl).toHaveBeenCalledWith(
       '/action/form_form_list_posizione/Gov.30459'

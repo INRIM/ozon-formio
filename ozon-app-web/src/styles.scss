@@ -2,6 +2,7 @@
 @import 'primeicons/primeicons.css';
 
 :root {
+  color-scheme: light;
   --ozon-bg: #f4f7fb;
   --ozon-surface: #ffffff;
   --ozon-surface-soft: #f3f7fb;
@@ -12,6 +13,7 @@
 }
 
 :root[data-theme='dark'] {
+  color-scheme: dark;
   --ozon-bg: #0f1723;
   --ozon-surface: #162131;
   --ozon-surface-soft: #1b2b40;
@@ -38,6 +40,330 @@ body {
   transition:
     background-color 0.2s ease,
     color 0.2s ease;
+}
+
+/* =========================================================
+   Fix bootstrap-italia floating label in plain form areas
+   (form editor meta-fields & anywhere we use .form-group
+   without bootstrap-italia's JS initialisation)
+   ========================================================= */
+#fproject .form-group label,
+.ozon-workspace-card .form-group label {
+  position: static !important;
+  display: block !important;
+  line-height: normal !important;
+  font-size: 0.875rem !important;
+  margin-bottom: 0.25rem !important;
+  padding: 0 !important;
+  transition: none !important;
+  color: var(--ozon-text) !important;
+  transform: none !important;
+}
+
+/* =========================================================
+   SYSTEM WYSIWYG — explicit form control reset for editor
+   and formio builder areas.
+   Prevents bootstrap-italia / browser dark-mode overrides.
+   ========================================================= */
+
+/* Selectors that cover:
+   - #fproject      → form editor meta-fields (title, rec_name…)
+   - .formio-builder-form, .builder-sidebar
+                    → formio drag-drop builder internals
+*/
+#fproject,
+.formio-builder-form,
+.builder-sidebar {
+
+  // Reset form controls to plain Bootstrap values
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file']),
+  textarea,
+  select,
+  .form-control,
+  .form-select {
+    background-color: #ffffff !important;
+    color: #212529 !important;
+    border: 1px solid #ced4da !important;
+    border-radius: 0.375rem !important;
+  }
+
+  // Disabled / readonly
+  input:disabled,
+  input[readonly],
+  textarea:disabled,
+  textarea[readonly],
+  select:disabled,
+  .form-control:disabled,
+  .form-control[readonly] {
+    background-color: #e9ecef !important;
+    color: #6c757d !important;
+    opacity: 1 !important;
+  }
+
+  // Placeholder text
+  ::placeholder {
+    color: #6c757d !important;
+    opacity: 1 !important;
+  }
+
+  // Label reset (bootstrap-italia floating label fix)
+  label:not(.form-check-label),
+  .control-label:not(.form-check-label),
+  .form-label:not(.form-check-label),
+  .col-form-label:not(.form-check-label) {
+    position: static !important;
+    display: block !important;
+    line-height: normal !important;
+    font-size: 0.875rem !important;
+    margin-bottom: 0.25rem !important;
+    padding: 0 !important;
+    transition: none !important;
+    transform: none !important;
+    color: #212529 !important;
+    background-color: transparent !important;
+  }
+
+  small,
+  .form-text,
+  .text-muted {
+    color: #6c757d !important;
+  }
+
+  .form-check-label,
+  .checkbox label,
+  .radio label {
+    color: #212529 !important;
+  }
+
+  // Keep editor/builder surfaces readable even when app theme is dark
+  :root[data-theme='dark'] & {
+    input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file']),
+    textarea,
+    select,
+    .form-control,
+    .form-select {
+      background-color: #ffffff !important;
+      color: #212529 !important;
+      border-color: #ced4da !important;
+    }
+
+    label:not(.form-check-label),
+    .control-label:not(.form-check-label),
+    .form-label:not(.form-check-label),
+    .col-form-label:not(.form-check-label),
+    .form-check-label,
+    .checkbox label,
+    .radio label {
+      color: #212529 !important;
+    }
+
+    small,
+    .form-text,
+    .text-muted {
+      color: #6c757d !important;
+    }
+  }
+}
+
+#fproject .form-group,
+.ozon-workspace-card .form-group {
+  margin-bottom: 1rem !important;
+  margin-top: 0 !important;
+}
+
+.ozon-form-editor-shell {
+  background: #f8fafc;
+  border: 1px solid #d9e3f2;
+  border-radius: 10px;
+  padding: 0.35rem 0.5rem 0.75rem;
+}
+
+/* =========================================================
+   Form.io builder sidebar (Bootstrap 5 template)
+   bootstrap-italia does not supply the expected accordion
+   behavior/styling, so normalize it locally.
+   ========================================================= */
+.builder-sidebar.accordion {
+  border: 1px solid var(--ozon-border);
+  border-radius: 0.75rem;
+  background: #1a283b;
+  overflow: hidden;
+}
+
+.builder-sidebar .builder-sidebar_search {
+  margin: 0.75rem;
+  width: calc(100% - 1.5rem);
+}
+
+.builder-sidebar .form-builder-panel.accordion-item {
+  margin: 0;
+  border: 0;
+  border-top: 1px solid rgba(125, 174, 220, 0.22);
+  border-radius: 0;
+  background: transparent;
+}
+
+.builder-sidebar .form-builder-panel.card::after {
+  margin-top: 0 !important;
+}
+
+.builder-sidebar .form-builder-panel.accordion-item:first-of-type {
+  border-top: 0;
+}
+
+.builder-sidebar .form-builder-group-header.card-header {
+  padding: 0;
+  border: 0;
+  background: #223349;
+}
+
+.builder-sidebar .accordion-header {
+  margin: 0;
+}
+
+.builder-sidebar .builder-group-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.875rem 1.25rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #0d6efd;
+  font-size: 1rem;
+  font-weight: 700;
+  text-align: left;
+  box-shadow: none !important;
+}
+
+.builder-sidebar .builder-group-button:hover,
+.builder-sidebar .builder-group-button:focus {
+  background: rgba(13, 110, 253, 0.08);
+  color: #3d8bfd;
+}
+
+.builder-sidebar .builder-group-button::after {
+  content: '';
+  width: 0.7rem;
+  height: 0.7rem;
+  margin-left: auto;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform 0.18s ease;
+}
+
+.builder-sidebar .builder-group-button[aria-expanded='true']::after {
+  transform: rotate(225deg);
+}
+
+.builder-sidebar .accordion-collapse {
+  margin: 0;
+  padding: 0;
+  min-height: 0;
+}
+
+.builder-sidebar .accordion-collapse.collapse:not(.show) {
+  display: none !important;
+  height: 0 !important;
+  overflow: hidden !important;
+}
+
+.builder-sidebar .accordion-collapse.show {
+  display: block !important;
+  height: auto !important;
+  overflow: visible !important;
+}
+
+.builder-sidebar .accordion-collapse > .d-grid {
+  padding: 0.5rem 0.75rem 0.75rem !important;
+  gap: 0.5rem !important;
+  align-content: start;
+  background: #1a283b;
+}
+
+/* =========================================================
+   Form.io builder canvas
+   Keep live preview/components readable inside builder area
+   without touching app-wide cards.
+   ========================================================= */
+.formio-builder-form {
+  border-radius: 0.75rem;
+}
+
+.formio-builder-form > .formio-component,
+.formio-builder-form .card.border,
+.formio-builder-form .panel.card {
+  background: #ffffff !important;
+  border-color: #d9e3f2 !important;
+  color: #17324d !important;
+}
+
+.formio-builder-form .card-body,
+.formio-builder-form .card-header + .card-body,
+.formio-builder-form .formio-component-content {
+  background: #ffffff !important;
+  color: #17324d !important;
+}
+
+.formio-builder-form :where(label, legend, .control-label, .form-label, .field-label, .form-check-label, .text-muted, .form-text) {
+  color: #17324d !important;
+}
+
+.formio-builder-form .card-header:not(.form-builder-group-header) {
+  border-color: #d9e3f2 !important;
+}
+
+.formio-builder-form .card-header:not(.form-builder-group-header) .card-title,
+.formio-builder-form .card-header:not(.form-builder-group-header) .formio-collapse-icon,
+.formio-builder-form .card-header:not(.form-builder-group-header) [ref='tooltip'] {
+  color: inherit !important;
+}
+
+/* =========================================================
+   PrimeNG p-editor (Quill) — Report Layout WYSIWYG
+   styleClass="ozon-report-editor" lands on .p-editor-container
+   itself in PrimeNG 19, so selectors use compound class.
+   ========================================================= */
+#fproject .p-editor-container.ozon-report-editor,
+#fproject .ozon-report-editor.p-editor-container,
+#fproject .ozon-report-editor {
+  border: 1px solid #ced4da;
+  border-radius: 0.375rem;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+#fproject .p-editor-container.ozon-report-editor .ql-toolbar.ql-snow,
+#fproject .ozon-report-editor .ql-toolbar.ql-snow {
+  border: 0 !important;
+  border-bottom: 1px solid #ced4da !important;
+  background: #f8f9fa;
+}
+
+#fproject .p-editor-container.ozon-report-editor .ql-container.ql-snow,
+#fproject .ozon-report-editor .ql-container.ql-snow {
+  border: 0 !important;
+  min-height: 16rem;
+}
+
+#fproject .p-editor-container.ozon-report-editor .ql-editor,
+#fproject .ozon-report-editor .ql-editor {
+  min-height: 16rem;
+  background: #ffffff !important;
+  color: #212529 !important;
+}
+
+#fproject .p-editor-container.ozon-report-editor .ql-toolbar button,
+#fproject .ozon-report-editor .ql-toolbar button {
+  color: #212529;
+}
+
+#fproject .p-editor-container.ozon-report-editor .ql-picker,
+#fproject .ozon-report-editor .ql-picker {
+  color: #212529;
 }
 
 .formio-component.ozon-form-table,

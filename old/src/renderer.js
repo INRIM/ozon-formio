@@ -4,7 +4,7 @@ import ViewerDateTime from './components/DateTime';
 import ViewerTextField from './components/TextField';
 import OzonForm from './components/OzonForm';
 import {momentDate, formatDate} from './components/utils';
-const packageJSON = require('../package.json');
+const packageJSON = require('../../package.json');
 
 Formio.Components.setComponent('datetime', ViewerDateTime);
 Formio.Components.setComponent('textfield', ViewerTextField);

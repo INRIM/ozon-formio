@@ -251,10 +251,295 @@
       <div class="small mt-2" [class.text-danger]="statusError" [class.text-success]="!statusError">
         {{ statusText }}
       </div>
+      <button *ngIf="serverErrorRetryVisible" class="btn btn-sm btn-outline-secondary mt-2" type="button"
+        (click)="retryServerError()">
+        Riprova
+      </button>
     </div>
   </section>
 
-  <div class="card mt-3" *ngIf="isFormPage && showFormBuilder">
+  <!-- ═══════════ FORM EDITOR PAGE (Design → Form → name) ═══════════ -->
+  <div class="col-12 ozon-form-editor-shell mt-4" *ngIf="isFormEditorPage">
+    <form role="form" novalidate class="p-1" id="fproject">
+
+      <input type="text" class="form-control d-none"
+             id="type" name="type" placeholder="Form type"
+             [value]="formEditorData['type'] ?? ''"
+             (input)="updateFormEditorField('type', $any($event.target).value)">
+
+      <div class="row">
+        <div class="col col-sm-4">
+          <div class="form-group">
+            <label for="fe-title" class="control-label">Titolo<span class="h5 text-danger">*</span></label>
+            <input type="text" class="form-control" id="fe-title" name="title"
+                   placeholder="Enter the form title" required
+                   [value]="formEditorData['title'] ?? ''"
+                   (input)="updateFormEditorField('title', $any($event.target).value)">
+          </div>
+        </div>
+        <div class="col col-sm-4">
+          <div class="form-group">
+            <label for="fe-rec_name" class="control-label">Name<span class="h5 text-danger">*</span></label>
+            <input type="text" class="form-control" id="fe-rec_name" name="rec_name"
+                   placeholder="Enter the form machine name" required
+                   [value]="formEditorData['rec_name'] ?? ''"
+                   (input)="updateFormEditorField('rec_name', $any($event.target).value)">
+          </div>
+        </div>
+        <div class="col col-sm-3">
+          <div class="form-group">
+            <label for="fe-data_model" class="control-label">Model</label>
+            <select id="fe-data_model" name="data_model" class="form-control"
+                    [value]="formEditorData['data_model'] ?? ''"
+                    (change)="updateFormEditorField('data_model', $any($event.target).value)">
+              <option value="">Si</option>
+              <option value="no_model">No Model</option>
+              <option *ngFor="let m of models" [value]="m"
+                      [selected]="formEditorData['data_model'] === m">{{ m }}</option>
+            </select>
+            <small class="form-text text-muted">Si: crea il model | No: solo view | ?Model_name: view alternativa</small>
+          </div>
+        </div>
+        <div class="col col-sm-1">
+          <div class="form-group">
+            <label for="fe-sys" class="control-label">Sys</label>
+            <select id="fe-sys" name="sys" class="form-control"
+                    [value]="formEditorData['sys'] ?? ''"
+                    (change)="updateFormEditorField('sys', $any($event.target).value)">
+              <option value="">No</option>
+              <option value="1">Si</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-xs-12">
+        <ul class="nav nav-tabs nav-fill" role="tablist">
+          <li class="nav-item">
+            <a class="nav-link" [class.active]="formEditorActiveTab === 'builder'"
+               role="tab" (click)="setFormEditorActiveTab('builder')" style="cursor:pointer">Builder</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" [class.active]="formEditorActiveTab === 'print'"
+               role="tab" (click)="setFormEditorActiveTab('print')" style="cursor:pointer">Layout Stampa</a>
+          </li>
+          <li class="nav-item">
+            <a class="nav-link" [class.active]="formEditorActiveTab === 'config'"
+               role="tab" (click)="setFormEditorActiveTab('config')" style="cursor:pointer">Impostazioni</a>
+          </li>
+        </ul>
+
+        <div class="tab-content py-3 px-3 px-sm-0">
+
+          <!-- Builder tab -->
+          <div *ngIf="formEditorActiveTab === 'builder'" class="tab-pane active">
+            <div id="builder_alert" class="col-md-12"></div>
+            <div class="col-lg-12">
+              <ozon-form-builder-host
+                [form]="builderSchemaForm"
+                [builderClass]="formBuilderComponent"
+                [options]="formBuilderConfig"
+                [rebuild]="formBuilderRebuild$"
+                (change)="onFormBuilderChanged($event)"
+              ></ozon-form-builder-host>
+            </div>
+          </div>
+
+          <!-- Layout Stampa tab -->
+          <div *ngIf="formEditorActiveTab === 'print'" class="tab-pane active">
+            <div class="row">
+              <div class="col col-sm-4">
+                <div class="form-group">
+                  <label for="fe-rheader" class="control-label">Stampa Header</label>
+                  <select id="fe-rheader" name="rheader" class="form-control"
+                          [value]="formEditorProperties['rheader'] ?? '1'"
+                          (change)="updateFormEditorProperty('rheader', $any($event.target).value)">
+                    <option value="1">Si</option>
+                    <option value="0">No</option>
+                  </select>
+                </div>
+              </div>
+              <div class="col col-sm-4">
+                <div class="form-group">
+                  <label for="fe-rfooter" class="control-label">Stampa Footer</label>
+                  <select id="fe-rfooter" name="rfooter" class="form-control"
+                          [value]="formEditorProperties['rfooter'] ?? '1'"
+                          (change)="updateFormEditorProperty('rfooter', $any($event.target).value)">
+                    <option value="1">Si</option>
+                    <option value="0">No</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div class="form-group mt-2">
+              <label class="control-label">Report Layout</label>
+              <p-editor
+                [ngModel]="formEditorProperties['report'] ?? ''"
+                [ngModelOptions]="{ standalone: true }"
+                (ngModelChange)="updateFormEditorProperty('report', $event)"
+                [style]="{ height: '20rem' }"
+                styleClass="ozon-report-editor"
+              ></p-editor>
+              <small class="form-text text-muted">Editor WYSIWYG del template di stampa.</small>
+            </div>
+          </div>
+
+          <!-- Impostazioni tab -->
+          <div *ngIf="formEditorActiveTab === 'config'" class="tab-pane active">
+            <div class="row">
+              <div class="col col-sm-4">
+                <div class="form-group">
+                  <label for="fe-projectId" class="control-label">Progetto</label>
+                  <input type="text" class="form-control" id="fe-projectId" name="projectId"
+                         placeholder="Enter the form project"
+                         [value]="formEditorData['projectId'] ?? ''"
+                         (input)="updateFormEditorField('projectId', $any($event.target).value)">
+                </div>
+              </div>
+            </div>
+            <div class="row">
+              <div class="col col-sm-3">
+                <div class="form-group">
+                  <label for="fe-display" class="control-label">Display as</label>
+                  <select id="fe-display" name="display" class="form-control"
+                          [value]="formEditorData['display'] ?? 'form'"
+                          (change)="updateFormEditorField('display', $any($event.target).value)">
+                    <option value="form">Form</option>
+                    <option value="wizard">Wizard</option>
+                  </select>
+                </div>
+              </div>
+              <div class="col col-sm-2">
+                <div class="form-group">
+                  <label for="fe-no_cancel" class="control-label">Pulsante 'Abbandona'</label>
+                  <select id="fe-no_cancel" name="no_cancel" class="form-control"
+                          [value]="formEditorData['no_cancel'] ?? '0'"
+                          (change)="updateFormEditorField('no_cancel', $any($event.target).value)">
+                    <option value="0">Si</option>
+                    <option value="1">No</option>
+                  </select>
+                </div>
+              </div>
+              <div class="col col-sm-2">
+                <div class="form-group">
+                  <label for="fe-no_submit" class="control-label">Nascondi 'Submit'</label>
+                  <select id="fe-no_submit" name="no_submit" class="form-control"
+                          [value]="formEditorData['no_submit'] ?? '0'"
+                          (change)="updateFormEditorField('no_submit', $any($event.target).value)">
+                    <option value="0">No</option>
+                    <option value="1">Si</option>
+                  </select>
+                </div>
+              </div>
+              <div class="col col-sm-2">
+                <div class="form-group">
+                  <label for="fe-global_change" class="control-label">Onchange Globale</label>
+                  <select id="fe-global_change" name="handle_global_change" class="form-control"
+                          [value]="formEditorData['handle_global_change'] ?? '0'"
+                          (change)="updateFormEditorField('handle_global_change', $any($event.target).value)">
+                    <option value="1">Si</option>
+                    <option value="0">No</option>
+                  </select>
+                  <small class="form-text text-muted">Usare per gestire le logiche automatiche</small>
+                </div>
+              </div>
+              <div class="col col-sm-2">
+                <div class="form-group">
+                  <label for="fe-form_disabled" class="control-label">Form Disabled</label>
+                  <select id="fe-form_disabled" name="form_disabled" class="form-control"
+                          [value]="formEditorData['form_disabled'] ?? '0'"
+                          (change)="updateFormEditorField('form_disabled', $any($event.target).value)">
+                    <option value="0">No</option>
+                    <option value="1">Si</option>
+                  </select>
+                  <small class="form-text text-muted">Imposta il form disabled</small>
+                </div>
+              </div>
+            </div>
+            <div class="row mt-2">
+              <div class="col col-sm-4">
+                <div class="form-group">
+                  <label for="fe-send_mail_create" class="control-label">Invia Mail alla creazione</label>
+                  <select id="fe-send_mail_create" name="send_mail_create" class="form-control"
+                          [value]="formEditorProperties['send_mail_create'] ?? '0'"
+                          (change)="updateFormEditorProperty('send_mail_create', $any($event.target).value)">
+                    <option value="1">Si</option>
+                    <option value="0">No</option>
+                  </select>
+                  <small>Invia una mail usando il template default, se esiste</small>
+                </div>
+              </div>
+              <div class="col col-sm-4">
+                <div class="form-group">
+                  <label for="fe-send_mail_update" class="control-label">Invia Mail all'Aggiornamento</label>
+                  <select id="fe-send_mail_update" name="send_mail_update" class="form-control"
+                          [value]="formEditorProperties['send_mail_update'] ?? '0'"
+                          (change)="updateFormEditorProperty('send_mail_update', $any($event.target).value)">
+                    <option value="1">Si</option>
+                    <option value="0">No</option>
+                  </select>
+                  <small>Invia una mail usando il template default, se esiste</small>
+                </div>
+              </div>
+              <div class="col col-sm-4">
+                <div class="form-group">
+                  <label for="fe-deleted" class="control-label">Eliminato</label>
+                  <input type="number" class="form-control" id="fe-deleted" name="deleted"
+                         [value]="formEditorData['deleted'] ?? 0"
+                         (input)="updateFormEditorField('deleted', +$any($event.target).value)">
+                </div>
+              </div>
+            </div>
+            <div class="row mt-2">
+              <div class="col col-sm-4">
+                <div class="form-group">
+                  <label for="fe-query" class="control-label">Query</label>
+                  <textarea id="fe-query" class="form-control" name="query-form-editable"
+                            [value]="formEditorData['queryformeditable'] ?? ''"
+                            (input)="updateFormEditorField('queryformeditable', $any($event.target).value)"></textarea>
+                  <small>Form Readonly se la query è valida</small>
+                </div>
+              </div>
+              <div class="col col-sm-4">
+                <div class="form-group">
+                  <label for="fe-sort" class="control-label">Order by</label>
+                  <input type="text" class="form-control" id="fe-sort" name="sort"
+                         [value]="formEditorData['sort'] ?? ''"
+                         (input)="updateFormEditorField('sort', $any($event.target).value)">
+                  <small>campi divisi da virgola: nome:asc|desc</small>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row container-fluid text-center mt-2 g-2">
+        <div class="col-lg-2 col-md-3 col-sm-4" *ngIf="canPreviewFormEditor">
+          <button type="button" class="btn btn-outline-secondary btn-md w-100"
+                  (click)="previewFormEditor()">
+            Preview
+          </button>
+        </div>
+        <ng-container *ngFor="let btn of formEditorActionButtons">
+          <div class="col-lg-2 col-md-3 col-sm-4">
+            <button type="button" [id]="btn.key" class="btn btn-warning btn-md"
+                    style="width:100%"
+                    [disabled]="!canRunMenuAction(btn)"
+                    (click)="runTopMenuAction(btn)">
+              <i *ngIf="btn.leftIcon" [class]="'icon ' + btn.leftIcon"></i>
+              {{ btn.label }}
+            </button>
+          </div>
+        </ng-container>
+        <input type="hidden" id="json" name="components" autocomplete="off">
+      </div>
+    </form>
+  </div>
+  <!-- ═══════════ END FORM EDITOR PAGE ═══════════ -->
+
+  <!-- Simple builder card for non-form-editor builder-eligible forms -->
+  <div class="card mt-3" *ngIf="isFormPage && showFormBuilder && !isFormEditorPage">
     <div class="card-header d-flex align-items-center justify-content-between gap-2">
       <span>Form Builder</span>
       <button class="btn btn-sm btn-outline-secondary" type="button" (click)="disableFormBuilderMode()">
@@ -262,23 +547,39 @@
       </button>
     </div>
     <div class="card-body">
-      <form-builder
+      <ozon-form-builder-host
         [form]="builderSchemaForm"
-        [formbuilder]="formBuilderConfig"
+        [builderClass]="formBuilderComponent"
+        [options]="formBuilderConfig"
+        [rebuild]="formBuilderRebuild$"
         (change)="onFormBuilderChanged($event)"
-      ></form-builder>
+      ></ozon-form-builder-host>
     </div>
   </div>
 
-  <div class="card mt-3" *ngIf="isFormPage && formSchema && !showFormBuilder">
+  <div class="card mt-3" *ngIf="isFormPage && formSchema && !showFormBuilder && !isFormEditorPage">
     <div class="card-header d-flex align-items-center justify-content-between gap-2">
       <span>Form Viewer</span>
-      <button *ngIf="canEditCurrentForm" class="btn btn-sm btn-outline-primary" type="button" (click)="enableFormBuilderMode()">
-        Modifica form
-      </button>
+      <div class="d-flex flex-wrap align-items-center justify-content-end gap-2">
+        <ng-container *ngIf="showFormViewerActionButtons">
+          <button
+            *ngFor="let btn of currentFormActionButtons"
+            type="button"
+            class="btn btn-sm btn-warning"
+            [disabled]="!canRunMenuAction(btn)"
+            (click)="runTopMenuAction(btn)"
+          >
+            <i *ngIf="btn.leftIcon" [class]="btn.leftIcon"></i>
+            {{ btn.label }}
+          </button>
+        </ng-container>
+        <button *ngIf="formEditorDesignContext && builderEligibleCurrentForm && builderEnabled && isAdminUser" class="btn btn-sm btn-outline-warning" type="button" (click)="openFormEditorInline()">
+          Edit Form
+        </button>
+      </div>
     </div>
     <div class="card-body">
-      <formio [form]="formSchema" [submission]="formSubmission" (change)="onFormSubmissionChanged($event)"></formio>
+      <formio [form]="formSchema" [submission]="viewerFormSubmission" (change)="onFormSubmissionChanged($event)"></formio>
     </div>
   </div>
 

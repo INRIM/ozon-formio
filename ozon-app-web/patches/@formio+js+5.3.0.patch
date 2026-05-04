@@ -1,0 +1,92 @@
+diff --git a/node_modules/@formio/js/lib/mjs/WebformBuilder.js b/node_modules/@formio/js/lib/mjs/WebformBuilder.js
+index 1d6bc85..7a59834 100644
+--- a/node_modules/@formio/js/lib/mjs/WebformBuilder.js
++++ b/node_modules/@formio/js/lib/mjs/WebformBuilder.js
+@@ -213,24 +213,26 @@ export default class WebformBuilder extends Component {
+         }
+         const formio = new Formio(Formio.projectUrl);
+         const isResourcesDisabled = this.options.builder && this.options.builder.resource === false;
+-        formio
+-            .loadProject()
+-            .then((project) => {
+-            if (project &&
+-                (_.get(project, 'settings.addConfigToForms', false) ||
+-                    _.get(project, 'addConfigToForms', false))) {
+-                const config = project.config || {};
+-                this.options.formConfig = config;
+-                const pathToFormConfig = 'webform._form.config';
+-                const webformConfig = _.get(this, pathToFormConfig);
+-                if (this.webform && !webformConfig) {
+-                    _.set(this, pathToFormConfig, config);
++        if (!formio.noProject) {
++            formio
++                .loadProject()
++                .then((project) => {
++                if (project &&
++                    (_.get(project, 'settings.addConfigToForms', false) ||
++                        _.get(project, 'addConfigToForms', false))) {
++                    const config = project.config || {};
++                    this.options.formConfig = config;
++                    const pathToFormConfig = 'webform._form.config';
++                    const webformConfig = _.get(this, pathToFormConfig);
++                    if (this.webform && !webformConfig) {
++                        _.set(this, pathToFormConfig, config);
++                    }
+                 }
+-            }
+-        })
+-            .catch((err) => {
+-            console.warn(`Could not load project settings: ${err.message || err}`);
+-        });
++            })
++                .catch((err) => {
++                console.warn(`Could not load project settings: ${err.message || err}`);
++            });
++        }
+         if (!formio.noProject && !isResourcesDisabled && formio.formsUrl) {
+             const resourceOptions = this.options.builder && this.options.builder.resource;
+             formio.loadForms(query).then((resources) => {
+diff --git a/node_modules/@formio/js/lib/cjs/components/_classes/component/Component.js b/node_modules/@formio/js/lib/cjs/components/_classes/component/Component.js
+index d84af57..51ce839 100644
+--- a/node_modules/@formio/js/lib/cjs/components/_classes/component/Component.js
++++ b/node_modules/@formio/js/lib/cjs/components/_classes/component/Component.js
+@@ -2570,12 +2570,16 @@ class Component extends NativePromiseComponent_1.default {
+         }
+         settings = lodash_1.default.merge(this.wysiwygDefault.ace, lodash_1.default.get(this.options, 'editors.ace.settings', {}), settings || {});
+         return Formio_1.Formio.requireLibrary('ace', 'ace', lodash_1.default.get(this.options, 'editors.ace.src', `${Formio_1.Formio.cdn.ace}/ace.js`), true).then((editor) => {
++            const disableWorker = Boolean(settings.isUseWorkerDisabled);
++            if (disableWorker) {
++                delete settings.isUseWorkerDisabled;
++            }
+             editor = editor.edit(element);
+             editor.removeAllListeners('change');
+             editor.setOptions(settings);
+             editor.getSession().setMode(settings.mode);
+             editor.on('change', () => onChange(editor.getValue()));
+-            if (settings.isUseWorkerDisabled) {
++            if (disableWorker) {
+                 editor.session.setUseWorker(false);
+             }
+             return editor;
+diff --git a/node_modules/@formio/js/lib/mjs/components/_classes/component/Component.js b/node_modules/@formio/js/lib/mjs/components/_classes/component/Component.js
+index 4411ca1..dc58844 100644
+--- a/node_modules/@formio/js/lib/mjs/components/_classes/component/Component.js
++++ b/node_modules/@formio/js/lib/mjs/components/_classes/component/Component.js
+@@ -2570,12 +2570,16 @@ export default class Component extends NativePromiseComponent {
+         }
+         settings = _.merge(this.wysiwygDefault.ace, _.get(this.options, 'editors.ace.settings', {}), settings || {});
+         return Formio.requireLibrary('ace', 'ace', _.get(this.options, 'editors.ace.src', `${Formio.cdn.ace}/ace.js`), true).then((editor) => {
++            const disableWorker = Boolean(settings.isUseWorkerDisabled);
++            if (disableWorker) {
++                delete settings.isUseWorkerDisabled;
++            }
+             editor = editor.edit(element);
+             editor.removeAllListeners('change');
+             editor.setOptions(settings);
+             editor.getSession().setMode(settings.mode);
+             editor.on('change', () => onChange(editor.getValue()));
+-            if (settings.isUseWorkerDisabled) {
++            if (disableWorker) {
+                 editor.session.setUseWorker(false);
+             }
+             return editor;

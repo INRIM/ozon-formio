@@ -1,39 +1,25 @@
 services:
   ozon-app-web:
-    image: ${NODE_DOCKER_IMAGE:-node:22-bookworm}
-    working_dir: /workspace/ozon-app-web
+    build:
+      context: ./ozon-app-web
+      dockerfile: Dockerfile
+    image: ozon-app-web:local
     env_file:
       - ./.env
-    command: >
-      bash -lc "chmod +x ./scripts/ensure-deps.sh && ./scripts/ensure-deps.sh && npm start"
     environment:
-      CI: "true"
-      NG_CLI_ANALYTICS: "false"
-      npm_config_cache: /tmp/.npm
+      BACKEND_UPSTREAM: ${BACKEND_UPSTREAM:-http://ozon-env-app:8000}
     ports:
-      - "${OZON_ANGULAR_PORT:-4200}:4200"
-    volumes:
-      - ./:/workspace
-      - ozon_app_web_node_modules:/workspace/ozon-app-web/node_modules
-      - ozon_app_web_npm_cache:/tmp/.npm
+      - "${OZON_ANGULAR_PORT:-4200}:80"
     networks:
       - backend
     healthcheck:
       test:
         - CMD-SHELL
-        - >-
-          node -e "const http=require('http');
-          const req=http.get('http://localhost:4200',(res)=>process.exit((res.statusCode||500)<500?0:1));
-          req.on('error',()=>process.exit(1));
-          req.setTimeout(5000,()=>{req.destroy();process.exit(1);});"
+        - wget -q -O /dev/null http://localhost/ || exit 1
       interval: 15s
       timeout: 8s
       retries: 6
       start_period: 20s
-
-volumes:
-  ozon_app_web_node_modules:
-  ozon_app_web_npm_cache:
 
 networks:
   backend:

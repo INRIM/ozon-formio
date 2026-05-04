@@ -5,8 +5,9 @@ export const environment = {
   allowedOrigins: [],
   baseToken: '',
   useProxy: true,
+  sessionCacheTtlMs: 30000,
   authMode: 'keycloak',
-  authLoginPath: '/login',
-  authLogoutPath: '/logout',
+  authLoginPath: '/api/login',
+  authLogoutPath: '/api/logout',
   authRefreshPath: '/refresh'
 };

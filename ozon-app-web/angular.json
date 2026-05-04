@@ -34,7 +34,8 @@
             ],
             "styles": [
               "src/styles.scss",
-              "node_modules/@formio/js/dist/formio.form.min.css"
+              "node_modules/quill/dist/quill.snow.css",
+              "node_modules/@formio/js/dist/formio.full.min.css"
             ],
             "scripts": []
           },
@@ -43,8 +44,8 @@
               "budgets": [
                 {
                   "type": "initial",
-                  "maximumWarning": "4mb",
-                  "maximumError": "6mb"
+                  "maximumWarning": "6mb",
+                  "maximumError": "8mb"
                 }
               ],
               "outputHashing": "all"

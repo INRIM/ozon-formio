@@ -6,6 +6,7 @@ export interface RuntimeConfig {
   allowedOrigins: string[];
   baseToken: string;
   useProxy: boolean;
+  sessionCacheTtlMs: number;
   authMode: RuntimeAuthMode;
   authLoginPath: string;
   authLogoutPath: string;

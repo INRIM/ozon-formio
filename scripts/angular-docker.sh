@@ -89,7 +89,7 @@ case "$ACTION" in
   start)
     ensure_backend_network
     echo "Using backend Docker network: $BACKEND_NETWORK"
-    docker compose --env-file "$ROOT_DIR/.env" -f "$COMPOSE_FILE" up ozon-app-web
+    docker compose --env-file "$ROOT_DIR/.env" -f "$COMPOSE_FILE" up --build ozon-app-web
     ;;
   stop)
     docker compose --env-file "$ROOT_DIR/.env" -f "$COMPOSE_FILE" down
@@ -97,7 +97,7 @@ case "$ACTION" in
   start-bg)
     ensure_backend_network
     echo "Using backend Docker network: $BACKEND_NETWORK"
-    docker compose --env-file "$ROOT_DIR/.env" -f "$COMPOSE_FILE" up -d ozon-app-web
+    docker compose --env-file "$ROOT_DIR/.env" -f "$COMPOSE_FILE" up -d --build ozon-app-web
     ;;
   logs)
     docker compose --env-file "$ROOT_DIR/.env" -f "$COMPOSE_FILE" logs -f ozon-app-web

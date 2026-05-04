@@ -15,7 +15,7 @@
     "test:angular": "npm --prefix ozon-app-web run test",
     "test:angular:docker": "./scripts/angular-docker.sh test",
     "install:angular:docker": "./scripts/angular-docker.sh install",
-    "watch": "watch 'npm run dev' ./src",
+    "watch": "watch 'npm run dev' old/src",
     "test": "npm run build && node scripts/smoke-test.js"
   },
   "author": "Alessio Gerace <a.gerace@inrim.it>",

@@ -8,6 +8,7 @@ export interface BackendAuthResult {
   redirectUrl: string;
   remoteUser: string;
   refreshed: boolean;
+  serverError: boolean;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -45,11 +46,12 @@ export class BackendAuthService {
     if (!this.isEnabled()) {
       return this.buildResult();
     }
-    return this.syncSession();
+    return this.syncSession(true);
   }
 
   logout(): BackendAuthResult {
     this.clearToken();
+    this.api.clearSessionCache();
     this.authenticated = false;
     this.loginRequired = false;
     this.remoteUser = '';
@@ -64,23 +66,39 @@ export class BackendAuthService {
   }
 
   getLoginUrl(): string {
-    return this.api.resolveApiUrl(this.runtimeConfig.getConfig().authLoginPath);
+    return this.resolveAuthUrl(this.runtimeConfig.getConfig().authLoginPath);
   }
 
   getLogoutUrl(): string {
-    return this.api.resolveApiUrl(this.runtimeConfig.getConfig().authLogoutPath);
+    return this.resolveAuthUrl(this.runtimeConfig.getConfig().authLogoutPath);
   }
 
-  private async syncSession(): Promise<BackendAuthResult> {
+  private resolveAuthUrl(path: string): string {
+    const raw = String(path ?? '').trim();
+    if (!raw) return '';
+    if (/^https?:\/\//i.test(raw)) return raw;
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    return `${origin}${raw.startsWith('/') ? raw : '/' + raw}`;
+  }
+
+  private async syncSession(force = false): Promise<BackendAuthResult> {
     try {
-      const payload = await this.api.getSession();
+      const payload = await this.api.getSession(force ? { force: true } : undefined);
       const session = this.unwrapPayload(payload);
+      const remoteUser = this.resolveRemoteUser(session);
+      if (!this.hasAuthenticatedSession(session, remoteUser)) {
+        this.clearToken();
+        this.authenticated = false;
+        this.loginRequired = true;
+        this.remoteUser = '';
+        this.lastSessionPayload = null;
+        return this.buildResult(false, this.getLoginUrl());
+      }
       this.lastSessionPayload = payload;
-      const token = this.readFirstString(session?.['token']);
-      this.runtimeConfig.updateConfig({ baseToken: token });
+      this.syncToken(session);
       this.authenticated = true;
       this.loginRequired = false;
-      this.remoteUser = this.resolveRemoteUser(session);
+      this.remoteUser = remoteUser;
       return this.buildResult(true);
     } catch (error) {
       const status = Number((error as { status?: number })?.status ?? 0);
@@ -92,22 +110,46 @@ export class BackendAuthService {
         this.lastSessionPayload = null;
         return this.buildResult(false, this.getLoginUrl());
       }
+      if (status >= 500) {
+        this.clearToken();
+        this.authenticated = false;
+        this.loginRequired = false;
+        this.remoteUser = '';
+        this.lastSessionPayload = null;
+        return this.buildResult(false, '', true);
+      }
       throw error;
     }
   }
 
-  private buildResult(refreshed = false, redirectUrl = ''): BackendAuthResult {
+  private buildResult(refreshed = false, redirectUrl = '', serverError = false): BackendAuthResult {
     return {
       authenticated: this.authenticated,
       loginRequired: this.loginRequired,
       redirectUrl,
       remoteUser: this.remoteUser,
-      refreshed
+      refreshed,
+      serverError
     };
   }
 
   private clearToken(): void {
     this.runtimeConfig.updateConfig({ baseToken: '' });
+  }
+
+  private syncToken(session: Record<string, unknown> | null): void {
+    const user = this.isRecord(session?.['user']) ? session['user'] : {};
+    const token = this.readFirstString(
+      session?.['token'],
+      session?.['baseToken'],
+      session?.['auth_token'],
+      user['token']
+    );
+    if (token) {
+      this.runtimeConfig.updateConfig({ baseToken: token });
+      return;
+    }
+    this.clearToken();
   }
 
   private unwrapPayload(payload: unknown): Record<string, unknown> | null {
@@ -147,6 +189,23 @@ export class BackendAuthService {
     );
   }
 
+  private hasAuthenticatedSession(session: Record<string, unknown> | null, remoteUser: string): boolean {
+    if (!session) return false;
+    if (remoteUser) return true;
+    const user = this.isRecord(session['user']) ? session['user'] : {};
+    if (this.readFirstString(session['token'], session['baseToken'], session['auth_token'], user['token'])) {
+      return true;
+    }
+    return this.readFirstBoolean(
+      session['authenticated'],
+      session['is_authenticated'],
+      session['isAuthenticated'],
+      user['authenticated'],
+      user['is_authenticated'],
+      user['isAuthenticated']
+    );
+  }
+
   private readFirstString(...values: unknown[]): string {
     for (const value of values) {
       if (typeof value === 'string') {
@@ -155,6 +214,18 @@ export class BackendAuthService {
       }
     }
     return '';
+  }
+
+  private readFirstBoolean(...values: unknown[]): boolean {
+    for (const value of values) {
+      if (typeof value === 'boolean') return value;
+      if (typeof value === 'number') return value !== 0;
+      if (typeof value !== 'string') continue;
+      const normalized = value.trim().toLowerCase();
+      if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
+      if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
+    }
+    return false;
   }
 
   private isRecord(value: unknown): value is Record<string, unknown> {

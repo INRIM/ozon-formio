@@ -32,6 +32,9 @@ export class RuntimeConfigService {
       backendUrl,
       siteUrl,
       allowedOrigins,
+      sessionCacheTtlMs: this.normalizeSessionCacheTtlMs(
+        patch.sessionCacheTtlMs ?? this.config.sessionCacheTtlMs
+      ),
       authMode,
       authLoginPath: this.normalizeEndpointPath(
         patch.authLoginPath ?? this.config.authLoginPath,
@@ -108,6 +111,17 @@ export class RuntimeConfigService {
         environment.useProxy,
         true
       ),
+      sessionCacheTtlMs: this.normalizeSessionCacheTtlMs(
+        this.pickFirstNumber(
+          query['sessioncachettlms'],
+          query['SESSION_CACHE_TTL_MS'],
+          runtime['sessioncachettlms'],
+          runtime['SESSION_CACHE_TTL_MS'],
+          stored?.sessionCacheTtlMs,
+          environment.sessionCacheTtlMs,
+          30000
+        )
+      ),
       authMode: this.normalizeAuthMode(
         this.pickFirstString(
           query['authmode'],
@@ -181,6 +195,12 @@ export class RuntimeConfigService {
     return 'keycloak';
   }
 
+  private normalizeSessionCacheTtlMs(value: unknown): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0) return 30000;
+    return Math.floor(parsed);
+  }
+
   private normalizeEndpointPath(value: string, fallback: string): string {
     const raw = String(value ?? '').trim();
     if (!raw) return fallback;
@@ -218,6 +238,15 @@ export class RuntimeConfigService {
     return [];
   }
 
+  private pickFirstNumber(...values: unknown[]): number {
+    for (const value of values) {
+      if (typeof value === 'string' && !value.trim()) continue;
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+    return 30000;
+  }
+
   private pickFirstBoolean(...values: unknown[]): boolean {
     for (const value of values) {
       if (typeof value === 'boolean') {
@@ -253,10 +282,11 @@ export class RuntimeConfigService {
         siteUrl,
         allowedOrigins: this.normalizeAllowedOrigins(parsed.allowedOrigins ?? [], { backendUrl, siteUrl }),
         baseToken: String(parsed.baseToken ?? ''),
+        sessionCacheTtlMs: this.normalizeSessionCacheTtlMs(parsed.sessionCacheTtlMs ?? 30000),
         authMode: this.normalizeAuthMode(String(parsed.authMode ?? 'keycloak')),
-        authLoginPath: this.normalizeEndpointPath(String(parsed.authLoginPath ?? '/login'), '/login'),
-        authLogoutPath: this.normalizeEndpointPath(String(parsed.authLogoutPath ?? '/logout'), '/logout'),
-        authRefreshPath: this.normalizeEndpointPath(String(parsed.authRefreshPath ?? '/refresh'), '/refresh')
+        authLoginPath: this.normalizeEndpointPath(String(parsed.authLoginPath ?? '/api/login'), '/api/login'),
+        authLogoutPath: this.normalizeEndpointPath(String(parsed.authLogoutPath ?? '/api/logout'), '/api/logout'),
+        authRefreshPath: this.normalizeEndpointPath(String(parsed.authRefreshPath ?? '/api/auth/refresh'), '/api/auth/refresh')
       };
       if (typeof parsed.useProxy === 'boolean') {
         out.useProxy = parsed.useProxy;

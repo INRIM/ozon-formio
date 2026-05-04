@@ -42,6 +42,7 @@ Key fields:
 - `backendUrl` — backend base URL
 - `useProxy` — when `true`, all API calls go through `/api` (proxied to `backendUrl` by the dev server)
 - `authMode` — `'none'` | `'keycloak'`
+- `sessionCacheTtlMs` — finestra minima tra due `GET /get_session` consecutive, default `30000`
 - `baseToken` / `tokenHeader` / `tokenPrefix` — bearer token config
 - `authLoginPath` / `authLogoutPath` / `authRefreshPath` — auth endpoints
 
