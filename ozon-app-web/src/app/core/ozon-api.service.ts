@@ -9,6 +9,13 @@ import {
     RuntimeConfig
 } from '../models/ozon.types';
 import { RuntimeConfigService } from './runtime-config.service';
+import {
+    ApiError,
+    parseJsonOrText,
+    parseNonNegativeInt,
+    isRecord,
+    createApiError
+} from './utils';
 
 class ApiError extends Error {
     constructor(
