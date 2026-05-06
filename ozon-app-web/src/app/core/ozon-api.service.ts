@@ -10,28 +10,11 @@ import {
 } from '../models/ozon.types';
 import { RuntimeConfigService } from './runtime-config.service';
 import {
-    ApiError,
     parseJsonOrText,
     parseNonNegativeInt,
-    isRecord,
-    createApiError
+    isRecord
 } from './utils';
-
-class ApiError extends Error {
-    constructor(
-        readonly status: number,
-        readonly detail: unknown,
-        readonly payload: unknown
-    ) {
-        super(`Errore API ${status}${detail ? `: ${ApiError.stringifyDetail(detail)}` : ''}`);
-        this.name = 'ApiError';
-    }
-
-    private static stringifyDetail(detail: unknown): string {
-        if (typeof detail === 'string') return detail;
-        try { return JSON.stringify(detail); } catch { return String(detail); }
-    }
-}
+import { ApiError, createApiError as buildApiError } from './url.service';
 
 export interface GetSessionOptions {
     force?: boolean;
@@ -550,6 +533,6 @@ export class OzonApiService {
     }
 
     private parseJsonOrText(t: string): any { try { return JSON.parse(t); } catch { return t; } }
-    private createApiError(s: number, p: any, t: string): ApiError { return new ApiError(s, p?.detail || t, p); }
+    private createApiError(s: number, p: any, t: string): ApiError { return buildApiError(s, p, t); }
     private isRecord(v: any): v is Record<string, any> { return !!v && typeof v === 'object' && !Array.isArray(v); }
 }

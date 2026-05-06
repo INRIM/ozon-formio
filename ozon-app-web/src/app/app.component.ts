@@ -87,6 +87,7 @@ export class AppComponent implements OnInit, OnDestroy {
         return text || 'LOGO';
     }
     get showBuilderToggle(): boolean { return this.appManager.isAdminUser; }
+    get viewMode(): 'dashboard' | 'list' | 'form' { return this.appManager.viewMode; }
     get isDashboardPage(): boolean { return this.appManager.viewMode === 'dashboard'; }
     get isListPage(): boolean { return this.appManager.viewMode === 'list'; }
     get isFormPage(): boolean { return this.appManager.viewMode === 'form'; }
@@ -203,6 +204,7 @@ export class AppComponent implements OnInit, OnDestroy {
     get formEditorData(): Record<string, unknown> { return this.builder.formEditorData; }
     get formEditorProperties(): Record<string, unknown> { return this.builder.formEditorProperties; }
     get formEditorDesignContext(): boolean { return this.builder.formEditorDesignContext; }
+    get builderMode(): boolean { return this.builder.builderMode; }
     get builderEligibleCurrentForm(): boolean { return this.builder.builderEligibleCurrentForm; }
     get formEditorActiveTab(): 'builder' | 'print' | 'config' { return this.builder.formEditorActiveTab; }
     set formEditorActiveTab(v: 'builder' | 'print' | 'config') { this.builder.formEditorActiveTab = v; }
@@ -212,6 +214,7 @@ export class AppComponent implements OnInit, OnDestroy {
     get formBuilderRebuild$() { return this.builder.formBuilderRebuild$; }
 
     onBuilderSwitchChanged(enabled: boolean): void { this.builder.onBuilderSwitchChanged(enabled); }
+    enableFormBuilderMode(): void { this.builder.enableFormBuilderMode((m, e) => this.appManager.setStatus(m, e)); }
     openFormEditorInline(): void { this.builder.openFormEditorInline(); }
     onFormBuilderChanged(event: unknown): void {
         this.builder.onFormBuilderChanged(event, (m, e) => this.appManager.setStatus(m, e));

@@ -1659,6 +1659,61 @@ describe('AppComponent', () => {
     expect(app.showFormBuilder).toBeTrue();
   });
 
+  it('should keep builder mode active across subsequent form loads once enabled', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.isAdminUser = true;
+    app.builderFeatureEnabled = true;
+    app.onBuilderSwitchChanged(true);
+
+    await app.actionManager.applyActionResponse({
+      mode: 'form',
+      fields: { component_type: 'form', action_name: 'design_form' },
+      data: { rec_name: 'component.form.demo' },
+      schema: { display: 'form', components: [] }
+    });
+
+    app.enableFormBuilderMode();
+    expect(app.builderMode).toBeTrue();
+
+    await app.actionManager.applyActionResponse({
+      mode: 'form',
+      fields: { component_type: 'form', action_name: 'design_form' },
+      data: { rec_name: 'component.form.demo.2' },
+      schema: { display: 'form', components: [] }
+    });
+
+    expect(app.builderMode).toBeTrue();
+    expect(app.showFormBuilder).toBeTrue();
+  });
+
+  it('should ignore stale form responses after returning to dashboard', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.isAdminUser = true;
+    app.builderFeatureEnabled = true;
+    app.onBuilderSwitchChanged(true);
+
+    const actionManager = app.actionManager as any;
+    const staleContext = actionManager.pageContextId;
+    actionManager.beginPageContext();
+    app.appManager.viewMode = 'dashboard';
+
+    await actionManager.applyActionResponse(
+      {
+        mode: 'form',
+        fields: { component_type: 'form', action_name: 'design_form' },
+        data: { rec_name: 'component.form.demo' },
+        schema: { display: 'form', components: [] }
+      },
+      staleContext
+    );
+
+    expect(app.builderMode).toBeFalse();
+    expect(app.isFormEditorPage).toBeFalse();
+    expect(app.showFormBuilder).toBeFalse();
+  });
+
   it('should sync selected record when table selection changes', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;

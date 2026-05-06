@@ -12,10 +12,10 @@ export const BUILDER_STORAGE_KEY = 'ozon-app-web.builder';
 
 @Injectable()
 export class AppFormioBuilderService {
-    builderEnabled = false;
     builderMode = false;
     builderSchemaDraft: Record<string, unknown> | null = null;
     builderEligibleCurrentForm = false;
+    private builderModePreferred = false;
     formEditorExplicitlyOpened = false;
     formEditorActiveTab: 'builder' | 'print' | 'config' = 'builder';
     formEditorDesignContext = false;
@@ -36,6 +36,10 @@ export class AppFormioBuilderService {
         private readonly renderer: AppFormioRendererService,
         private readonly appManager: AppManagerService
     ) {}
+
+    get builderEnabled(): boolean {
+        return this.appManager.builderEnabled;
+    }
 
     setFormBuilderExtensions(ext: readonly FormioBuilderExtension[] | null): void {
         this.formBuilderExtensions = ext ?? [];
@@ -93,22 +97,28 @@ export class AppFormioBuilderService {
         return '';
     }
 
+    private shouldRestoreBuilderMode(): boolean {
+        return this.builderEnabled && this.appManager.isAdminUser && this.builderModePreferred;
+    }
+
     onBuilderSwitchChanged(enabled: boolean): void {
         this.setBuilderEnabled(enabled, true);
     }
 
     setBuilderEnabled(enabled: boolean, persist: boolean): void {
         const canEnable = this.appManager.isAdminUser;
-        this.builderEnabled = canEnable ? Boolean(enabled) : false;
-        if (!this.builderEnabled) {
+        const nextEnabled = canEnable ? Boolean(enabled) : false;
+        this.appManager.setBuilderEnabled(nextEnabled, persist);
+        if (!nextEnabled) {
             this.builderMode = false;
             this.builderSchemaDraft = null;
+            this.builderModePreferred = false;
         }
-        this.appManager.setBuilderEnabled(this.builderEnabled, persist);
     }
 
     enableFormBuilderMode(setStatusFn: (m: string, e: boolean) => void): void {
         if (!this.canEditCurrentForm) return;
+        this.builderModePreferred = true;
         if (!this.builderSchemaDraft) {
             if (!this.renderer.formSchema) { setStatusFn('Schema non disponibile per Form Builder', true); return; }
             this.builderSchemaDraft = this.cloneSchema(this.renderer.formSchema);
@@ -120,6 +130,7 @@ export class AppFormioBuilderService {
 
     disableFormBuilderMode(setStatusFn: (m: string, e: boolean) => void): void {
         if (!this.builderMode) return;
+        this.builderModePreferred = false;
         this.builderMode = false;
         setStatusFn('Form Viewer attivato', false);
     }
@@ -204,37 +215,42 @@ export class AppFormioBuilderService {
     }
 
     syncBuilderMode(response: Record<string, unknown>, data: Record<string, unknown> | null, schema: Record<string, unknown> | null): void {
-        const eligible = Boolean(schema) && this.isBuilderEligibleResponse(response, data);
+        const pageIsForm = this.appManager.viewMode === 'form';
+        const eligible = pageIsForm && Boolean(schema) && this.isBuilderEligibleResponse(response, data);
         const designContext = eligible && this.isDesignContextResponse(response, data);
         this.builderEligibleCurrentForm = eligible;
         this.formEditorDesignContext = designContext;
         this.formPreviewSubmission = null;
         this.formEditorExplicitlyOpened = designContext;
-        if (!eligible || !schema) { this.builderMode = false; this.builderSchemaDraft = null; return; }
-        this.builderMode = false;
+        if (!pageIsForm || !eligible || !schema) { this.builderMode = false; this.builderSchemaDraft = null; this.builderEligibleCurrentForm = false; this.formEditorExplicitlyOpened = false; this.formEditorDesignContext = false; return; }
         this.builderSchemaDraft = this.resolveBuilderComponentSchema(data, schema, designContext);
+        this.builderMode = this.shouldRestoreBuilderMode();
+        if (this.builderMode) this.applyBuilderDraftToSubmission();
         this.formEditorActiveTab = 'builder';
     }
 
     syncDirectRecordBuilderMode(model: string, data: Record<string, unknown> | null, schema: Record<string, unknown> | null): void {
-        const eligible = Boolean(schema) && String(model || '').trim().toLowerCase() === 'component';
+        const pageIsForm = this.appManager.viewMode === 'form';
+        const eligible = pageIsForm && Boolean(schema) && String(model || '').trim().toLowerCase() === 'component';
         this.builderEligibleCurrentForm = eligible;
         this.formEditorDesignContext = false;
         this.formPreviewSubmission = null;
         this.formEditorExplicitlyOpened = false;
-        if (!eligible || !schema) { this.builderMode = false; this.builderSchemaDraft = null; return; }
-        this.builderMode = false;
+        if (!pageIsForm || !eligible || !schema) { this.builderMode = false; this.builderSchemaDraft = null; this.builderEligibleCurrentForm = false; return; }
         this.builderSchemaDraft = this.resolveBuilderComponentSchema(data, schema);
+        this.builderMode = this.shouldRestoreBuilderMode();
+        if (this.builderMode) this.applyBuilderDraftToSubmission();
         this.formEditorActiveTab = 'builder';
     }
 
-    resetBuilderState(): void {
+    resetBuilderState(clearModeMemory = false): void {
         this.builderMode = false;
         this.builderSchemaDraft = null;
         this.builderEligibleCurrentForm = false;
         this.formEditorExplicitlyOpened = false;
         this.formEditorDesignContext = false;
         this.formPreviewSubmission = null;
+        if (clearModeMemory) this.builderModePreferred = false;
         this.builderPaletteRevision += 1;
         this.applyFormBuilderConfig(null);
     }

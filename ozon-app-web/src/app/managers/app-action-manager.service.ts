@@ -25,6 +25,7 @@ export class AppActionManagerService {
     private transitionLoadingCount = 0;
     private isPopStateRegistered = false;
     private unauthorizedSub?: Subscription;
+    private pageContextId = 0;
     private readonly onPopState = () => { void this.handleLocationRoute(false); };
 
     private readonly btnActionParser: Record<string, 'post' | false> = {
@@ -50,6 +51,15 @@ export class AppActionManagerService {
     readFirstString(...candidates: unknown[]): string {
         for (const entry of candidates) { if (typeof entry === 'string' && entry.trim()) return entry.trim(); }
         return '';
+    }
+
+    private beginPageContext(): number {
+        this.pageContextId += 1;
+        return this.pageContextId;
+    }
+
+    private isCurrentPageContext(pageContextId: number): boolean {
+        return pageContextId === this.pageContextId;
     }
 
     toDisplayValue(v: unknown): string {
@@ -133,6 +143,7 @@ export class AppActionManagerService {
 
     private async bootstrapSessionAndRoute(preloadedSession?: unknown): Promise<void> {
         await this.appManager.loadSession(preloadedSession);
+        this.builder.setBuilderEnabled(this.appManager.builderEnabled, false);
         await this.bootstrapAppData();
         await this.handleLocationRoute(true);
         this.backendSessionReady = true;
@@ -218,7 +229,7 @@ export class AppActionManagerService {
     }
 
     async loadModels(): Promise<void> {
-        if (!this.appManager.backendSessionReady) {
+        if (!this.appManager.backendSessionReady && this.appManager.authMode !== 'keycloak') {
             this.setStatus('Sessione Keycloak non attiva: usa Login prima di chiamare il server.', true);
             return;
         }
@@ -289,16 +300,19 @@ export class AppActionManagerService {
     }
 
     async openSelectedRecord(): Promise<void> {
+        const pageContextId = this.pageContextId;
         const selectedModel = this.appManager.selectedModel;
         const selectedRecordName = this.tableManager.selectedRecordName;
         if (!selectedModel || !selectedRecordName) return;
         this.setStatus(`Caricamento record "${selectedRecordName}"...`, false);
         try {
             const payload = await this.api.getRecord(selectedModel, selectedRecordName);
+            if (!this.isCurrentPageContext(pageContextId)) return;
             const canReuseCachedSchema = Boolean(this.renderer.rawFormSchema) && (!this.renderer.rawFormSchemaModel || this.renderer.rawFormSchemaModel === selectedModel);
             let schema = this.renderer.extractFormSchema(payload) || (canReuseCachedSchema && this.renderer.rawFormSchema ? this.cloneSchema(this.renderer.rawFormSchema) : null);
             if (!schema) {
                 const schemaPayload = await this.api.getRecordSchema(selectedModel);
+                if (!this.isCurrentPageContext(pageContextId)) return;
                 schema = this.renderer.extractFormSchema(schemaPayload);
                 if (schema) { this.renderer.rawFormSchema = this.cloneSchema(schema); this.renderer.rawFormSchemaModel = selectedModel; }
             }
@@ -313,12 +327,16 @@ export class AppActionManagerService {
             this.currentFormSubmitActionPath = '';
             this.currentFormSubmitNextActionPath = '';
             this.renderer.formSchema = await this.renderer.hydrateRemoteSelectSchema(schema as Record<string, unknown>, submission.data);
+            if (!this.isCurrentPageContext(pageContextId)) return;
             this.renderer.seedSubmissionDefaultsIntoSchema(this.renderer.formSchema, submission.data);
             this.renderer.formSubmission = submission;
             await this.tableManager.refreshTableCellRenderers(this.tableManager.allRows);
+            if (!this.isCurrentPageContext(pageContextId)) return;
             const submissionData = this.isRecord(submission.data) ? submission.data : null;
+            this.appManager.viewMode = 'form';
             this.builder.syncDirectRecordBuilderMode(selectedModel, submissionData, this.renderer.formSchema);
             await this.builder.refreshFormBuilderConfigForCurrentForm();
+            if (!this.isCurrentPageContext(pageContextId)) return;
             this.rebuildMenus();
             this.setStatus(`Record caricato: ${selectedRecordName}`, false);
         } catch (error) { this.setStatus(this.errorMessage(error), true); }
@@ -341,6 +359,7 @@ export class AppActionManagerService {
     }
 
     onModelChanged(): void {
+        this.beginPageContext();
         this.tableManager.onModelChanged();
         this.renderer.resetFormState();
         this.builder.resetBuilderState();
@@ -377,11 +396,12 @@ export class AppActionManagerService {
     }
 
     resetClientState(statusMessage: string): void {
+        this.beginPageContext();
         this.appManager.resetClientState(statusMessage);
         this.tableManager.resetSelectionAndTable();
         this.tableManager.resetTableRowActionsConfig();
         this.renderer.resetFormState();
-        this.builder.resetBuilderState();
+        this.builder.resetBuilderState(true);
         this.tableManager.selectedModel = '';
         this.tableManager.selectedRecordName = '';
         this.tableManager.rawFormSchema = null;
@@ -465,6 +485,7 @@ export class AppActionManagerService {
     }
 
     async saveCurrentRecord(activeBuilderHost?: OzonFormBuilderHostComponent): Promise<void> {
+        const pageContextId = this.pageContextId;
         this.builder.syncBuilderSchemaFromLiveInstance(activeBuilderHost ?? this._activeBuilderHost);
         if (this.builder.builderSchemaDraft) this.builder.applyBuilderDraftToSubmission();
         const selectedModel = this.appManager.selectedModel;
@@ -477,7 +498,7 @@ export class AppActionManagerService {
         try {
             if (this.currentFormSubmitActionPath.startsWith('/action/')) {
                 const response = await this.api.postActionPath(this.currentFormSubmitActionPath, payload);
-                await this.applyInvokedActionResponse(response, this.currentFormSubmitNextActionPath);
+                await this.applyInvokedActionResponse(response, this.currentFormSubmitNextActionPath, pageContextId);
                 return;
             }
             const response = await this.api.updateRecord(selectedModel, recName, payload);
@@ -904,6 +925,7 @@ export class AppActionManagerService {
     }
 
     private async runPostActionButton(button: MenuButton): Promise<void> {
+        const pageContextId = this.pageContextId;
         const payload = this.renderer.formSubmission?.data;
         if (!payload || !this.isRecord(payload)) { this.setStatus('Nessun dato form disponibile per invocare l\'azione', true); return; }
         const actionPath = this.getButtonActionPath(button);
@@ -911,11 +933,12 @@ export class AppActionManagerService {
         this.setStatus(`Eseguo azione "${button.label}"...`, false);
         try {
             const response = await this.api.postActionPath(actionPath, payload);
-            await this.applyInvokedActionResponse(response, button.next_action_path);
+            await this.applyInvokedActionResponse(response, button.next_action_path, pageContextId);
         } catch (error) { this.setStatus(this.errorMessage(error), true); }
     }
 
-    private async applyInvokedActionResponse(response: unknown, fallbackNextActionPath = ''): Promise<void> {
+    private async applyInvokedActionResponse(response: unknown, fallbackNextActionPath = '', pageContextId = this.pageContextId): Promise<void> {
+        if (!this.isCurrentPageContext(pageContextId)) return;
         const redirectStatus = this.extractNextActionRedirectStatus(response);
         const redirectRaw = this.extractNextActionRedirectRaw(response);
         const redirectPath = this.extractNextActionRedirectPath(response);
@@ -938,11 +961,16 @@ export class AppActionManagerService {
         const actionResponse = this.extractActionResponse(embeddedContent) ?? this.extractActionResponse(response);
         if (actionResponse?.mode) {
             const mode = String(actionResponse.mode ?? '').trim().toLowerCase();
-            await this.applyActionResponse(actionResponse);
+            await this.applyActionResponse(actionResponse, pageContextId);
+            if (!this.isCurrentPageContext(pageContextId)) return;
             if (fallbackNextActionPath && mode === 'action') await this.navigateToPath(fallbackNextActionPath, true);
             return;
         }
-        if (fallbackNextActionPath) { await this.navigateToPath(fallbackNextActionPath, true); return; }
+        if (fallbackNextActionPath) {
+            if (!this.isCurrentPageContext(pageContextId)) return;
+            await this.navigateToPath(fallbackNextActionPath, true);
+            return;
+        }
         this.setStatus('Azione completata', false);
     }
 
@@ -954,17 +982,27 @@ export class AppActionManagerService {
         if (segments[0] === 'dashboard') { await this.navigateToPath('/dashboard'); return; }
         if (segments[0] === 'action') { await this.navigateToPath(rawPath); return; }
         if (segments[0] === 'list' && segments[1]) {
+            const pageContextId = this.beginPageContext();
             const model = segments[1];
             if (model !== this.appManager.selectedModel) { this.appManager.selectedModel = model; this.tableManager.selectedModel = model; this.renderer.selectedModel = model; this.onModelChanged(); }
-            await this.loadSchema(); await this.loadRecords(); this.appManager.viewMode = 'list'; return;
+            await this.loadSchema(); await this.loadRecords();
+            if (!this.isCurrentPageContext(pageContextId)) return;
+            this.appManager.viewMode = 'list'; return;
         }
         if (segments[0] === 'record' && segments[1]) {
+            const pageContextId = this.beginPageContext();
             const model = segments[1]; const recName = segments[2] ?? '';
             if (model !== this.appManager.selectedModel) { this.appManager.selectedModel = model; this.tableManager.selectedModel = model; this.renderer.selectedModel = model; this.onModelChanged(); }
             if (recName) {
                 this.tableManager.selectedRecordName = recName; this.renderer.selectedRecordName = recName;
-                this.rebuildMenus(); await this.openSelectedRecord(); this.appManager.viewMode = 'form';
-            } else { await this.loadSchema(); this.appManager.viewMode = 'form'; }
+                this.rebuildMenus(); await this.openSelectedRecord();
+                if (!this.isCurrentPageContext(pageContextId)) return;
+                this.appManager.viewMode = 'form';
+            } else {
+                await this.loadSchema();
+                if (!this.isCurrentPageContext(pageContextId)) return;
+                this.appManager.viewMode = 'form';
+            }
             return;
         }
         this.setStatus(`Azione window non riconosciuta: ${rawPath}`, true);
@@ -974,12 +1012,13 @@ export class AppActionManagerService {
         if (typeof window === 'undefined') return;
         const path = this.normalizeActionUrl(window.location.pathname || '/');
         if (path === '/') { await this.navigateToPath('/dashboard', true); return; }
-        if (path === '/dashboard') { this.currentActionName = ''; this.appManager.viewMode = 'dashboard'; return; }
-        if (path.startsWith('/action/')) { await this.runActionRoute(path); return; }
+        if (path === '/dashboard') { this.beginPageContext(); this.builder.resetBuilderState(); this.currentActionName = ''; this.appManager.viewMode = 'dashboard'; return; }
+        if (path.startsWith('/action/')) { this.beginPageContext(); await this.runActionRoute(path); return; }
         if (replaceRoot) await this.navigateToPath('/dashboard', true);
     }
 
     private async navigateToPath(path: string, replace = false): Promise<void> {
+        const pageContextId = this.beginPageContext();
         const normalized = this.normalizeActionUrl(path || '/dashboard');
         if (typeof window !== 'undefined') {
             const current = this.normalizeActionUrl(window.location.pathname || '/');
@@ -989,14 +1028,20 @@ export class AppActionManagerService {
             }
         }
         if (normalized === '/dashboard' || normalized === '/') {
+            this.currentActionName = '';
+            this.appManager.viewMode = 'dashboard';
+            this.builder.resetBuilderState();
             try { await this.loadActionDashboard(); } catch { }
-            this.currentActionName = ''; this.appManager.viewMode = 'dashboard'; this.appManager.closeTopMenu(); return;
+            if (!this.isCurrentPageContext(pageContextId)) return;
+            this.appManager.closeTopMenu();
+            return;
         }
         if (normalized.startsWith('/action/')) { await this.runActionRoute(normalized); this.appManager.closeTopMenu(); return; }
         this.appManager.viewMode = 'dashboard';
     }
 
     private async runActionRoute(path: string): Promise<void> {
+        const pageContextId = this.pageContextId;
         const route = this.parseActionRoute(path);
         if (!route) { this.setStatus(`Azione non valida: ${path}`, true); return; }
         if (route.name === 'next_action') { await this.runNextActionRoute(route.args); return; }
@@ -1008,6 +1053,7 @@ export class AppActionManagerService {
                 query: this.tableManager.parseQueryInput((m, e) => this.setStatus(m, e)) ?? {},
                 order: this.tableManager.order, skip: this.tableManager.skip, limit: this.tableManager.limit
             });
+            if (!this.isCurrentPageContext(pageContextId)) return;
             const redirectStatus = this.extractNextActionRedirectStatus(response);
             const redirectRaw = this.extractNextActionRedirectRaw(response);
             const redirectPath = this.extractNextActionRedirectPath(response);
@@ -1018,17 +1064,19 @@ export class AppActionManagerService {
                 if (reload.blocked) { this.setStatus(`Redirect bloccato: origin non abilitata (${reloadTarget})`, true); return; }
             }
             if (redirectPath) { await this.navigateToPath(redirectPath, true); return; }
-            await this.applyActionResponse(response);
+            await this.applyActionResponse(response, pageContextId);
         } catch (error) { this.setStatus(this.errorMessage(error), true); }
     }
 
     private async runNextActionRoute(args: string[]): Promise<void> {
+        const pageContextId = this.pageContextId;
         const currentAction = this.readFirstString(args[0], this.resolveCurrentActionName());
         const recName = this.readFirstString(args[1]);
         if (!currentAction) { this.setStatus('next_action richiede current_action', true); return; }
         this.setStatus(`Caricamento next_action: ${currentAction}${recName ? `/${recName}` : ''}`, false);
         try {
             const response = await this.api.getNextAction(currentAction, recName);
+            if (!this.isCurrentPageContext(pageContextId)) return;
             const responseRecord = this.asRecord(response);
             const embeddedContent = responseRecord ? responseRecord['content'] : null;
             const embeddedActionResponse = this.extractActionResponse(embeddedContent);
@@ -1050,7 +1098,7 @@ export class AppActionManagerService {
             }
             if (redirectPath) { await this.navigateToPath(redirectPath, true); return; }
             const actionResponse = embeddedActionResponse ?? this.extractActionResponse(response);
-            if (actionResponse?.mode) { await this.applyActionResponse(actionResponse); return; }
+            if (actionResponse?.mode) { await this.applyActionResponse(actionResponse, pageContextId); return; }
             throw new Error('Risposta next_action senza path di redirect');
         } catch (error) { this.setStatus(this.errorMessage(error), true); }
     }
@@ -1063,7 +1111,8 @@ export class AppActionManagerService {
         return { name: segments[1], recName: args[0] ?? '', args };
     }
 
-    private async applyActionResponse(payload: unknown): Promise<void> {
+    private async applyActionResponse(payload: unknown, pageContextId = this.pageContextId): Promise<void> {
+        if (!this.isCurrentPageContext(pageContextId)) return;
         const failedMessage = this.renderer.readEnvelopeFailureMessage(payload);
         if (failedMessage) throw new Error(failedMessage);
         const response = this.extractActionResponse(payload);
@@ -1087,13 +1136,15 @@ export class AppActionManagerService {
         }
         if (mode === 'list') {
             if (responseActionName) this.currentActionName = responseActionName;
-            await this.applyActionListResponse(response);
+            await this.applyActionListResponse(response, pageContextId);
+            if (!this.isCurrentPageContext(pageContextId)) return;
             this.appManager.viewMode = 'list';
             this.setStatus(`Lista caricata: ${this.tableManager.tableRows.length} record`, false); return;
         }
         if (mode === 'form') {
             if (responseActionName) this.currentActionName = responseActionName;
-            await this.applyActionFormResponse(response, payload);
+            await this.applyActionFormResponse(response, payload, pageContextId);
+            if (!this.isCurrentPageContext(pageContextId)) return;
             this.appManager.viewMode = 'form';
             this.setStatus(`Record caricato: ${this.tableManager.selectedRecordName || 'N/A'}`, false); return;
         }
@@ -1105,7 +1156,8 @@ export class AppActionManagerService {
         this.setStatus(`Modalita azione non supportata: ${mode || 'unknown'}`, true);
     }
 
-    private async applyActionListResponse(response: ActionRouterResponse): Promise<void> {
+    private async applyActionListResponse(response: ActionRouterResponse, pageContextId = this.pageContextId): Promise<void> {
+        if (!this.isCurrentPageContext(pageContextId)) return;
         this.tableManager.syncTableRowActionsConfig(response as Record<string, unknown>);
         const responseData = this.asRecord(response.data) ?? {};
         const rows = this.tableManager.normalizeActionListData(response.data);
@@ -1133,11 +1185,13 @@ export class AppActionManagerService {
             this.tableManager.rawFormSchemaModel = this.appManager.selectedModel;
         }
         await this.tableManager.refreshTableCellRenderers(rows);
+        if (!this.isCurrentPageContext(pageContextId)) return;
         this.builder.syncBuilderMode(response as Record<string, unknown>, null, null);
         this.rebuildMenus();
     }
 
-    private async applyActionFormResponse(response: ActionRouterResponse, sourcePayload: unknown = null): Promise<void> {
+    private async applyActionFormResponse(response: ActionRouterResponse, sourcePayload: unknown = null, pageContextId = this.pageContextId): Promise<void> {
+        if (!this.isCurrentPageContext(pageContextId)) return;
         const responseData = this.asRecord(response.data) ?? {};
         const nestedResponseData = this.asRecord(responseData['data']);
         let data = nestedResponseData ? nestedResponseData : responseData;
@@ -1163,21 +1217,26 @@ export class AppActionManagerService {
             if (schemaModel && !responseModel) { this.appManager.selectedModel = schemaModel; this.tableManager.selectedModel = schemaModel; this.renderer.selectedModel = schemaModel; }
             if (schemaModel) schema = await this.loadModelSchemaForActionForm(schemaModel);
         }
+        if (!this.isCurrentPageContext(pageContextId)) return;
         if (schema) { this.renderer.rawFormSchema = this.cloneSchema(schema); this.renderer.rawFormSchemaModel = this.appManager.selectedModel; this.tableManager.rawFormSchema = this.renderer.rawFormSchema; this.tableManager.rawFormSchemaModel = this.appManager.selectedModel; }
         const canReuseCachedSchema = Boolean(this.renderer.rawFormSchema) && (!this.appManager.selectedModel || !this.renderer.rawFormSchemaModel || this.renderer.rawFormSchemaModel === this.appManager.selectedModel);
         const baseSchema = schema ? this.cloneSchema(schema) : (canReuseCachedSchema && this.renderer.rawFormSchema ? this.cloneSchema(this.renderer.rawFormSchema) : null);
         this.renderer.formSchema = null; this.renderer.formSubmission = null;
         this.renderer.formSchema = baseSchema ? await this.renderer.hydrateRemoteSelectSchema(baseSchema, data) : null;
+        if (!this.isCurrentPageContext(pageContextId)) return;
         this.renderer.seedSubmissionDefaultsIntoSchema(this.renderer.formSchema, data);
         this.renderer.formSubmission = { data };
         await this.tableManager.refreshTableCellRenderers(this.tableManager.allRows);
+        if (!this.isCurrentPageContext(pageContextId)) return;
         if (!this.renderer.formSchema) {
             const actionName = this.currentActionName || 'unknown';
             const modelName = this.appManager.selectedModel ? ` (model: ${this.appManager.selectedModel})` : '';
             throw new Error(`Schema non trovato per action form "${actionName}"${modelName}`);
         }
+        this.appManager.viewMode = 'form';
         this.builder.syncBuilderMode(response as Record<string, unknown>, data, this.renderer.formSchema);
         await this.builder.refreshFormBuilderConfigForCurrentForm();
+        if (!this.isCurrentPageContext(pageContextId)) return;
         this.currentFormSubmitActionPath = this.resolveFormSubmitActionPathFromResponse(response, sourcePayload);
         this.currentFormSubmitNextActionPath = this.resolveFormSubmitNextActionPathFromResponse(response, sourcePayload);
         this.formResponseActionButtons = this.resolveFormResponseActionButtons(response, sourcePayload);
