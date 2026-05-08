@@ -20,6 +20,19 @@ export interface ListRequestPayload {
   order?: unknown;
 }
 
+export interface FastSearchPayload {
+  query_fields: Record<string, unknown>[];
+  order?: string;
+  skip?: number;
+  limit?: number;
+}
+
+export interface FastSearchConfig {
+  model?: string;
+  schema: unknown;
+  fast_serch_model?: string;
+}
+
 export interface ListStreamResult {
   count: number;
   totalCount: number;

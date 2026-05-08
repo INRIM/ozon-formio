@@ -1,8 +1,18 @@
-.idea
-.env
-node_modules
-dist
-.angular
-coverage
-.claude
-docAnalisi
+# Local env
+/.env
+
+# Editor / IDE
+/.idea/
+/.claude/
+
+# OS junk
+/.DS_Store
+
+# Node / Angular outputs
+/node_modules/
+/dist/
+/coverage/
+/.angular/
+
+# Generated docs / analysis exports
+/docAnalisi/

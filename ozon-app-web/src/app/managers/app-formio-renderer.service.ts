@@ -70,6 +70,7 @@ export class AppFormioRendererService {
         if (content) {
             const schema = content['schema'];
             if (Array.isArray(schema)) return { display: 'form', components: schema };
+            if (this.isRecord(schema) && Array.isArray(schema['components'])) return schema as Record<string, unknown>;
         }
         // Fallback: top-level components array (e.g. { components: [...] })
         if (Array.isArray(payload['components'])) return { display: 'form', components: payload['components'] };
@@ -89,7 +90,7 @@ export class AppFormioRendererService {
             const parsed = this.parseJsonMaybe(candidate);
             const normalized = parsed ?? candidate;
             if (Array.isArray(normalized)) return { display: 'form', components: normalized };
-            // if (this.isRecord(normalized) && Array.isArray(normalized['components'])) return normalized;
+            if (this.isRecord(normalized) && Array.isArray(normalized['components'])) return normalized as Record<string, unknown>;
         }
         return null;
     }

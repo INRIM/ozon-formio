@@ -1,7 +1,7 @@
 import { Component, Inject, OnDestroy, OnInit, Optional, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { FormioModule } from '@formio/angular';
+import { FormioComponent, FormioModule } from '@formio/angular';
 import { ButtonModule } from 'primeng/button';
 import { EditorModule } from 'primeng/editor';
 import { InputSwitchModule } from 'primeng/inputswitch';
@@ -26,6 +26,7 @@ import { MenuButton, MenuCard, MenuDrillDownGroup, TableColumn, TableRow } from 
 })
 export class AppComponent implements OnInit, OnDestroy {
     @ViewChild(OzonFormBuilderHostComponent) activeBuilderHost?: OzonFormBuilderHostComponent;
+    @ViewChild('formioViewer') formioViewer?: FormioComponent;
 
     constructor(
         readonly theme: AppThemeService,
@@ -41,6 +42,7 @@ export class AppComponent implements OnInit, OnDestroy {
         this.theme.initialize();
         this.appManager.initializeBuilderPreference();
         this.builder.setFormBuilderExtensions(this.formBuilderExtensions);
+        this.actionManager.setFormioViewerGetter(() => this.formioViewer);
         this.actionManager.initSubscriptions();
         void this.actionManager.initializeApplication();
     }
@@ -131,7 +133,7 @@ export class AppComponent implements OnInit, OnDestroy {
     async openRecordFromListSelection(): Promise<void> { return this.actionManager.openRecordFromListSelection(); }
     async openNewRecord(): Promise<void> { return this.actionManager.openNewRecord(); }
     async retryServerError(): Promise<void> { return this.actionManager.retryServerError(); }
-    async saveCurrentRecord(): Promise<void> { return this.actionManager.saveCurrentRecord(this.activeBuilderHost); }
+    async saveCurrentRecord(): Promise<void> { return this.actionManager.saveCurrentRecord(this.activeBuilderHost, this.formioViewer); }
     menuDrilldownGroups(card: MenuCard): MenuDrillDownGroup[] { return this.actionManager.menuDrilldownGroups(card); }
 
     // --- Table Manager ---
@@ -173,13 +175,37 @@ export class AppComponent implements OnInit, OnDestroy {
         this.tableManager.onTableSelectionChange(value, () => this.actionManager.rebuildMenus());
     }
     onFilterChanged(): void {
-        this.tableManager.onFilterChanged(() => this.tableManager.refreshTableRows());
+        this.tableManager.onFilterChanged(() => { void this.actionManager.loadRecords(); });
     }
     onRowReorder(event: TableRowReorderEvent): void {
         this.tableManager.onRowReorder(event, (m, e) => this.appManager.setStatus(m, e));
     }
     async onCopyRow(row: TableRow, event: Event): Promise<void> { return this.actionManager.onCopyRow(row, event); }
     async onRemoveRow(row: TableRow, event: Event): Promise<void> { return this.actionManager.onRemoveRow(row, event); }
+
+    // --- Fast Search ---
+
+    get fastSearchEnabled(): boolean { return this.tableManager.fastSearchEnabled; }
+    get fastSearchSchema(): Record<string, unknown> | null { return this.tableManager.fastSearchSchema; }
+    get fastSearchSubmission(): { data: Record<string, unknown> } { return this.tableManager.fastSearchSubmission; }
+
+    async onFastSearchFormChange(event: unknown): Promise<void> {
+        const shouldAutoSearch = await this.tableManager.applyFastSearchFormChange(event);
+        if (!shouldAutoSearch) return;
+        await this.doFastSearch();
+    }
+    onFastSearchKeydown(event: KeyboardEvent): void {
+        if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
+        const target = event.target as HTMLElement | null;
+        if (target?.tagName === 'TEXTAREA') return;
+        const isMobile = typeof window !== 'undefined' && window.matchMedia('(max-width: 991px)').matches;
+        event.preventDefault();
+        event.stopPropagation();
+        if (isMobile) return;
+        void this.doFastSearch();
+    }
+    async doFastSearch(): Promise<void> { this.tableManager.activateFastSearch(); return this.actionManager.loadRecords(false); }
+    async resetFastSearch(): Promise<void> { this.tableManager.resetFastSearch(); return this.actionManager.loadRecords(false); }
 
     // --- Formio Renderer ---
 

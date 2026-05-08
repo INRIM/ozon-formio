@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core';
 import { Subscription } from 'rxjs';
+import { FormioComponent } from '@formio/angular';
 import { OzonApiService } from '../core/ozon-api.service';
 import { MainManagerService } from '../core/main-manager.service';
 import { AppManagerService } from './app-manager.service';
@@ -119,7 +120,9 @@ export class AppActionManagerService {
                 const loginUrl = this.appManager.getLoginUrl();
                 if (loginUrl) {
                     this.redirectingToLogin = true;
-                    if (typeof window !== 'undefined') window.location.href = loginUrl;
+                    const reloadResult = this.mainManager.hardReloadToUrl(loginUrl);
+                    if (reloadResult.reloaded) return;
+                    if (reloadResult.blocked) { this.setStatus(`Login bloccato verso origine non consentita: ${reloadResult.targetUrl}`, true); return; }
                     return;
                 }
                 this.backendSessionReady = false;
@@ -246,6 +249,8 @@ export class AppActionManagerService {
     async loadSchema(): Promise<void> {
         const selectedModel = this.appManager.selectedModel;
         if (!selectedModel) { this.setStatus('Seleziona un model', true); return; }
+        this.renderer.selectedModel = selectedModel;
+        this.tableManager.selectedModel = selectedModel;
         this.setStatus('Caricamento schema...', false);
         try {
             const payload = await this.api.getRecordSchema(selectedModel);
@@ -269,25 +274,48 @@ export class AppActionManagerService {
 
     async loadRecords(preservePaginatorState = false): Promise<void> {
         const selectedModel = this.appManager.selectedModel;
-        if (!selectedModel || this.tableManager.isLoadingRecords) return;
+        if (!selectedModel) return;
+        if (this.tableManager.isLoadingRecords) {
+            this.tableManager.requestReloadAfterCurrentLoad(preservePaginatorState);
+            return;
+        }
+        this.tableManager.resetTableRowActionsConfig();
+        this.setStatus('Caricamento record (stream)...', false);
+        const onItem = (item: unknown) => { this.tableManager.streamCount += 1; this.tableManager.appendRecordRow(item); };
+        const onMeta = (meta: { columnsRaw?: unknown; columns?: unknown }) => {
+            this.tableManager.setLastColumnsRaw(String(meta.columnsRaw ?? ''));
+            this.tableManager.applyTableColumnsFromHeader(meta.columns);
+        };
+
+        if (this.tableManager.fastSearchActive) {
+            const fsPayload = this.tableManager.buildFastSearchPayload();
+            const querySignature = this.tableManager.stableStringify({ fastSearch: this.tableManager.fastSearchActionName, ...fsPayload });
+            this.tableManager.prepareLoadRecords(preservePaginatorState, querySignature, { preserveColumns: true });
+            try {
+                const result = await this.api.filterFastSearch(this.tableManager.fastSearchActionName, fsPayload, onItem, onMeta);
+                this.tableManager.finishLoadRecords(querySignature, result);
+                await this.tableManager.refreshTableCellRenderers(this.tableManager.allRows);
+                this.rebuildMenus();
+                this.setStatus(`Record caricati: ${result.count} / Totale: ${result.totalCount} (limit ${this.tableManager.limit})`, false);
+            } catch (error) {
+                this.setStatus(this.errorMessage(error), true);
+            } finally {
+                this.tableManager.isLoadingRecords = false;
+                if (this.tableManager.hasPendingReloadRequest()) void this.loadRecords(this.tableManager.consumePendingReloadRequest());
+            }
+            return;
+        }
+
+        if (await this.reloadCurrentActionList(preservePaginatorState)) return;
+
         const query = this.tableManager.parseQueryInput((m, e) => this.setStatus(m, e));
         if (!query) return;
-        this.tableManager.resetTableRowActionsConfig();
-        const querySignature = this.tableManager.stableStringify({ model: selectedModel, query, order: this.tableManager.order, limit: this.tableManager.limit });
         const payload = this.tableManager.buildListPayload();
         payload.query = query;
+        const querySignature = this.tableManager.stableStringify({ model: selectedModel, query, order: this.tableManager.order, limit: this.tableManager.limit });
         this.tableManager.prepareLoadRecords(preservePaginatorState, querySignature);
-        this.setStatus('Caricamento record (stream)...', false);
         try {
-            const streamed = await this.api.streamList(
-                selectedModel,
-                payload,
-                (item: unknown) => { this.tableManager.streamCount += 1; this.tableManager.appendRecordRow(item); },
-                (meta) => {
-                    this.tableManager.setLastColumnsRaw(String(meta.columnsRaw ?? ''));
-                    this.tableManager.applyTableColumnsFromHeader(meta.columns);
-                }
-            );
+            const streamed = await this.api.streamList(selectedModel, payload, onItem, onMeta);
             this.tableManager.finishLoadRecords(querySignature, streamed.result);
             await this.tableManager.refreshTableCellRenderers(this.tableManager.allRows);
             this.rebuildMenus();
@@ -296,7 +324,50 @@ export class AppActionManagerService {
             this.setStatus(this.errorMessage(error), true);
         } finally {
             this.tableManager.isLoadingRecords = false;
+            if (this.tableManager.hasPendingReloadRequest()) void this.loadRecords(this.tableManager.consumePendingReloadRequest());
         }
+    }
+
+    private async reloadCurrentActionList(preservePaginatorState: boolean): Promise<boolean> {
+        const actionName = this.readFirstString(this.currentActionName);
+        if (!actionName || this.appManager.viewMode !== 'list') return false;
+        const pageContextId = this.pageContextId;
+        const query = this.tableManager.parseQueryInput((m, e) => this.setStatus(m, e));
+        if (!query) return true;
+        const querySignature = this.tableManager.stableStringify({ action: actionName, query, order: this.tableManager.order, limit: this.tableManager.limit });
+        this.tableManager.prepareLoadRecords(preservePaginatorState, querySignature, { preserveColumns: true });
+        try {
+            const payload = await this.api.getAction(actionName, {
+                query,
+                order: this.tableManager.order,
+                skip: this.tableManager.skip,
+                limit: this.tableManager.limit
+            });
+            if (!this.isCurrentPageContext(pageContextId)) return true;
+            const response = this.extractActionResponse(payload);
+            if (!response) throw new Error('Risposta action non valida');
+            const mode = String(response.mode ?? '').trim().toLowerCase();
+            if (mode !== 'list') {
+                await this.applyActionResponse(payload, pageContextId);
+                return true;
+            }
+            await this.applyActionListResponse(response, pageContextId, { preserveTableStructure: true });
+            if (!this.isCurrentPageContext(pageContextId)) return true;
+            this.tableManager.finishLoadRecords(querySignature, {
+                count: this.tableManager.tableRows.length,
+                totalCount: this.tableManager.tableTotalRecords,
+                skip: String(this.tableManager.skip),
+                limit: String(this.tableManager.limit)
+            });
+            this.rebuildMenus();
+            this.setStatus(`Record caricati: ${this.tableManager.tableRows.length} / Totale: ${this.tableManager.tableTotalRecords} (limit ${this.tableManager.limit})`, false);
+        } catch (error) {
+            this.setStatus(this.errorMessage(error), true);
+        } finally {
+            this.tableManager.isLoadingRecords = false;
+            if (this.tableManager.hasPendingReloadRequest()) void this.loadRecords(this.tableManager.consumePendingReloadRequest());
+        }
+        return true;
     }
 
     async openSelectedRecord(): Promise<void> {
@@ -477,14 +548,14 @@ export class AppActionManagerService {
         const actionPath = this.getButtonActionPath(button);
         if (button.action_type === 'window') { await this.runWindowAction(button); return; }
         if (this.isPostActionButton(button)) { await this.runPostActionButton(button); return; }
-        if (button.action_type === 'save') { await this.saveCurrentRecord(); return; }
+        if (button.action_type === 'save') { await this.saveCurrentRecord(this._activeBuilderHost, this._formioViewerGetter?.()); return; }
         if (button.action_type === 'copy') { await this.copyCurrentRecordName(); return; }
         if (button.action_type === 'delete') { this.tableManager.removeCurrentRecordFromView(() => this.rebuildMenus(), (m, e) => this.setStatus(m, e)); return; }
         if (actionPath.startsWith('/action/')) { await this.navigateToPath(actionPath); return; }
         this.setStatus(`Azione non supportata: ${button.action_type}`, true);
     }
 
-    async saveCurrentRecord(activeBuilderHost?: OzonFormBuilderHostComponent): Promise<void> {
+    async saveCurrentRecord(activeBuilderHost?: OzonFormBuilderHostComponent, formioViewer?: FormioComponent): Promise<void> {
         const pageContextId = this.pageContextId;
         this.builder.syncBuilderSchemaFromLiveInstance(activeBuilderHost ?? this._activeBuilderHost);
         if (this.builder.builderSchemaDraft) this.builder.applyBuilderDraftToSubmission();
@@ -492,6 +563,7 @@ export class AppActionManagerService {
         if (!selectedModel) { this.setStatus('Seleziona un model prima di salvare', true); return; }
         const payload = this.renderer.formSubmission?.data;
         if (!payload || !this.isRecord(payload)) { this.setStatus('Nessun dato form disponibile da salvare', true); return; }
+        if (!this.validateFormioSubmissionForSave(formioViewer, payload)) return;
         const recName = this.getActiveRecName() || String(payload['rec_name'] ?? '').trim();
         if (!recName) { this.setStatus('rec_name mancante: impossibile salvare', true); return; }
         this.setStatus(`Salvataggio record "${recName}"...`, false);
@@ -551,6 +623,21 @@ export class AppActionManagerService {
         if (!normalized) throw new Error(`Azione non valida: ${path}`);
         if (normalized === '/dashboard' || normalized.startsWith('/action/')) { await this.navigateToPath(normalized); return; }
         await this.runWindowPath(normalized);
+    }
+
+    private validateFormioSubmissionForSave(formioViewer: FormioComponent | undefined, payload: Record<string, unknown>): boolean {
+        if (!formioViewer?.formio || this.builder.formEditorDesignContext) return true;
+        const validationErrors = typeof formioViewer.formio.validate === 'function'
+            ? formioViewer.formio.validate(payload, { dirty: true, silentCheck: false, process: 'submit' })
+            : null;
+        const isValid = Array.isArray(validationErrors)
+            ? validationErrors.length === 0
+            : formioViewer.formio.checkValidity(payload, true, null);
+        if (!isValid) {
+            this.setStatus('Compila i campi obbligatori prima di salvare', true);
+            return false;
+        }
+        return true;
     }
 
     get topMenuCards(): MenuCard[] {
@@ -665,9 +752,14 @@ export class AppActionManagerService {
     }
 
     private _activeBuilderHost?: OzonFormBuilderHostComponent;
+    private _formioViewerGetter?: () => FormioComponent | undefined;
 
     setActiveBuilderHost(host?: OzonFormBuilderHostComponent): void {
         this._activeBuilderHost = host;
+    }
+
+    setFormioViewerGetter(fn: () => FormioComponent | undefined): void {
+        this._formioViewerGetter = fn;
     }
 
     rebuildMenus(): void {
@@ -928,6 +1020,7 @@ export class AppActionManagerService {
         const pageContextId = this.pageContextId;
         const payload = this.renderer.formSubmission?.data;
         if (!payload || !this.isRecord(payload)) { this.setStatus('Nessun dato form disponibile per invocare l\'azione', true); return; }
+        if (!this.validateFormioSubmissionForSave(this._formioViewerGetter?.(), payload)) return;
         const actionPath = this.getButtonActionPath(button);
         if (!actionPath.startsWith('/action/')) { this.setStatus(`POST action non supportata: ${actionPath}`, true); return; }
         this.setStatus(`Eseguo azione "${button.label}"...`, false);
@@ -1156,12 +1249,15 @@ export class AppActionManagerService {
         this.setStatus(`Modalita azione non supportata: ${mode || 'unknown'}`, true);
     }
 
-    private async applyActionListResponse(response: ActionRouterResponse, pageContextId = this.pageContextId): Promise<void> {
+    private async applyActionListResponse(response: ActionRouterResponse, pageContextId = this.pageContextId, opt: { preserveTableStructure?: boolean } = {}): Promise<void> {
         if (!this.isCurrentPageContext(pageContextId)) return;
         this.tableManager.syncTableRowActionsConfig(response as Record<string, unknown>);
         const responseData = this.asRecord(response.data) ?? {};
         const rows = this.tableManager.normalizeActionListData(response.data);
-        this.tableManager.resetSelectionAndTable({ preserveFilterText: true });
+        this.tableManager.resetSelectionAndTable({
+            preserveFilterText: true,
+            preserveColumns: opt.preserveTableStructure
+        });
         const listColumnsPayload = this.tableManager.resolveActionListColumnsPayload(response as Record<string, unknown>, responseData);
         this.tableManager.strictHeaderColumns = listColumnsPayload.explicit;
         this.tableManager.tableTotalRecords = this.tableManager.parseNonNegativeInt(response.total_count, rows.length);
@@ -1184,10 +1280,31 @@ export class AppActionManagerService {
             this.tableManager.rawFormSchema = this.renderer.rawFormSchema;
             this.tableManager.rawFormSchemaModel = this.appManager.selectedModel;
         }
+        const fields = this.isRecord(response.fields) ? response.fields : {};
+        await this.applyFastSearchConfig(response as Record<string, unknown>, fields, responseData);
         await this.tableManager.refreshTableCellRenderers(rows);
         if (!this.isCurrentPageContext(pageContextId)) return;
         this.builder.syncBuilderMode(response as Record<string, unknown>, null, null);
         this.rebuildMenus();
+    }
+
+    private async applyFastSearchConfig(response: Record<string, unknown>, fields: Record<string, unknown>, responseData: Record<string, unknown>): Promise<void> {
+        const rawConfig = response['fast_search'] ?? fields['fast_search'] ?? responseData['fast_search'];
+        if (!this.isRecord(rawConfig)) { await this.tableManager.setFastSearchConfig('', null); return; }
+        const rawSchema = rawConfig['schema'];
+        let schema: Record<string, unknown> | null = null;
+        if (Array.isArray(rawSchema)) schema = { display: 'form', components: rawSchema };
+        else if (this.isRecord(rawSchema) && Array.isArray(rawSchema['components'])) schema = rawSchema as Record<string, unknown>;
+        if (!schema) {
+            const modelName = this.readFirstString(rawConfig['fast_serch_model'], rawConfig['fast_search_model']);
+            if (modelName) {
+                try {
+                    const payload = await this.api.getAction('form_form_fast_search_config', { recName: modelName });
+                    schema = this.renderer.extractActionFormSchema(payload) ?? this.renderer.extractFormSchema(payload);
+                } catch { /* leave schema null */ }
+            }
+        }
+        await this.tableManager.setFastSearchConfig(this.currentActionName, schema);
     }
 
     private async applyActionFormResponse(response: ActionRouterResponse, sourcePayload: unknown = null, pageContextId = this.pageContextId): Promise<void> {

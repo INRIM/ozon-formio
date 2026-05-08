@@ -39,8 +39,10 @@ describe('AppComponent', () => {
       'getRecordSchema',
       'getRecord',
       'updateRecord',
+      'postActionPath',
       'getRemoteSelect',
-      'streamList'
+      'streamList',
+      'filterFastSearch'
     ]);
     apiMock.getRuntimeConfig.and.returnValue({ ...runtimeConfig });
     apiMock.updateRuntimeConfig.and.callFake((patch) => ({ ...runtimeConfig, ...patch }));
@@ -56,6 +58,7 @@ describe('AppComponent', () => {
     apiMock.getRecordSchema.and.resolveTo({});
     apiMock.getRecord.and.resolveTo({ content: { data: { rec_name: 'r1' } } });
     apiMock.updateRecord.and.resolveTo({ content: { data: { rec_name: 'r1' } } });
+    apiMock.postActionPath.and.resolveTo({ mode: 'action', data: { status: 'ok' } });
     apiMock.getRemoteSelect.and.resolveTo([]);
     apiMock.streamList.and.resolveTo({
       result: {
@@ -70,6 +73,16 @@ describe('AppComponent', () => {
       },
       payloadLabel: 'default',
       retries: 0
+    });
+    apiMock.filterFastSearch.and.resolveTo({
+      count: 0,
+      totalCount: 0,
+      contentType: 'application/x-ndjson',
+      order: '',
+      skip: '0',
+      limit: '20',
+      columnsRaw: '',
+      columns: null
     });
     (apiMock as any).unauthorized$ = EMPTY;
     mainManagerMock = jasmine.createSpyObj<MainManagerService>('MainManagerService', [
@@ -1099,6 +1112,52 @@ describe('AppComponent', () => {
     );
   });
 
+  it('should block save when Formio validation returns required-field errors', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.appManager.selectedModel = 'ordine';
+    app.renderer.formSubmission = { data: { rec_name: 'rec-1' } };
+    const validateSpy = jasmine.createSpy('validate').and.returnValue([{ message: 'required' }]);
+
+    await app.actionManager.saveCurrentRecord(undefined, { formio: { validate: validateSpy, checkValidity: jasmine.createSpy('checkValidity') } } as any);
+
+    expect(validateSpy).toHaveBeenCalledWith(
+      jasmine.objectContaining({ rec_name: 'rec-1' }),
+      jasmine.objectContaining({ dirty: true, silentCheck: false, process: 'submit' })
+    );
+    expect(apiMock.updateRecord).not.toHaveBeenCalled();
+    expect(app.statusError).toBeTrue();
+    expect(app.statusText).toContain('Compila i campi obbligatori');
+  });
+
+  it('should block post actions when Formio validation returns required-field errors', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.appManager.selectedModel = 'ordine';
+    app.renderer.formSubmission = { data: { rec_name: 'rec-1' } };
+    const validateSpy = jasmine.createSpy('validate').and.returnValue([{ message: 'required' }]);
+    app.actionManager.setFormioViewerGetter(() => ({ formio: { validate: validateSpy, checkValidity: jasmine.createSpy('checkValidity') } } as any));
+
+    await app.runTopMenuAction({
+      model: 'ordine',
+      key: 'save',
+      type: 'button',
+      label: 'Salva',
+      leftIcon: 'pi pi-save',
+      authtoken: '',
+      req_id: 'req_1',
+      btn_action_type: 'post',
+      action_type: 'post',
+      url_action: '/action/submit_nullaOstaBandiRequest',
+      builder: false
+    });
+
+    expect(validateSpy).toHaveBeenCalled();
+    expect(apiMock.postActionPath).not.toHaveBeenCalled();
+    expect(app.statusError).toBeTrue();
+    expect(app.statusText).toContain('Compila i campi obbligatori');
+  });
+
   it('should load dashboard cards only from mode card payload', async () => {
     apiMock.getActionDashboard.and.resolveTo({
       mode: 'card',
@@ -1125,8 +1184,8 @@ describe('AppComponent', () => {
   it('should show cards only for non-admin menus and gate admin menus by builder flag', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
-    app.isAdminUser = true;
-    app.builderFeatureEnabled = true;
+    app.appManager.isAdminUser = true;
+    app.appManager.builderFeatureEnabled = true;
     app.appManager.dashboardMenu = [
       {
         model: 'component',
@@ -1175,8 +1234,8 @@ describe('AppComponent', () => {
   it('should show top menu only when builder toggle is enabled', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
-    app.isAdminUser = true;
-    app.builderFeatureEnabled = true;
+    app.appManager.isAdminUser = true;
+    app.appManager.builderFeatureEnabled = true;
     app.appManager.builderEnabled = false;
 
     expect(app.showTopMenu).toBeFalse();
@@ -1267,17 +1326,17 @@ describe('AppComponent', () => {
 
     expect(app.showTableRowCopyAction).toBeTrue();
     expect(app.showTableRowRemoveAction).toBeTrue();
-    expect(app.tableCopyActionPath).toBe('/action/copy_documento');
-    expect(app.tableRemoveActionPath).toBe('/action/remove_documento');
+    expect(app.tableManager.tableCopyActionPath).toBe('/action/copy_documento');
+    expect(app.tableManager.tableRemoveActionPath).toBe('/action/remove_documento');
   });
 
   it('should execute configured server-side row copy action when copy_url is present', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
-    app.tableCalledInsideForm = true;
-    app.tableCopyEnabled = true;
-    app.tableCopyActionPath = '/action/copy_documento';
-    const navigateSpy = spyOn(app, 'navigateToPath').and.resolveTo();
+    app.tableManager.tableCalledInsideForm = true;
+    app.tableManager.tableCopyEnabled = true;
+    app.tableManager.tableCopyActionPath = '/action/copy_documento';
+    const navigateSpy = spyOn(app.actionManager as any, 'navigateToPath').and.resolveTo();
     const event = { stopPropagation: jasmine.createSpy('stopPropagation') } as unknown as Event;
 
     await app.onCopyRow({ __rowid: 1, __rec_name: 'rec-1' }, event);
@@ -1289,21 +1348,21 @@ describe('AppComponent', () => {
   it('should execute configured server-side row remove action and skip local removal', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
-    app.tableCalledInsideForm = true;
-    app.tableRemoveEnabled = true;
-    app.tableRemoveActionPath = '/action/remove_documento';
-    app.allRows = [{ __rowid: 1, __rec_name: 'rec-1' }];
-    app.tableRows = [...app.allRows];
-    app.tableTotalRecords = 1;
-    const navigateSpy = spyOn(app, 'navigateToPath').and.resolveTo();
+    app.tableManager.tableCalledInsideForm = true;
+    app.tableManager.tableRemoveEnabled = true;
+    app.tableManager.tableRemoveActionPath = '/action/remove_documento';
+    app.tableManager.allRows = [{ __rowid: 1, __rec_name: 'rec-1' }];
+    app.tableManager.tableRows = [...app.tableManager.allRows];
+    app.tableManager.tableTotalRecords = 1;
+    const navigateSpy = spyOn(app.actionManager as any, 'navigateToPath').and.resolveTo();
     const event = { stopPropagation: jasmine.createSpy('stopPropagation') } as unknown as Event;
 
-    await app.onRemoveRow(app.allRows[0], event);
+    await app.onRemoveRow(app.tableManager.allRows[0], event);
 
     expect(event.stopPropagation).toHaveBeenCalled();
     expect(navigateSpy).toHaveBeenCalledWith('/action/remove_documento/rec-1');
-    expect(app.allRows.length).toBe(1);
-    expect(app.tableTotalRecords).toBe(1);
+    expect(app.tableManager.allRows.length).toBe(1);
+    expect(app.tableManager.tableTotalRecords).toBe(1);
   });
 
   it('should refresh dependent select options when a watched field changes', async () => {
@@ -1311,6 +1370,7 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
     app.selectedModel = 'ordine';
+    app.renderer.selectedModel = 'ordine';
     app.renderer.formSchema = {
       display: 'form',
       components: [
@@ -1409,28 +1469,28 @@ describe('AppComponent', () => {
       }
     });
 
-    const query = app.parseQueryInput();
+    const query = app.tableManager.parseQueryInput((_m: string, _e: boolean) => {});
     expect(query).toEqual({ stato: 'APERTO' });
   });
 
   it('should not remove row when table remove action is not enabled', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
-    app.tableCalledInsideForm = false;
-    app.tableRemoveEnabled = true;
-    app.allRows = [
+    app.tableManager.tableCalledInsideForm = false;
+    app.tableManager.tableRemoveEnabled = true;
+    app.tableManager.allRows = [
       { __rowid: 1, __rec_name: 'rec-1' },
       { __rowid: 2, __rec_name: 'rec-2' }
     ];
-    app.tableRows = [...app.allRows];
-    app.tableTotalRecords = 2;
+    app.tableManager.tableRows = [...app.tableManager.allRows];
+    app.tableManager.tableTotalRecords = 2;
 
     const event = { stopPropagation: jasmine.createSpy('stopPropagation') } as unknown as Event;
-    await app.onRemoveRow(app.allRows[0], event);
+    await app.onRemoveRow(app.tableManager.allRows[0], event);
 
     expect(event.stopPropagation).toHaveBeenCalled();
-    expect(app.allRows.length).toBe(2);
-    expect(app.tableTotalRecords).toBe(2);
+    expect(app.tableManager.allRows.length).toBe(2);
+    expect(app.tableManager.tableTotalRecords).toBe(2);
     expect(app.statusError).toBeTrue();
   });
 
@@ -1454,19 +1514,15 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance as any;
 
     await app.appManager.loadSession();
-    app.applyLayoutResponse({
-      mode: 'layout',
-      data: {
-        layout: 'standard',
-        schema: {},
-        menu: [],
-        settings: {
-          user: 'admin'
-        }
-      }
-    });
+    app.appManager.applyLayoutResponse(
+      { mode: 'layout', data: { layout: 'standard', schema: {}, menu: [], settings: { user: 'admin' } } },
+      (p: unknown) => p as any,
+      (_d: unknown) => [],
+      (s: Record<string, unknown>) => ({ ...s }),
+      []
+    );
 
-    expect(app.currentUserName).toBe('Mario Rossi');
+    expect(app.appManager.currentUserName).toBe('Mario Rossi');
   });
 
   it('should use locale and timezone from session when rendering datetime table cells', async () => {
@@ -1483,6 +1539,8 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
     await app.appManager.loadSession();
+    app.tableManager.sessionLocale = app.appManager.sessionLocale;
+    app.tableManager.sessionTimezone = app.appManager.sessionTimezone;
 
     await app.actionManager.applyActionResponse({
       mode: 'list',
@@ -1536,8 +1594,8 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance as any;
     await app.appManager.loadSession();
 
-    expect(app.sessionLocale).toBe('it');
-    expect(app.sessionTimezone).toBe('Europe/Rome');
+    expect(app.appManager.sessionLocale).toBe('it');
+    expect(app.appManager.sessionTimezone).toBe('Europe/Rome');
   });
 
   it('should resolve username from nested session.user when session.name is missing', async () => {
@@ -1557,7 +1615,7 @@ describe('AppComponent', () => {
 
     await app.appManager.loadSession();
 
-    expect(app.currentUserName).toBe('Giulia Verdi');
+    expect(app.appManager.currentUserName).toBe('Giulia Verdi');
   });
 
   it('should enable builder toggle for admin users from session.is_admin', async () => {
@@ -1604,8 +1662,8 @@ describe('AppComponent', () => {
   it('should disable admin/builder action when builder flag is off', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
-    app.isAdminUser = true;
-    app.builderFeatureEnabled = true;
+    app.appManager.isAdminUser = true;
+    app.appManager.builderFeatureEnabled = true;
     const adminButton = {
       key: 'design',
       label: 'Design',
@@ -1662,8 +1720,8 @@ describe('AppComponent', () => {
   it('should keep builder mode active across subsequent form loads once enabled', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
-    app.isAdminUser = true;
-    app.builderFeatureEnabled = true;
+    app.appManager.isAdminUser = true;
+    app.appManager.builderFeatureEnabled = true;
     app.onBuilderSwitchChanged(true);
 
     await app.actionManager.applyActionResponse({
@@ -1690,8 +1748,8 @@ describe('AppComponent', () => {
   it('should ignore stale form responses after returning to dashboard', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
-    app.isAdminUser = true;
-    app.builderFeatureEnabled = true;
+    app.appManager.isAdminUser = true;
+    app.appManager.builderFeatureEnabled = true;
     app.onBuilderSwitchChanged(true);
 
     const actionManager = app.actionManager as any;
@@ -1730,15 +1788,15 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance as any;
 
     app.filterText = 'abc';
-    app.allRows = [
+    app.tableManager.allRows = [
       { __rowid: 1, __rec_name: 'a' },
       { __rowid: 2, __rec_name: 'b' }
     ];
-    app.tableRows = [...app.allRows];
+    app.tableManager.tableRows = [...app.tableManager.allRows];
 
     app.onRowReorder({ dragIndex: 0, dropIndex: 1 } as any);
 
-    expect(app.allRows.map((row: any) => row.__rec_name)).toEqual(['a', 'b']);
+    expect(app.tableManager.allRows.map((row: any) => row.__rec_name)).toEqual(['a', 'b']);
     expect(app.statusError).toBeTrue();
   });
 
@@ -1747,16 +1805,16 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance as any;
 
     app.filterText = '';
-    app.allRows = [
+    app.tableManager.allRows = [
       { __rowid: 1, __rec_name: 'a' },
       { __rowid: 2, __rec_name: 'b' },
       { __rowid: 3, __rec_name: 'c' }
     ];
-    app.tableRows = [...app.allRows];
+    app.tableManager.tableRows = [...app.tableManager.allRows];
 
     app.onRowReorder({ dragIndex: 0, dropIndex: 2 } as any);
 
-    expect(app.allRows.map((row: any) => row.__rec_name)).toEqual(['b', 'c', 'a']);
+    expect(app.tableManager.allRows.map((row: any) => row.__rec_name)).toEqual(['b', 'c', 'a']);
     expect(app.statusError).toBeFalse();
   });
 
@@ -1876,7 +1934,7 @@ describe('AppComponent', () => {
       ]
     });
 
-    expect(Array.from(app.tableCellRenderers.keys())).toContain('stato');
+    expect(Array.from((app.tableManager as any).tableCellRenderers.keys())).toContain('stato');
     expect(app.displayCell(app.tableRows[0], 'stato')).toBe('Confermato');
   });
 
@@ -2057,13 +2115,13 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance as any;
     app.selectedModel = 'anagrafica';
     app.tableManager.queryMode = 'builder';
-    app.queryBuilderConfig = {
+    app.tableManager.queryBuilderConfig = {
       fields: {
         status: { name: 'Stato', type: 'string' },
         qty: { name: 'Qty', type: 'number' }
       }
     };
-    app.queryBuilderRules = {
+    app.tableManager.queryBuilderRules = {
       condition: 'and',
       rules: [
         { field: 'status', operator: 'contains', value: 'cons' },
@@ -2074,6 +2132,360 @@ describe('AppComponent', () => {
     await app.actionManager.loadRecords();
 
     expect(apiMock.streamList).toHaveBeenCalled();
+  });
+
+  it('should combine table search text with server-side query payload', async () => {
+    apiMock.streamList.and.callFake(async (_model, payload, _onItem, _onMeta) => {
+      expect(payload.query).toEqual({
+        $and: [
+          { stato: 'APERTO' },
+          {
+            $or: [
+              { rec_name: { $regex: 'alpha', $options: 'i' } },
+              { titolo: { $regex: 'alpha', $options: 'i' } }
+            ]
+          }
+        ]
+      });
+      return {
+        result: {
+          count: 0,
+          totalCount: 0,
+          contentType: 'application/x-ndjson',
+          order: '',
+          skip: '0',
+          limit: '20',
+          columnsRaw: '',
+          columns: null
+        },
+        payloadLabel: 'default',
+        retries: 0
+      };
+    });
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.selectedModel = 'anagrafica';
+    app.tableManager.queryMode = 'json';
+    app.tableManager.queryText = JSON.stringify({ stato: 'APERTO' });
+    app.tableManager.tableColumns = [
+      { field: '__rec_name', title: 'Record' },
+      { field: 'rec_name', title: 'Record name' },
+      { field: 'titolo', title: 'Titolo' }
+    ];
+    app.tableManager.queryBuilderConfig = {
+      fields: {
+        rec_name: { name: 'Record', type: 'string' },
+        titolo: { name: 'Titolo', type: 'string' }
+      }
+    };
+    app.filterText = 'alpha';
+
+    await app.actionManager.loadRecords();
+
+    expect(apiMock.streamList).toHaveBeenCalled();
+  });
+
+  it('should render fast search config from list action response and keep action reload as default', async () => {
+    const fastSearchConfig = {
+      schema: [
+        { type: 'textfield', key: 'name', label: 'Nome' },
+        { type: 'button', action: 'submit', label: 'Submit', key: 'submit' }
+      ]
+    };
+    const listResponse = {
+      mode: 'list',
+      model: 'customer',
+      fields: { action_name: 'list_customers' },
+      fast_search: fastSearchConfig,
+      columns: [['rec_name', 'Record']],
+      total_count: 1,
+      data: [{ rec_name: 'CUST-1' }]
+    };
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+
+    await app.actionManager.applyActionResponse(listResponse);
+
+    expect(app.fastSearchEnabled).toBeTrue();
+    expect(app.fastSearchSchema).toEqual({
+      display: 'form',
+      components: [{ type: 'textfield', key: 'name', label: 'Nome' }]
+    });
+
+    apiMock.getAction.calls.reset();
+    apiMock.filterFastSearch.calls.reset();
+    apiMock.getAction.and.resolveTo(listResponse);
+
+    await app.actionManager.loadRecords();
+
+    expect(apiMock.filterFastSearch).not.toHaveBeenCalled();
+    expect(apiMock.getAction).toHaveBeenCalledWith('list_customers', jasmine.objectContaining({
+      query: {},
+      skip: 0,
+      limit: 20
+    }));
+  });
+
+  it('should hydrate remote select options for fast search schema', async () => {
+    apiMock.getRemoteSelect.and.resolveTo([{ label: 'Documento', value: 'documento' }]);
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.appManager.selectedModel = 'action';
+    app.tableManager.selectedModel = 'action';
+
+    await app.tableManager.setFastSearchConfig('list_actions', {
+      display: 'form',
+      components: [
+        {
+          type: 'select',
+          key: 'model',
+          label: 'Model',
+          properties: { src: 'url', model: 'ir.model' }
+        }
+      ]
+    });
+
+    expect(apiMock.getRemoteSelect).toHaveBeenCalledWith(
+      jasmine.objectContaining({
+        key: 'model',
+        curr_model: 'action',
+        properties: jasmine.objectContaining({
+          src: 'url',
+          model: 'ir.model'
+        })
+      })
+    );
+
+    const schema = app.fastSearchSchema as Record<string, unknown>;
+    const components = schema['components'] as Array<Record<string, unknown>>;
+    const select = components.find(component => component['key'] === 'model') as Record<string, unknown>;
+    expect(select['dataSrc']).toBe('values');
+    expect((select['data'] as Record<string, unknown>)['values']).toEqual([{ label: 'Documento', value: 'documento' }]);
+  });
+
+  it('should merge partial fast search change events instead of overwriting filters', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+
+    await app.tableManager.setFastSearchConfig('list_customers', {
+      display: 'form',
+      components: [
+        { type: 'textfield', key: 'name', label: 'Nome' },
+        { type: 'textfield', key: 'project', label: 'Progetto' }
+      ]
+    });
+
+    await app.onFastSearchFormChange({
+      data: { name: 'mario' },
+      changed: { component: { key: 'name', type: 'textfield' } }
+    });
+    await app.onFastSearchFormChange({
+      data: { project: 'ozon' },
+      changed: { component: { key: 'project', type: 'textfield' } }
+    });
+
+    expect(app.fastSearchSubmission).toEqual({
+      data: {
+        name: 'mario',
+        project: 'ozon'
+      }
+    });
+  });
+
+  it('should auto trigger fast search when a select changes', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    const searchSpy = spyOn(app, 'doFastSearch').and.resolveTo();
+
+    await app.tableManager.setFastSearchConfig('list_customers', {
+      display: 'form',
+      components: [
+        {
+          type: 'select',
+          key: 'model',
+          label: 'Model',
+          data: { values: [{ label: 'Customer', value: 'customer' }] }
+        }
+      ]
+    });
+
+    await app.onFastSearchFormChange({
+      submission: { data: { model: 'customer' } },
+      changed: { component: { key: 'model', type: 'select' } }
+    });
+
+    expect(searchSpy).toHaveBeenCalled();
+  });
+
+  it('should ignore fast search change events replayed from submission input', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    const searchSpy = spyOn(app, 'doFastSearch').and.resolveTo();
+
+    await app.tableManager.setFastSearchConfig('list_customers', {
+      display: 'form',
+      components: [
+        {
+          type: 'select',
+          key: 'model',
+          label: 'Model',
+          data: { values: [{ label: 'Customer', value: 'customer' }] }
+        }
+      ]
+    });
+
+    await app.onFastSearchFormChange({
+      submission: { data: { model: 'customer' } },
+      changed: { component: { key: 'model', type: 'select' } },
+      flags: { fromSubmission: true }
+    });
+
+    expect(searchSpy).not.toHaveBeenCalled();
+  });
+
+  it('should call fast search endpoint only after explicit submit', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.appManager.viewMode = 'list';
+    app.appManager.selectedModel = 'customer';
+    app.tableManager.selectedModel = 'customer';
+    app.actionManager.currentActionName = 'list_customers';
+    app.tableManager.tableColumns = [
+      { field: '__rec_name', title: 'Record' },
+      { field: 'name', title: 'Nome' }
+    ];
+    await app.tableManager.setFastSearchConfig('list_customers', {
+      display: 'form',
+      components: [{ type: 'textfield', key: 'name', label: 'Nome' }]
+    });
+    await app.onFastSearchFormChange({ data: { name: 'mario' } });
+
+    apiMock.filterFastSearch.and.callFake(async (actionName, payload, onItem, onMeta) => {
+      expect(actionName).toBe('list_customers');
+      expect(payload.query_fields).toEqual([{ name: { $regex: 'mario', $options: 'i' } }]);
+      onMeta?.({
+        order: 'rec_name asc',
+        skip: '0',
+        limit: '20',
+        totalCount: 1,
+        columnsRaw: '',
+        columns: null
+      } as any);
+      onItem({ rec_name: 'CUST-1', name: 'Mario' });
+      return {
+        count: 1,
+        totalCount: 1,
+        contentType: 'application/x-ndjson',
+        order: 'rec_name asc',
+        skip: '0',
+        limit: '20',
+        columnsRaw: '',
+        columns: null
+      };
+    });
+
+    await app.doFastSearch();
+
+    expect(apiMock.filterFastSearch).toHaveBeenCalled();
+    expect(app.tableRows.length).toBe(1);
+    expect(app.tableRows[0].__rec_name).toBe('CUST-1');
+    expect(app.tableColumns.map((column: any) => column.field)).toEqual(['__rec_name', 'name']);
+  });
+
+  it('should trigger fast search on Enter in desktop mode', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    spyOn(window, 'matchMedia').and.returnValue({ matches: false } as any);
+    const searchSpy = spyOn(app, 'doFastSearch').and.resolveTo();
+    const event = {
+      key: 'Enter',
+      shiftKey: false,
+      altKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      preventDefault: jasmine.createSpy('preventDefault'),
+      stopPropagation: jasmine.createSpy('stopPropagation'),
+      target: document.createElement('input')
+    } as any;
+
+    app.onFastSearchKeydown(event);
+
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(event.stopPropagation).toHaveBeenCalled();
+    expect(searchSpy).toHaveBeenCalled();
+  });
+
+  it('should block Enter submit in mobile mode', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    spyOn(window, 'matchMedia').and.returnValue({ matches: true } as any);
+    const searchSpy = spyOn(app, 'doFastSearch').and.resolveTo();
+    const event = {
+      key: 'Enter',
+      shiftKey: false,
+      altKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      preventDefault: jasmine.createSpy('preventDefault'),
+      stopPropagation: jasmine.createSpy('stopPropagation'),
+      target: document.createElement('input')
+    } as any;
+
+    app.onFastSearchKeydown(event);
+
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(event.stopPropagation).toHaveBeenCalled();
+    expect(searchSpy).not.toHaveBeenCalled();
+  });
+
+  it('should reset fast search back to base action list reload', async () => {
+    const listResponse = {
+      mode: 'list',
+      model: 'customer',
+      fields: { action_name: 'list_customers' },
+      fast_search: {
+        schema: [{ type: 'textfield', key: 'name', label: 'Nome' }]
+      },
+      columns: null,
+      total_count: 1,
+      data: [{ rec_name: 'CUST-BASE', name: 'Base' }]
+    };
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.appManager.viewMode = 'list';
+    app.appManager.selectedModel = 'customer';
+    app.tableManager.selectedModel = 'customer';
+    app.actionManager.currentActionName = 'list_customers';
+    app.tableManager.tableColumns = [
+      { field: '__rec_name', title: 'Record' },
+      { field: 'name', title: 'Nome' }
+    ];
+    await app.tableManager.setFastSearchConfig('list_customers', {
+      display: 'form',
+      components: [{ type: 'textfield', key: 'name', label: 'Nome' }]
+    });
+    await app.onFastSearchFormChange({ data: { name: 'mario' } });
+
+    await app.doFastSearch();
+
+    apiMock.filterFastSearch.calls.reset();
+    apiMock.getAction.calls.reset();
+    apiMock.getAction.and.resolveTo(listResponse);
+
+    await app.resetFastSearch();
+
+    expect(app.tableManager.fastSearchActive).toBeFalse();
+    expect(apiMock.filterFastSearch).not.toHaveBeenCalled();
+    expect(apiMock.getAction).toHaveBeenCalledWith('list_customers', jasmine.objectContaining({
+      query: {},
+      skip: 0,
+      limit: 20
+    }));
+    expect(app.tableColumns.map((column: any) => column.field)).toEqual(['__rec_name', 'name']);
   });
 
   it('should normalize formio table components in schema', async () => {
@@ -2102,7 +2514,7 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await expectAsync(app.applyActionResponse({
+    await expectAsync(app.actionManager['applyActionResponse']({
       fail: true,
       message: 'Errore business',
       content: {

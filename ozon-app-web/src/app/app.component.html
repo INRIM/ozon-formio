@@ -134,8 +134,23 @@
         </div>
       </div>
 
-      <div class="d-flex flex-wrap gap-2 align-items-end mb-2">
-        <div class="flex-fill">
+      <div class="ozon-fast-search-shell mb-2" *ngIf="fastSearchEnabled && fastSearchSchema">
+        <div class="ozon-fast-search-header">
+          <div class="ozon-fast-search-title">Ricerca Veloce</div>
+          <button class="ozon-fast-search-reset" type="button" (click)="resetFastSearch()">Reimposta</button>
+        </div>
+        <div class="ozon-fast-search-form" (keydown)="onFastSearchKeydown($event)">
+          <formio
+            [form]="fastSearchSchema"
+            [submission]="fastSearchSubmission"
+            (change)="onFastSearchFormChange($event)"
+            (submit)="doFastSearch()"
+          ></formio>
+        </div>
+      </div>
+
+      <div class="d-flex flex-wrap justify-content-between gap-2 align-items-end mb-2">
+        <div class="flex-fill" *ngIf="!fastSearchEnabled">
           <label class="form-label mb-1">Record table</label>
           <input
             [(ngModel)]="filterText"
@@ -145,15 +160,20 @@
             placeholder="Filtra righe..."
           />
         </div>
-        <div class="d-grid">
-          <button class="btn btn-success" type="button" [disabled]="!canOpenRecord" (click)="openRecordFromListSelection()">
-            Apri record
-          </button>
+        <div class="d-grid d-lg-none" *ngIf="fastSearchEnabled">
+          <button class="btn btn-primary" type="button" (click)="doFastSearch()">Cerca</button>
         </div>
-        <div class="d-grid">
-          <button class="btn btn-primary" type="button" [disabled]="!canOpenNewRecord" (click)="openNewRecord()">
-            Nuovo record
-          </button>
+        <div class="d-flex flex-wrap gap-2 ms-auto">
+          <div class="d-grid">
+            <button class="btn btn-success" type="button" [disabled]="!canOpenRecord" (click)="openRecordFromListSelection()">
+              Apri record
+            </button>
+          </div>
+          <div class="d-grid">
+            <button class="btn btn-primary" type="button" [disabled]="!canOpenNewRecord" (click)="openNewRecord()">
+              Nuovo record
+            </button>
+          </div>
         </div>
       </div>
 
@@ -579,7 +599,7 @@
       </div>
     </div>
     <div class="card-body">
-      <formio [form]="formSchema" [submission]="viewerFormSubmission" (change)="onFormSubmissionChanged($event)"></formio>
+      <formio #formioViewer [form]="formSchema" [submission]="viewerFormSubmission" (change)="onFormSubmissionChanged($event)"></formio>
     </div>
   </div>
 

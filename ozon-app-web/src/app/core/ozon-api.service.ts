@@ -3,6 +3,7 @@ import { Subject } from 'rxjs';
 import { Formio } from '@formio/js';
 import {
     ApiErrorPayload,
+    FastSearchPayload,
     ListRequestPayload,
     ListStreamResult,
     RemoteSelectRequestPayload,
@@ -258,6 +259,11 @@ export class OzonApiService {
         return this.fetchJson(`/action/${actionName}/${normalizedRec}`, { method: 'DELETE', body: payload });
     }
 
+    async filterFastSearch(actionName: string, payload: FastSearchPayload, onItem: (i: unknown) => void, onMeta?: (meta: Omit<ListStreamResult, 'count' | 'contentType'>) => void): Promise<ListStreamResult> {
+        const path = `/filter/fast_search/${encodeURIComponent(String(actionName).trim())}`;
+        return this.streamListWithPayload('', payload as unknown as ListRequestPayload, onItem, onMeta, path);
+    }
+
     async streamList(m: string, p: ListRequestPayload, onItem: (i: unknown) => void, onMeta?: (meta: Omit<ListStreamResult, 'count' | 'contentType'>) => void): Promise<{ result: ListStreamResult; payloadLabel: string; retries: number }> {
         const c = this.buildListPayloadCandidates(p);
         for (let i = 0; i < c.length; i++) {
@@ -271,8 +277,9 @@ export class OzonApiService {
         throw new Error('Fallback failed');
     }
 
-    private async streamListWithPayload(m: string, p: ListRequestPayload, onItem: (i: unknown) => void, onMeta?: (meta: any) => void): Promise<ListStreamResult> {
-        const res = await this.fetchRaw(`/list/${encodeURIComponent(m)}`, {
+    private async streamListWithPayload(m: string, p: ListRequestPayload | Record<string, unknown>, onItem: (i: unknown) => void, onMeta?: (meta: any) => void, pathOverride?: string): Promise<ListStreamResult> {
+        const path = pathOverride ?? `/list/${encodeURIComponent(m)}`;
+        const res = await this.fetchRaw(path, {
             method: 'POST',
             body: p,
             headers: { Accept: 'application/x-ndjson,application/json' }

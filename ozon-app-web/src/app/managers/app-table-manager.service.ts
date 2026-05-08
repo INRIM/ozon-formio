@@ -5,7 +5,7 @@ import {
     TableColumn, TableRow, SelectValueOption,
     QueryBuilderConfig, QueryBuilderFieldConfig, QueryMode, RuleSet, Rule
 } from '../models/app.types';
-import { ListRequestPayload, RemoteSelectRequestPayload } from '../models/ozon.types';
+import { FastSearchPayload, ListRequestPayload, RemoteSelectRequestPayload } from '../models/ozon.types';
 
 @Injectable()
 export class AppTableManagerService {
@@ -45,9 +45,12 @@ export class AppTableManagerService {
     allRows: TableRow[] = [];
     private rowBuffer: TableRow[] = [];
     private flushTimer: ReturnType<typeof setTimeout> | null = null;
+    private filterReloadTimer: ReturnType<typeof setTimeout> | null = null;
     private lastColumnsRaw = '';
     isLoadingRecords = false;
     private lastQuerySignature = '';
+    private pendingReloadRequested = false;
+    private pendingReloadPreservePaginatorState = false;
     listQuerySeed: Record<string, unknown> | null = null;
     private tableRenderSchema: Record<string, unknown> | null = null;
     private tableCellRenderers = new Map<string, (value: unknown) => string>();
@@ -55,6 +58,14 @@ export class AppTableManagerService {
 
     rawFormSchema: Record<string, unknown> | null = null;
     rawFormSchemaModel = '';
+
+    fastSearchEnabled = false;
+    fastSearchActive = false;
+    fastSearchSchema: Record<string, unknown> | null = null;
+    fastSearchSubmission: { data: Record<string, unknown> } = { data: {} };
+    fastSearchActionName = '';
+    private fastSearchQueryFields: Record<string, unknown>[] = [];
+    private isRefreshingFastSearchDependentSelects = false;
 
     sessionLocale = 'it';
     sessionTimezone = '';
@@ -111,7 +122,15 @@ export class AppTableManagerService {
         this.onQueryBuilderChanged();
     }
 
-    onFilterChanged(refreshFn: () => void): void { refreshFn(); }
+    onFilterChanged(refreshFn: () => void): void {
+        this.skip = 0;
+        this.currentPageIndex = 0;
+        if (this.filterReloadTimer) clearTimeout(this.filterReloadTimer);
+        this.filterReloadTimer = setTimeout(() => {
+            this.filterReloadTimer = null;
+            refreshFn();
+        }, 250);
+    }
 
     computeCurrentPageIndex(): number { return Math.floor((this.skip || 0) / this.getPageSize()); }
     getPageSize(): number { return Number(this.limit) || 20; }
@@ -179,6 +198,9 @@ export class AppTableManagerService {
     }
 
     onModelChanged(): void {
+        this.clearFilterReloadTimer();
+        this.pendingReloadRequested = false;
+        this.pendingReloadPreservePaginatorState = false;
         this.skip = 0;
         this.currentPageIndex = 0;
         this.tableTotalRecords = 0;
@@ -203,22 +225,23 @@ export class AppTableManagerService {
     }
 
     parseQueryInput(setStatusFn: (m: string, e: boolean) => void): Record<string, unknown> | null {
+        const searchQuery = this.buildSearchQuery(this.filterText);
         if (this.queryMode === 'builder') {
             try {
                 const query = this.queryBuilderToBackend(this.queryBuilderRules);
                 this.queryText = JSON.stringify(query, null, 2);
-                return this.applyListQuerySeed(query);
+                return this.mergeMongoQueries([this.listQuerySeed, query, searchQuery].filter((entry): entry is Record<string, unknown> => Boolean(entry && Object.keys(entry).length)));
             } catch (e) {
                 setStatusFn(this.errorMessage(e), true);
                 return null;
             }
         }
         const raw = (this.queryText || '').trim();
-        if (!raw) return this.applyListQuerySeed({});
+        if (!raw) return this.mergeMongoQueries([this.listQuerySeed, searchQuery].filter((entry): entry is Record<string, unknown> => Boolean(entry && Object.keys(entry).length)));
         try {
             const p = JSON.parse(raw);
             if (!p || typeof p !== 'object' || Array.isArray(p)) throw new Error('Query JSON deve essere un oggetto');
-            return this.applyListQuerySeed(p as Record<string, unknown>);
+            return this.mergeMongoQueries([this.listQuerySeed, p as Record<string, unknown>, searchQuery].filter((entry): entry is Record<string, unknown> => Boolean(entry && Object.keys(entry).length)));
         } catch (e) {
             setStatusFn(this.errorMessage(e), true);
             return null;
@@ -234,13 +257,316 @@ export class AppTableManagerService {
         };
     }
 
-    prepareLoadRecords(preservePaginatorState: boolean, querySignature: string): void {
+    buildFastSearchPayload(): FastSearchPayload {
+        return {
+            query_fields: [...this.fastSearchQueryFields],
+            order: (this.order || 'rec_name asc').trim() || 'rec_name asc',
+            skip: Number.isFinite(this.skip) && this.skip >= 0 ? this.skip : 0,
+            limit: Number.isFinite(this.limit) && this.limit > 0 ? this.limit : 20
+        };
+    }
+
+    async applyFastSearchFormChange(event: unknown): Promise<boolean> {
+        const eventRecord = this.asRecord(event);
+        if (this.isFastSearchSubmissionReplayEvent(eventRecord)) return false;
+        const data = this.extractChangeEventSubmissionData(eventRecord);
+        if (data) this.mergeFastSearchSubmissionData(data);
+        const changedKey = this.extractChangedComponentKey(eventRecord);
+        if (changedKey) await this.refreshFastSearchDependentSelectComponents(changedKey);
+        return this.shouldAutoSubmitFastSearchChange(changedKey);
+    }
+
+    resetFastSearch(): void {
+        this.fastSearchActive = false;
+        this.fastSearchQueryFields = [];
+        this.replaceFastSearchSubmission({});
+    }
+
+    activateFastSearch(): void {
+        this.fastSearchQueryFields = this.buildFastSearchQueryFields();
+        this.fastSearchActive = true;
+        this.skip = 0;
+        this.currentPageIndex = 0;
+    }
+
+    async setFastSearchConfig(actionName: string, schema: Record<string, unknown> | null): Promise<void> {
+        this.fastSearchActionName = actionName;
+        const normalizedSchema = this.normalizeFastSearchSchema(schema);
+        this.fastSearchSchema = normalizedSchema ? await this.hydrateRemoteSelectSchema(normalizedSchema, null) : null;
+        this.fastSearchEnabled = Boolean(actionName && this.fastSearchSchema);
+        this.fastSearchActive = false;
+        this.fastSearchQueryFields = [];
+        this.replaceFastSearchSubmission({});
+    }
+
+    private mergeFastSearchSubmissionData(nextData: Record<string, unknown>): void {
+        if (!this.fastSearchSubmission || !this.isRecord(this.fastSearchSubmission.data)) {
+            this.fastSearchSubmission = { data: { ...nextData } };
+            return;
+        }
+        Object.assign(this.fastSearchSubmission.data, nextData);
+    }
+
+    private replaceFastSearchSubmission(nextData: Record<string, unknown>): void {
+        this.fastSearchSubmission = { data: { ...nextData } };
+    }
+
+    private isFastSearchSubmissionReplayEvent(eventRecord: Record<string, unknown> | null): boolean {
+        if (!eventRecord) return false;
+        const flags = this.asRecord(eventRecord['flags']);
+        return this.toOptionalBooleanFlag(flags?.['fromSubmission']) === true;
+    }
+
+    private buildFastSearchQueryFields(): Record<string, unknown>[] {
+        const data = this.fastSearchSubmission?.data ?? {};
+        const compMap = this.getFastSearchComponentMap();
+        const queryFields: Record<string, unknown>[] = [];
+        for (const [key, value] of Object.entries(data)) {
+            if (key.startsWith('__') || key === 'submit' || key === 'data_value') continue;
+            if (value === undefined || value === null || value === '') continue;
+            if (typeof value === 'string' && !value.trim()) continue;
+            if (Array.isArray(value) && !value.length) continue;
+            const comp = compMap.get(key);
+            const compType = String(comp?.['type'] ?? '').toLowerCase();
+            const qf = this.buildFastSearchQueryField(key, value, compType);
+            if (qf) queryFields.push(qf);
+        }
+        return queryFields;
+    }
+
+    private getFastSearchComponentMap(): Map<string, Record<string, unknown>> {
+        const map = new Map<string, Record<string, unknown>>();
+        if (!this.fastSearchSchema) return map;
+        const comps = Array.isArray(this.fastSearchSchema['components'])
+            ? (this.fastSearchSchema['components'] as unknown[])
+            : Array.isArray(this.fastSearchSchema) ? (this.fastSearchSchema as unknown[]) : [];
+        this.collectFormioComponents(comps, map);
+        return map;
+    }
+
+    private shouldAutoSubmitFastSearchChange(changedKey: string): boolean {
+        if (!changedKey) return false;
+        const component = this.getFastSearchComponentMap().get(changedKey);
+        const type = String(component?.['type'] ?? '').trim().toLowerCase();
+        return type === 'select';
+    }
+
+    private async refreshFastSearchDependentSelectComponents(changedKey: string): Promise<void> {
+        if (!changedKey || !this.fastSearchSchema || this.isRefreshingFastSearchDependentSelects) return;
+        const schema = this.fastSearchSchema;
+        const dependents = this.findDependentSelectComponents(schema, changedKey);
+        if (!dependents.length) return;
+        const formKey = String(schema['key'] || schema['name'] || schema['path'] || this.selectedModel || '').trim();
+        const submissionData = this.fastSearchSubmission?.data && this.isRecord(this.fastSearchSubmission.data)
+            ? this.fastSearchSubmission.data
+            : null;
+        let schemaChanged = false;
+        let submissionChanged = false;
+        this.isRefreshingFastSearchDependentSelects = true;
+        try {
+            for (const comp of dependents) {
+                const payload = this.extractRemoteSelectPayload(comp, formKey);
+                if (payload) {
+                    try {
+                        const remoteOptions = await this.fetchRemoteSelectOptions(payload);
+                        this.applyRemoteSelectValues(comp, remoteOptions);
+                        schemaChanged = true;
+                    } catch (error) {
+                        console.error('Dependent fast search remote select fetch failed', error);
+                    }
+                    this.ensureSelectTemplate(comp);
+                    submissionChanged = this.pruneSelectSubmissionValue(comp, submissionData) || submissionChanged;
+                    continue;
+                }
+                if (String(comp['dataSrc'] ?? '').trim() === 'custom' && submissionData) {
+                    const data = this.isRecord(comp['data']) ? comp['data'] : {};
+                    const customKey = String(data['custom'] ?? '').trim();
+                    const customValue = customKey ? (submissionData[customKey] ?? (this.isRecord(submissionData['data_value']) ? submissionData['data_value'][customKey] : null)) : null;
+                    if (Array.isArray(customValue)) {
+                        const options = customValue.map(entry => this.toSelectValueOption(entry)).filter((entry): entry is SelectValueOption => Boolean(entry));
+                        this.applyRemoteSelectValues(comp, options);
+                        schemaChanged = true;
+                        submissionChanged = this.pruneSelectSubmissionValue(comp, submissionData) || submissionChanged;
+                    }
+                }
+            }
+        } finally {
+            this.isRefreshingFastSearchDependentSelects = false;
+        }
+        if (schemaChanged && this.fastSearchSchema) this.fastSearchSchema = this.cloneSchema(this.fastSearchSchema);
+        if (submissionChanged && submissionData) this.replaceFastSearchSubmission(submissionData);
+    }
+
+    private collectFormioComponents(components: unknown[], map: Map<string, Record<string, unknown>>): void {
+        for (const comp of components) {
+            if (!this.isRecord(comp)) continue;
+            if (comp['key']) map.set(String(comp['key']), comp);
+            const nested = Array.isArray(comp['components']) ? (comp['components'] as unknown[]) : [];
+            if (nested.length) this.collectFormioComponents(nested, map);
+            const columns = Array.isArray(comp['columns']) ? (comp['columns'] as unknown[]) : [];
+            columns.forEach(column => {
+                const columnComponents = this.isRecord(column) && Array.isArray(column['components'])
+                    ? (column['components'] as unknown[])
+                    : [];
+                if (columnComponents.length) this.collectFormioComponents(columnComponents, map);
+            });
+            const rows = Array.isArray(comp['rows']) ? (comp['rows'] as unknown[]) : [];
+            rows.forEach(row => {
+                if (!Array.isArray(row)) return;
+                row.forEach(cell => {
+                    const cellComponents = this.isRecord(cell) && Array.isArray(cell['components'])
+                        ? (cell['components'] as unknown[])
+                        : [];
+                    if (cellComponents.length) this.collectFormioComponents(cellComponents, map);
+                });
+            });
+        }
+    }
+
+    private normalizeFastSearchSchema(schema: Record<string, unknown> | null): Record<string, unknown> | null {
+        if (!schema) return null;
+        const normalized = this.cloneSchema(schema);
+        this.stripSubmitButtonsFromFastSearch(normalized);
+        return normalized;
+    }
+
+    private stripSubmitButtonsFromFastSearch(schema: Record<string, unknown>): void {
+        const components = Array.isArray(schema['components']) ? (schema['components'] as unknown[]) : [];
+        schema['components'] = this.sanitizeFastSearchComponents(components);
+    }
+
+    private sanitizeFastSearchComponents(components: unknown[]): unknown[] {
+        return components.flatMap(component => {
+            if (!this.isRecord(component)) return [];
+            const type = String(component['type'] ?? '').trim().toLowerCase();
+            const action = String(component['action'] ?? '').trim().toLowerCase();
+            if (type === 'button' && action === 'submit') return [];
+
+            const normalized = component;
+            if (Array.isArray(normalized['components'])) {
+                normalized['components'] = this.sanitizeFastSearchComponents(normalized['components'] as unknown[]);
+            }
+            if (Array.isArray(normalized['columns'])) {
+                normalized['columns'] = (normalized['columns'] as unknown[]).map(column => {
+                    if (!this.isRecord(column)) return column;
+                    if (Array.isArray(column['components'])) {
+                        column['components'] = this.sanitizeFastSearchComponents(column['components'] as unknown[]);
+                    }
+                    return column;
+                });
+            }
+            if (Array.isArray(normalized['rows'])) {
+                normalized['rows'] = (normalized['rows'] as unknown[]).map(row => {
+                    if (!Array.isArray(row)) return row;
+                    return row.map(cell => {
+                        if (!this.isRecord(cell)) return cell;
+                        if (Array.isArray(cell['components'])) {
+                            cell['components'] = this.sanitizeFastSearchComponents(cell['components'] as unknown[]);
+                        }
+                        return cell;
+                    });
+                });
+            }
+            return [normalized];
+        });
+    }
+
+    private findDependentSelectComponents(schema: Record<string, unknown>, changedKey: string): Record<string, unknown>[] {
+        const sourceKey = String(changedKey ?? '').trim();
+        if (!sourceKey) return [];
+        return this.findSelectComponents(schema)
+            .filter(component => this.isRecord(component))
+            .filter(component => {
+                const componentKey = String(component['key'] ?? '').trim();
+                if (!componentKey || componentKey === sourceKey) return false;
+                return this.readSelectOnChangeFields(component).includes(sourceKey);
+            });
+    }
+
+    private readSelectOnChangeFields(component: Record<string, unknown>): string[] {
+        const properties = this.readComponentProperties(component);
+        const data = this.isRecord(component['data']) ? component['data'] : {};
+        const raw = properties['onChangeFields'] ?? properties['on_change_fields'] ?? data['onChangeFields'] ?? data['on_change_fields'] ?? component['onChangeFields'] ?? component['on_change_fields'];
+        const entries = this.normalizeArrayValue(raw).map(entry => String(entry ?? '').trim()).filter(Boolean);
+        return Array.from(new Set(entries));
+    }
+
+    private pruneSelectSubmissionValue(component: Record<string, unknown>, submissionData: Record<string, unknown> | null): boolean {
+        if (!submissionData) return false;
+        const key = String(component['key'] ?? '').trim();
+        if (!key || !Object.prototype.hasOwnProperty.call(submissionData, key)) return false;
+        const options = this.extractSchemaOptions(component);
+        if (!options.length) return false;
+        const allowedValues = new Set(options.map(option => this.optionLookupKey(option.value)).filter(Boolean));
+        const current = submissionData[key];
+        if (Array.isArray(current)) {
+            const filtered = current.filter(entry => allowedValues.has(this.optionLookupKey(entry)));
+            if (filtered.length === current.length) return false;
+            submissionData[key] = filtered;
+            return true;
+        }
+        if (current == null || current === '') return false;
+        if (allowedValues.has(this.optionLookupKey(current))) return false;
+        submissionData[key] = null;
+        return true;
+    }
+
+    private extractChangeEventSubmissionData(eventRecord: Record<string, unknown> | null): Record<string, unknown> | null {
+        if (!eventRecord) return null;
+        const submission = this.asRecord(eventRecord['submission']);
+        const submissionData = submission ? this.asRecord(submission['data']) : null;
+        if (submissionData) return submissionData;
+        return this.asRecord(eventRecord['data']);
+    }
+
+    private extractChangedComponentKey(eventRecord: Record<string, unknown> | null): string {
+        if (!eventRecord) return '';
+        const changed = this.asRecord(eventRecord['changed']);
+        const changedComponent = changed ? this.asRecord(changed['component']) : null;
+        const changedInstance = changed ? this.asRecord(changed['instance']) : null;
+        const changedInstanceComponent = changedInstance ? this.asRecord(changedInstance['component']) : null;
+        const eventComponent = this.asRecord(eventRecord['component']);
+        const key = this.readFirstString(changedComponent?.['key'], changedInstanceComponent?.['key'], changed?.['key'], eventComponent?.['key']);
+        if (key) return key;
+        const path = this.readFirstString(changed?.['path'], changedComponent?.['path'], changedInstanceComponent?.['path']);
+        if (!path) return '';
+        const normalizedPath = path.replace(/\[(\d+)\]/g, '.$1');
+        const segments = normalizedPath.split('.').map(entry => entry.trim()).filter(Boolean).filter(entry => !/^\d+$/.test(entry));
+        if (!segments.length) return '';
+        return segments[segments.length - 1];
+    }
+
+    private buildFastSearchQueryField(key: string, value: unknown, compType: string): Record<string, unknown> | null {
+        if (compType === 'select' || compType === 'radio') {
+            if (Array.isArray(value)) return value.length ? { [key]: { $in: value } } : null;
+            return { [key]: value };
+        }
+        if (compType === 'checkbox') return { [key]: Boolean(value) };
+        if (compType === 'number' || compType === 'currency') {
+            const n = Number(value);
+            return Number.isFinite(n) ? { [key]: n } : null;
+        }
+        if (typeof value === 'string') {
+            const t = value.trim();
+            return t ? { [key]: { $regex: t, $options: 'i' } } : null;
+        }
+        if (typeof value === 'boolean') return { [key]: value };
+        if (typeof value === 'number') return Number.isFinite(value) ? { [key]: value } : null;
+        if (this.isRecord(value)) return Object.keys(value).length ? { [key]: value } : null;
+        return null;
+    }
+
+    prepareLoadRecords(preservePaginatorState: boolean, querySignature: string, opt: { preserveColumns?: boolean } = {}): void {
         if (!preservePaginatorState && this.lastQuerySignature && this.lastQuerySignature !== querySignature) {
             this.skip = 0;
             this.currentPageIndex = 0;
         }
         this.isLoadingRecords = true;
-        this.resetSelectionAndTable({ preservePaginationState: preservePaginatorState, preserveFilterText: preservePaginatorState });
+        this.resetSelectionAndTable({
+            preservePaginationState: preservePaginatorState,
+            preserveFilterText: preservePaginatorState,
+            preserveColumns: opt.preserveColumns
+        });
         this.strictHeaderColumns = true;
         this.currentPageIndex = this.computeCurrentPageIndex();
         this.syncPrimeSortFromOrder(this.order);
@@ -395,11 +721,13 @@ export class AppTableManagerService {
             return;
         }
         let renderSchema = this.cloneSchema(schema);
-        try {
-            const sampleSubmission = this.buildTableRenderSubmission(rows);
-            renderSchema = await this.hydrateRemoteSelectSchema(renderSchema, sampleSubmission);
-        } catch {
-            // Fallback: keep raw schema if remote select hydration fails.
+        const sampleSubmission = this.buildTableRenderSubmission(rows);
+        if (sampleSubmission) {
+            try {
+                renderSchema = await this.hydrateRemoteSelectSchema(renderSchema, sampleSubmission);
+            } catch {
+                // Fallback: keep raw schema if remote select hydration fails.
+            }
         }
         this.tableRenderSchema = renderSchema;
         this.rebuildTableCellRenderers(renderSchema);
@@ -411,14 +739,17 @@ export class AppTableManagerService {
         this.tableFieldRendererCache.clear();
     }
 
-    resetSelectionAndTable(opt: { preservePaginationState?: boolean; preserveFilterText?: boolean } = {}): void {
+    resetSelectionAndTable(opt: { preservePaginationState?: boolean; preserveFilterText?: boolean; preserveColumns?: boolean } = {}): void {
+        const preserveColumns = Boolean(opt.preserveColumns && this.hasStableTableColumns());
+        const preservedColumns = preserveColumns ? [...this.tableColumns] : null;
+        const preservedServerColumns = preserveColumns && this.serverColumns?.length ? [...this.serverColumns] : null;
         this.selectedRecordName = '';
         this.selectedRows = [];
         this.streamCount = 0;
         this.rowCounter = 0;
-        this.tableColumnsInitialized = false;
-        this.serverColumns = null;
-        this.tableColumns = [{ field: '__rec_name', title: 'Record' }];
+        this.tableColumnsInitialized = Boolean(preservedColumns?.length);
+        this.serverColumns = preservedServerColumns;
+        this.tableColumns = preservedColumns ?? [{ field: '__rec_name', title: 'Record' }];
         this.allRows = [];
         this.tableRows = [];
         this.rowBuffer = [];
@@ -430,9 +761,13 @@ export class AppTableManagerService {
         if (this.flushTimer) { clearTimeout(this.flushTimer); this.flushTimer = null; }
     }
 
+    private hasStableTableColumns(): boolean {
+        if (this.serverColumns?.length) return true;
+        return this.tableColumns.some(column => String(column.field ?? '').trim() !== '__rec_name');
+    }
+
     refreshTableRows(): void {
-        const f = this.filterText.trim().toLowerCase();
-        this.tableRows = f ? this.allRows.filter(r => this.rowMatchesFilter(r, f)) : [...this.allRows];
+        this.tableRows = [...this.allRows];
         return;
     }
 
@@ -587,11 +922,52 @@ export class AppTableManagerService {
         return this.isRecord(parsed) ? parsed : null;
     }
 
-    private applyListQuerySeed(query: Record<string, unknown>): Record<string, unknown> {
-        const seed = this.listQuerySeed && this.isRecord(this.listQuerySeed) ? this.cloneSchema(this.listQuerySeed) : null;
-        if (!seed || !Object.keys(seed).length) return query;
-        if (!query || !Object.keys(query).length) return seed;
-        return { $and: [seed, query] };
+    clearFilterReloadTimer(): void {
+        if (!this.filterReloadTimer) return;
+        clearTimeout(this.filterReloadTimer);
+        this.filterReloadTimer = null;
+    }
+
+    requestReloadAfterCurrentLoad(preservePaginatorState: boolean): void {
+        this.pendingReloadRequested = true;
+        if (!this.pendingReloadPreservePaginatorState) this.pendingReloadPreservePaginatorState = preservePaginatorState;
+        else this.pendingReloadPreservePaginatorState = this.pendingReloadPreservePaginatorState && preservePaginatorState;
+    }
+
+    hasPendingReloadRequest(): boolean {
+        return this.pendingReloadRequested;
+    }
+
+    consumePendingReloadRequest(): boolean {
+        const preserve = this.pendingReloadPreservePaginatorState;
+        this.pendingReloadRequested = false;
+        this.pendingReloadPreservePaginatorState = false;
+        return preserve;
+    }
+
+    private mergeMongoQueries(queries: Array<Record<string, unknown>>): Record<string, unknown> {
+        const clauses: Record<string, unknown>[] = [];
+        for (const query of queries) {
+            if (!query || !Object.keys(query).length) continue;
+            if (this.isAndQuery(query)) {
+                clauses.push(...this.extractAndClauses(query));
+                continue;
+            }
+            clauses.push(query);
+        }
+        if (!clauses.length) return {};
+        if (clauses.length === 1) return clauses[0];
+        return { $and: clauses };
+    }
+
+    private isAndQuery(query: Record<string, unknown>): boolean {
+        return Object.keys(query).length === 1 && Array.isArray(query['$and']);
+    }
+
+    private extractAndClauses(query: Record<string, unknown>): Record<string, unknown>[] {
+        const clauses = query['$and'];
+        if (!Array.isArray(clauses)) return [query];
+        return clauses.filter((entry): entry is Record<string, unknown> => this.isRecord(entry));
     }
 
     private queryBuilderToBackend(root: RuleSet): Record<string, unknown> {
@@ -599,6 +975,118 @@ export class AppTableManagerService {
         if (!expr) return {};
         if (this.isRecord(expr)) return expr;
         return {};
+    }
+
+    private buildSearchQuery(filterText: string): Record<string, unknown> | null {
+        const text = String(filterText ?? '').trim();
+        if (!text) return null;
+        const tokens = this.tokenizeSearchText(text);
+        if (!tokens.length) return null;
+        const searchableFields = this.getSearchableFields();
+        if (!searchableFields.length) return null;
+        const clauses = tokens.map(token => this.buildSearchClause(token, searchableFields)).filter((clause): clause is Record<string, unknown> => Boolean(clause && Object.keys(clause).length));
+        if (!clauses.length) return null;
+        return clauses.length === 1 ? clauses[0] : { $and: clauses };
+    }
+
+    private tokenizeSearchText(text: string): string[] {
+        const tokens: string[] = [];
+        let current = '';
+        let quote: string | null = null;
+        for (let i = 0; i < text.length; i += 1) {
+            const char = text[i];
+            if (quote) {
+                if (char === quote) quote = null;
+                else current += char;
+                continue;
+            }
+            if (char === '"' || char === '\'') { quote = char; continue; }
+            if (/\s/.test(char)) {
+                if (current.trim()) tokens.push(current.trim());
+                current = '';
+                continue;
+            }
+            current += char;
+        }
+        if (current.trim()) tokens.push(current.trim());
+        return tokens;
+    }
+
+    private getSearchableFields(): string[] {
+        const fields = new Set<string>(['rec_name']);
+        this.tableColumns.forEach(column => {
+            const field = String(column.field ?? '').trim();
+            if (field && !field.startsWith('__')) fields.add(field);
+        });
+        Object.entries(this.queryBuilderConfig.fields ?? {}).forEach(([key, config]) => {
+            const field = String(key ?? '').trim();
+            if (!field) return;
+            if (this.isSearchableFieldType(config?.type)) fields.add(field);
+        });
+        return [...fields];
+    }
+
+    private isSearchableFieldType(type: unknown): boolean {
+        const normalized = String(type ?? '').trim().toLowerCase();
+        if (!normalized) return true;
+        return ['string', 'text', 'textarea', 'email', 'phone', 'url', 'password', 'datetime', 'date', 'time'].includes(normalized);
+    }
+
+    private buildSearchClause(token: string, searchableFields: string[]): Record<string, unknown> | null {
+        const trimmed = String(token ?? '').trim();
+        if (!trimmed) return null;
+        const negated = trimmed.startsWith('-') && trimmed.length > 1;
+        const raw = negated ? trimmed.slice(1) : trimmed;
+        const fieldMatch = raw.match(/^([A-Za-z0-9_.-]+)\s*(>=|<=|!=|=|>|<|~|:)\s*(.+)$/);
+        const clause = fieldMatch && searchableFields.includes(fieldMatch[1])
+            ? this.buildFieldSearchClause(fieldMatch[1], fieldMatch[2], fieldMatch[3])
+            : this.buildGlobalSearchClause(raw, searchableFields);
+        if (!clause) return null;
+        return negated ? { $nor: [clause] } : clause;
+    }
+
+    private buildFieldSearchClause(field: string, operator: string, value: string): Record<string, unknown> | null {
+        const parsedValue = this.parseSearchValue(value);
+        switch (operator) {
+            case ':':
+            case '~':
+                return { [field]: { $regex: this.escapeRegex(this.toDisplayValue(parsedValue)), $options: 'i' } };
+            case '=':
+                return { [field]: parsedValue };
+            case '!=':
+                return { [field]: { $ne: parsedValue } };
+            case '>':
+                return { [field]: { $gt: parsedValue } };
+            case '>=':
+                return { [field]: { $gte: parsedValue } };
+            case '<':
+                return { [field]: { $lt: parsedValue } };
+            case '<=':
+                return { [field]: { $lte: parsedValue } };
+            default:
+                return { [field]: { $regex: this.escapeRegex(this.toDisplayValue(parsedValue)), $options: 'i' } };
+        }
+    }
+
+    private buildGlobalSearchClause(value: string, searchableFields: string[]): Record<string, unknown> | null {
+        const parsedValue = this.parseSearchValue(value);
+        const text = this.toDisplayValue(parsedValue);
+        if (!text) return null;
+        return {
+            $or: searchableFields.map(field => ({ [field]: { $regex: this.escapeRegex(text), $options: 'i' } }))
+        };
+    }
+
+    private parseSearchValue(value: string): unknown {
+        const trimmed = String(value ?? '').trim();
+        if (!trimmed) return '';
+        const quoted = trimmed.match(/^(['"])(.*)\1$/);
+        const raw = quoted ? quoted[2] : trimmed;
+        if (/^-?\d+(?:\.\d+)?$/.test(raw)) return Number(raw);
+        if (raw === 'true') return true;
+        if (raw === 'false') return false;
+        if (raw === 'null') return null;
+        return raw;
     }
 
     private convertRuleSetToMongo(node: RuleSet): Record<string, unknown> | null {
