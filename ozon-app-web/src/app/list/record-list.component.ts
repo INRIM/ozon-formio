@@ -1,0 +1,279 @@
+import { ChangeDetectionStrategy, Component, DestroyRef, EventEmitter, Input, Output, inject } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { BreakpointObserver } from '@angular/cdk/layout';
+import { FormioModule } from '@formio/angular';
+import { ContextAction, ListExportConfig, ListImportConfig, ListPageChange, ListRowReorderChange, ListSearchSessionContext, ListSortChange, TableColumn, TableRow, TableSortDirection } from '../models/app.types';
+import { RecordCardsComponent } from './record-cards.component';
+import { RecordTransferToolsComponent } from './record-transfer-tools.component';
+import { RecordTableCdkComponent } from './record-table-cdk.component';
+
+@Component({
+    selector: 'app-record-list',
+    standalone: true,
+    imports: [CommonModule, FormsModule, FormioModule, RecordTableCdkComponent, RecordCardsComponent, RecordTransferToolsComponent],
+    templateUrl: './record-list.component.html',
+    styleUrl: './record-list.component.scss',
+    changeDetection: ChangeDetectionStrategy.OnPush
+})
+export class RecordListComponent {
+    @Input() dashboardTitle = '';
+    @Input() isAdmin = false;
+    @Input() streamCount = 0;
+    @Input() totalRecords = 0;
+    @Input() limit = 20;
+    @Input() skip = 0;
+    @Input() sortField = 'rec_name';
+    @Input() sortDirection: TableSortDirection = 'asc';
+    @Input() tableColumns: readonly TableColumn[] = [];
+    @Input() tableRows: readonly TableRow[] = [];
+    @Input() selectedRows: readonly TableRow[] = [];
+    @Input() selectedRecordName = '';
+    @Input() pageSizeOptions: readonly number[] = [];
+    @Input() showTableRowCopyAction = false;
+    @Input() showTableRowRemoveAction = false;
+    @Input() canOpenRecord = false;
+    @Input() canOpenNewRecord = false;
+    @Input() canDeleteRecord = false;
+    @Input() contextActions: readonly ContextAction[] = [];
+    @Input() isLoadingRecords = false;
+    @Input() fastSearchEnabled = false;
+    @Input() fastSearchLoading = false;
+    @Input() fastSearchSchema: Record<string, unknown> | null = null;
+    @Input() fastSearchSubmission: { data: Record<string, unknown> } = { data: {} };
+    @Input() tableRenderLoading = false;
+    @Input() formioRenderOptions: Record<string, unknown> | null = null;
+    @Input() exportConfig: ListExportConfig | null = null;
+    @Input() importConfig: ListImportConfig | null = null;
+    @Input() searchContext: ListSearchSessionContext | null = null;
+    @Input() statusText = '';
+    @Input() statusError = false;
+    @Input() serverErrorRetryVisible = false;
+    @Input() displayCell: (row: TableRow, field: string) => string = () => '';
+
+    @Output() fastSearchFormChange = new EventEmitter<unknown>();
+    @Output() fastSearchKeydown = new EventEmitter<KeyboardEvent>();
+    @Output() fastSearchSearch = new EventEmitter<void>();
+    @Output() fastSearchReset = new EventEmitter<void>();
+    @Output() openRecord = new EventEmitter<void>();
+    @Output() openNewRecord = new EventEmitter<void>();
+    @Output() deleteRecord = new EventEmitter<void>();
+    @Output() contextActionClick = new EventEmitter<ContextAction>();
+    @Output() retryServerError = new EventEmitter<void>();
+    @Output() rowClick = new EventEmitter<{ row: TableRow; event: Event }>();
+    @Output() rowDblClick = new EventEmitter<{ row: TableRow; event: Event }>();
+    @Output() selectionChange = new EventEmitter<TableRow[]>();
+    @Output() sortChange = new EventEmitter<ListSortChange>();
+    @Output() pageChange = new EventEmitter<ListPageChange>();
+    @Output() rowReorder = new EventEmitter<ListRowReorderChange>();
+    @Output() copyRow = new EventEmitter<{ row: TableRow; event: Event }>();
+    @Output() removeRow = new EventEmitter<{ row: TableRow; event: Event }>();
+
+    isMobile = false;
+    gearOpen = false;
+    fastSearchCollapsed = false;
+
+    private lastMobileClickTime = 0;
+    private lastMobileClickRec = '';
+
+    private readonly breakpointObserver = inject(BreakpointObserver);
+    private readonly destroyRef = inject(DestroyRef);
+
+    constructor() {
+        this.isMobile = this.breakpointObserver.isMatched('(max-width: 991px)');
+        this.breakpointObserver.observe('(max-width: 991px)')
+            .pipe(takeUntilDestroyed(this.destroyRef))
+            .subscribe(result => {
+                this.isMobile = result.matches;
+                if (!result.matches) this.fastSearchCollapsed = false;
+            });
+    }
+
+    get selectionInfo(): string {
+        const count = this.selectedRows.length;
+        if (count === 0) return 'Nessun record selezionato';
+        if (count === 1) return '1 record selezionato';
+        return `${count} record selezionati`;
+    }
+
+    get hasTransferTools(): boolean {
+        return Boolean(this.exportConfig?.visible || this.importConfig?.visible);
+    }
+
+    toggleGear(): void {
+        this.gearOpen = !this.gearOpen;
+    }
+
+    toggleFastSearch(): void {
+        this.fastSearchCollapsed = !this.fastSearchCollapsed;
+    }
+
+    onMobileRowClick(payload: { row: TableRow; event: Event }): void {
+        const now = Date.now();
+        const recName = String((payload.row as Record<string, unknown>)['rec_name'] ?? '');
+        if (recName && recName === this.lastMobileClickRec && now - this.lastMobileClickTime < 350) {
+            this.lastMobileClickTime = 0;
+            this.lastMobileClickRec = '';
+            this.rowDblClick.emit(payload);
+        } else {
+            this.lastMobileClickTime = now;
+            this.lastMobileClickRec = recName;
+            this.rowClick.emit(payload);
+        }
+    }
+
+    contextActionBtnClass(action: ContextAction): string {
+        switch (action.action_type) {
+            case 'save':   return 'btn btn-primary';
+            case 'copy':   return 'btn btn-outline-secondary';
+            case 'delete': return 'btn btn-danger';
+            default:       return 'btn btn-outline-primary';
+        }
+    }
+
+    get pageStart(): number {
+        if (this.totalRecords <= 0 || this.tableRows.length === 0) return 0;
+        return this.skip + 1;
+    }
+
+    get pageEnd(): number {
+        if (this.totalRecords <= 0 || this.tableRows.length === 0) return 0;
+        return Math.min(this.skip + this.tableRows.length, this.totalRecords);
+    }
+
+    get currentPage(): number {
+        return Math.floor((this.skip || 0) / this.pageSize) + 1;
+    }
+
+    get totalPages(): number {
+        return Math.max(1, Math.ceil(this.totalRecords / this.pageSize));
+    }
+
+    get pageSize(): number {
+        return Number(this.limit) || 20;
+    }
+
+    get sortFieldOptions(): readonly TableColumn[] {
+        return this.tableColumns;
+    }
+
+    get showFastSearchShell(): boolean {
+        return this.fastSearchLoading || (this.fastSearchEnabled && Boolean(this.fastSearchSchema));
+    }
+
+    get showFastSearchForm(): boolean {
+        return !this.fastSearchLoading && this.fastSearchEnabled && Boolean(this.fastSearchSchema);
+    }
+
+    get fastSearchFormSchema(): Record<string, unknown> | undefined {
+        return this.fastSearchSchema ?? undefined;
+    }
+
+    get showTablePlaceholder(): boolean {
+        return this.isLoadingRecords || this.tableRenderLoading;
+    }
+
+    get showTableWarning(): boolean {
+        return !this.showTablePlaceholder && !this.tableColumns.length;
+    }
+
+    get showDesktopTable(): boolean {
+        return !this.showTablePlaceholder && !this.isMobile && this.tableColumns.length > 0;
+    }
+
+    get showMobileCards(): boolean {
+        return !this.showTablePlaceholder && this.isMobile && this.tableColumns.length > 0;
+    }
+
+    get fastSearchPlaceholderRows(): number[] {
+        return [0, 1, 2];
+    }
+
+    get tablePlaceholderRows(): number[] {
+        const count = this.isLoadingRecords ? 4 : (this.tableRows.length ? Math.min(Math.max(this.tableRows.length, 2), 6) : 3);
+        return Array.from({ length: count }, (_value, index) => index);
+    }
+
+    get tablePlaceholderColumns(): number[] {
+        const count = this.tableColumns.length ? Math.min(Math.max(this.tableColumns.length, 3), 5) : 4;
+        return Array.from({ length: count }, (_value, index) => index);
+    }
+
+    get listPlaceholderMessage(): string {
+        if (this.isLoadingRecords) return 'Caricamento lista in corso';
+        if (this.tableRenderLoading) return 'Preparazione tabella in corso';
+        return 'Caricamento in corso';
+    }
+
+    get pageItems(): Array<number | string> {
+        return this.buildPageItems(this.currentPage, this.totalPages);
+    }
+
+    onPageSizeChanged(pageSize: string | number): void {
+        const parsed = Number(pageSize);
+        if (!Number.isFinite(parsed) || parsed <= 0) return;
+        this.pageChange.emit({ pageIndex: 0, pageSize: parsed });
+    }
+
+    goToPage(page: number | string): void {
+        if (typeof page !== 'number') return;
+        if (page < 1 || page > this.totalPages || page === this.currentPage) return;
+        this.pageChange.emit({ pageIndex: page - 1, pageSize: this.pageSize });
+    }
+
+    previousPage(): void {
+        this.goToPage(this.currentPage - 1);
+    }
+
+    nextPage(): void {
+        this.goToPage(this.currentPage + 1);
+    }
+
+    firstPage(): void {
+        this.goToPage(1);
+    }
+
+    lastPage(): void {
+        this.goToPage(this.totalPages);
+    }
+
+    onMobileSortFieldChange(field: string): void {
+        const normalizedField = String(field ?? '').trim();
+        if (!normalizedField) return;
+        this.sortChange.emit({ field: normalizedField, direction: this.sortDirection });
+    }
+
+    toggleMobileSortDirection(): void {
+        const fallbackField = this.sortFieldOptions[0]?.field ?? 'rec_name';
+        const nextDirection: TableSortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
+        this.sortChange.emit({
+            field: this.normalizeSortField(this.sortField || fallbackField),
+            direction: nextDirection
+        });
+    }
+
+    private buildPageItems(currentPage: number, totalPages: number): Array<number | string> {
+        if (totalPages <= 7) {
+            return Array.from({ length: totalPages }, (_value, index) => index + 1);
+        }
+
+        const pages = new Set<number>([1, totalPages, currentPage - 1, currentPage, currentPage + 1]);
+        const sortedPages = [...pages]
+            .filter(page => page >= 1 && page <= totalPages)
+            .sort((left, right) => left - right);
+
+        const pageItems: Array<number | string> = [];
+        sortedPages.forEach((page, index) => {
+            const previous = sortedPages[index - 1];
+            if (previous && page - previous > 1) pageItems.push('…');
+            pageItems.push(page);
+        });
+        return pageItems;
+    }
+
+    private normalizeSortField(field: string): string {
+        const normalized = String(field ?? '').trim();
+        return normalized === '__rec_name' ? 'rec_name' : normalized;
+    }
+}

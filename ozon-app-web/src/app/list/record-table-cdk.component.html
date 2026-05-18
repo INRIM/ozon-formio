@@ -1,0 +1,123 @@
+<div class="ozon-table-wrap">
+  <cdk-table
+    class="ozon-record-table"
+    cdkDropList
+    cdkDropListLockAxis="y"
+    [cdkDropListData]="rows"
+    [dataSource]="dataSource"
+    (cdkDropListDropped)="onDrop($event)"
+  >
+    <ng-container cdkColumnDef="__select">
+      <cdk-header-cell *cdkHeaderCellDef class="ozon-record-table__header-cell ozon-record-table__cell--select">
+        <input
+          type="checkbox"
+          class="form-check-input"
+          data-row-select
+          [checked]="allVisibleSelected"
+          [indeterminate]="someVisibleSelected"
+          (click)="$event.stopPropagation()"
+          (change)="onToggleAll($any($event.target).checked)"
+          aria-label="Seleziona righe visibili"
+        />
+      </cdk-header-cell>
+      <cdk-cell *cdkCellDef="let row" class="ozon-record-table__cell ozon-record-table__cell--select">
+        <input
+          type="checkbox"
+          class="form-check-input"
+          data-row-select
+          [checked]="isRowSelected(row)"
+          (click)="$event.stopPropagation()"
+          (change)="onToggleRow(row, $any($event.target).checked)"
+          aria-label="Seleziona riga"
+        />
+      </cdk-cell>
+    </ng-container>
+
+    <ng-container cdkColumnDef="__handle">
+      <cdk-header-cell *cdkHeaderCellDef class="ozon-record-table__header-cell ozon-record-table__cell--handle"></cdk-header-cell>
+      <cdk-cell *cdkCellDef="let row" class="ozon-record-table__cell ozon-record-table__cell--handle">
+        <button
+          type="button"
+          class="ozon-record-table__drag-handle"
+          data-row-handle
+          cdkDragHandle
+          (click)="$event.stopPropagation()"
+          [attr.aria-label]="'Riordina ' + row.__rec_name"
+        >
+          <span class="pi pi-bars"></span>
+        </button>
+      </cdk-cell>
+    </ng-container>
+
+    <ng-container *ngFor="let column of columns; trackBy: trackColumn" [cdkColumnDef]="column.field">
+      <cdk-header-cell *cdkHeaderCellDef class="ozon-record-table__header-cell">
+        <button
+          type="button"
+          class="ozon-record-table__sort"
+          (click)="onSort(column.field)"
+          [attr.aria-label]="'Ordina per ' + column.title"
+        >
+          <span>{{ column.title }}</span>
+          <span class="ozon-record-table__sort-indicator" [class.is-active]="isSortActive(column.field)">
+            {{ isSortActive(column.field) ? (isSortAscending(column.field) ? '↑' : '↓') : '↕' }}
+          </span>
+        </button>
+      </cdk-header-cell>
+      <cdk-cell *cdkCellDef="let row" class="ozon-record-table__cell">
+        {{ displayCell(row, column.field) }}
+      </cdk-cell>
+    </ng-container>
+
+    <ng-container cdkColumnDef="__copy" *ngIf="showCopyAction">
+      <cdk-header-cell *cdkHeaderCellDef class="ozon-record-table__header-cell ozon-record-table__action-header">Copia</cdk-header-cell>
+      <cdk-cell *cdkCellDef="let row" class="ozon-record-table__cell ozon-record-table__action-cell">
+        <button
+          type="button"
+          class="btn btn-sm btn-link text-decoration-none"
+          data-row-action
+          (click)="onCopyButton(row, $event)"
+          [attr.aria-label]="'Copia ' + row.__rec_name"
+        >
+          <span class="pi pi-copy"></span>
+        </button>
+      </cdk-cell>
+    </ng-container>
+
+    <ng-container cdkColumnDef="__remove" *ngIf="showRemoveAction">
+      <cdk-header-cell *cdkHeaderCellDef class="ozon-record-table__header-cell ozon-record-table__action-header">Rimuovi</cdk-header-cell>
+      <cdk-cell *cdkCellDef="let row" class="ozon-record-table__cell ozon-record-table__action-cell">
+        <button
+          type="button"
+          class="btn btn-sm btn-link text-danger text-decoration-none"
+          data-row-action
+          (click)="onRemoveButton(row, $event)"
+          [attr.aria-label]="'Rimuovi ' + row.__rec_name"
+        >
+          <span class="pi pi-trash"></span>
+        </button>
+      </cdk-cell>
+    </ng-container>
+
+    <cdk-header-row
+      *cdkHeaderRowDef="displayedColumns"
+      class="ozon-record-table__header"
+      [style.grid-template-columns]="gridTemplateColumns"
+    ></cdk-header-row>
+
+    <cdk-row
+      *cdkRowDef="let row; columns: displayedColumns"
+      cdkDrag
+      cdkDragLockAxis="y"
+      [cdkDragData]="row"
+      class="ozon-record-table__row"
+      [style.grid-template-columns]="gridTemplateColumns"
+      [class.ozon-row-selected]="selectedRecordName === row.__rec_name"
+      (click)="rowClick.emit({ row, event: $event })"
+      (dblclick)="rowDblClick.emit({ row, event: $event })"
+    ></cdk-row>
+  </cdk-table>
+
+  <div *ngIf="!rows.length" class="ozon-record-table__empty">
+    Nessun record
+  </div>
+</div>

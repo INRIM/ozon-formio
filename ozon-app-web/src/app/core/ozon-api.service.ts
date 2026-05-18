@@ -1,6 +1,7 @@
 import { Injectable } from '@angular/core';
 import { Subject } from 'rxjs';
 import { Formio } from '@formio/js';
+import { ImportSubmissionPayload } from '../models/app.types';
 import {
     ApiErrorPayload,
     FastSearchPayload,
@@ -22,10 +23,19 @@ export interface GetSessionOptions {
     maxAgeMs?: number;
 }
 
+export interface FastSearchSessionPayload {
+    form: Record<string, unknown>;
+    fast_serch_model: string;
+    data_model: string;
+    query_fields: Record<string, unknown>[];
+}
+
 @Injectable({ providedIn: 'root' })
 export class OzonApiService {
     private static readonly FORMIO_AUTH_PLUGIN_NAME = 'ozon-formio-auth-headers';
+    private static readonly FORMIO_RESOURCE_PLUGIN_NAME = 'ozon-formio-resource-rewrite';
     private static formioAuthPluginRegistered = false;
+    private static formioResourcePluginRegistered = false;
     private static readonly DEFAULT_SESSION_CACHE_TTL_MS = 30000;
 
     private readonly unauthorizedSubject = new Subject<void>();
@@ -111,6 +121,40 @@ export class OzonApiService {
 
     getRemoteSelect(p: RemoteSelectRequestPayload): Promise<unknown> {
         return this.fetchJson('/get_remote_select', { method: 'POST', body: p });
+    }
+
+    getSchemaModel(model: string): Promise<unknown> {
+        return this.fetchJson(`/schema_model/${encodeURIComponent(String(model).trim())}`);
+    }
+
+    storeSearchQuery(model: string, query: Record<string, unknown>): Promise<unknown> {
+        return this.fetchJson(`/data/search/${encodeURIComponent(String(model).trim())}`, { method: 'POST', body: query });
+    }
+
+    persistFastSearchSession(payload: FastSearchSessionPayload): Promise<unknown> {
+        return this.fetchJson('/data/fast_search_eval', { method: 'POST', body: payload });
+    }
+
+    importData(model: string, payload: ImportSubmissionPayload): Promise<unknown> {
+        return this.fetchJson(`/import/${encodeURIComponent(String(model).trim())}`, { method: 'POST', body: payload });
+    }
+
+    getExportData(model: string, payload: Record<string, unknown>, parent = ''): Promise<unknown> {
+        const normalizedModel = encodeURIComponent(String(model).trim());
+        return this.fetchJson(this.withParent(`/export_data/${normalizedModel}`, parent), { method: 'POST', body: payload });
+    }
+
+    getResourceData(
+        model: string,
+        options: { fields?: string[]; domainFromSession?: boolean; domain?: Record<string, unknown> } = {}
+    ): Promise<unknown> {
+        const params = new URLSearchParams();
+        if (Array.isArray(options.fields) && options.fields.length) params.set('fields', options.fields.join(','));
+        if (options.domainFromSession) params.set('domain_from_session', 'true');
+        if (options.domain && Object.keys(options.domain).length) params.set('domain', JSON.stringify(options.domain));
+        const query = params.toString();
+        const path = `/resource/data/${encodeURIComponent(String(model).trim())}`;
+        return this.fetchJson(query ? `${path}?${query}` : path);
     }
 
     getActionLayout(name = ''): Promise<unknown> {
@@ -264,17 +308,29 @@ export class OzonApiService {
         return this.streamListWithPayload('', payload as unknown as ListRequestPayload, onItem, onMeta, path);
     }
 
-    async streamList(m: string, p: ListRequestPayload, onItem: (i: unknown) => void, onMeta?: (meta: Omit<ListStreamResult, 'count' | 'contentType'>) => void): Promise<{ result: ListStreamResult; payloadLabel: string; retries: number }> {
+    async streamList(
+        m: string,
+        p: ListRequestPayload,
+        onItem: (i: unknown) => void,
+        onMeta?: (meta: Omit<ListStreamResult, 'count' | 'contentType'>) => void,
+        options: { stream?: boolean } = {}
+    ): Promise<{ result: ListStreamResult; payloadLabel: string; retries: number }> {
         const c = this.buildListPayloadCandidates(p);
         for (let i = 0; i < c.length; i++) {
             try {
-                const r = await this.streamListWithPayload(m, c[i].payload, onItem, onMeta);
+                const r = await this.streamListWithPayload(m, c[i].payload, onItem, onMeta, this.buildListPath(m, options));
                 return { result: r, payloadLabel: c[i].label, retries: i };
             } catch (e) {
                 if (!(e instanceof ApiError) || e.status !== 422 || i === c.length - 1) throw e;
             }
         }
         throw new Error('Fallback failed');
+    }
+
+    private buildListPath(model: string, options: { stream?: boolean } = {}): string {
+        const path = `/list/${encodeURIComponent(model)}`;
+        if (options.stream === false) return `${path}?stream=False`;
+        return path;
     }
 
     private async streamListWithPayload(m: string, p: ListRequestPayload | Record<string, unknown>, onItem: (i: unknown) => void, onMeta?: (meta: any) => void, pathOverride?: string): Promise<ListStreamResult> {
@@ -377,16 +433,89 @@ export class OzonApiService {
         const base = config.useProxy ? '/api' : config.backendUrl.replace(/\/+$/, '');
         Formio.setBaseUrl(base);
         Formio.setProjectUrl(base);
-        if (OzonApiService.formioAuthPluginRegistered) return;
-        Formio.registerPlugin({
-            priority: 1000,
-            preRequest: (args: any) => { this.attachTokenToFormioRequest(args); return Promise.resolve(args); }
-        } as any, OzonApiService.FORMIO_AUTH_PLUGIN_NAME);
-        OzonApiService.formioAuthPluginRegistered = true;
+        if (!OzonApiService.formioAuthPluginRegistered) {
+            Formio.registerPlugin({
+                priority: 1000,
+                preRequest: (args: any) => { this.attachTokenToFormioRequest(args); return Promise.resolve(args); }
+            } as any, OzonApiService.FORMIO_AUTH_PLUGIN_NAME);
+            OzonApiService.formioAuthPluginRegistered = true;
+        }
+
+        if (!OzonApiService.formioResourcePluginRegistered) {
+            Formio.registerPlugin({
+                priority: 999,
+                preRequest: (args: any) => { this.rewriteFormioBuilderResourceUrl(args); return Promise.resolve(args); },
+                wrapRequestPromise: (promise: Promise<any>, args: any) => {
+                    if (!args._ozonBuilderRewrite) return promise;
+                    return promise.then((data: any) => this.unwrapFormioBuilderRewriteResponse(data, args)).catch(() => []);
+                },
+                wrapStaticRequestPromise: (promise: Promise<any>, args: any) => {
+                    if (!args._ozonBuilderRewrite) return promise;
+                    return promise.then((data: any) => this.unwrapFormioBuilderRewriteResponse(data, args)).catch(() => []);
+                }
+            } as any, OzonApiService.FORMIO_RESOURCE_PLUGIN_NAME);
+            OzonApiService.formioResourcePluginRegistered = true;
+        }
+    }
+
+    private rewriteFormioBuilderResourceUrl(args: any): void {
+        const rawUrl = String(args?.url ?? '');
+        if (!rawUrl || rawUrl.includes('__ozon_remote__')) return;
+        try {
+            const origin = typeof window !== 'undefined' ? window.location.origin : '';
+            const urlObj = new URL(rawUrl, origin || 'http://localhost');
+            const pathname = urlObj.pathname;
+            const sp = urlObj.searchParams;
+
+            const toAbsolutePost = (path: string) => {
+                const url = this.buildEndpointUrl(path);
+                return url.startsWith('http') ? url : `${origin}${url}`;
+            };
+
+            const applyPost = (url: string, payload: Record<string, unknown>, rewrite: string) => {
+                args.url = url;
+                args.method = 'POST';
+                args.data = this.normalizeFormioRequestPayload(payload);
+                args.opts = args.opts || {};
+                args.opts.method = 'POST';
+                delete args.opts.body;
+                args._ozonBuilderRewrite = rewrite;
+            };
+
+            const basePayload = () => ({
+                order: '',
+                skip: parseInt(sp.get('skip') ?? '0', 10) || 0,
+                limit: parseInt(sp.get('limit') ?? '100', 10) || 100
+            });
+
+            // /…/form?type=resource → POST {proxy}/list/component {query:{type:'resource'}}
+            if (pathname.endsWith('/form') && sp.get('type') === 'resource') {
+                applyPost(toAbsolutePost('/list/component'), { ...basePayload(), query: { type: 'resource' } }, 'list');
+                return;
+            }
+
+            // /…/form/{model}/submission?… → POST {proxy}/list/{model}
+            const mSub = pathname.match(/\/form\/([^/]+)\/submission$/);
+            if (mSub) {
+                applyPost(toAbsolutePost(`/list/${mSub[1]}`), { ...basePayload(), query: {} }, 'submission');
+                return;
+            }
+
+            // /…/form/{model}?… → POST {proxy}/list/{model}
+            const mForm = pathname.match(/\/form\/([^/]+)$/);
+            if (mForm) {
+                applyPost(toAbsolutePost(`/list/${mForm[1]}`), { ...basePayload(), query: {} }, 'submission');
+                return;
+            }
+        } catch { }
     }
 
     private attachTokenToFormioRequest(args: any): void {
         let url = String(args?.url ?? '');
+        const normalizedArgsData = this.normalizeFormioRequestPayload(args?.data);
+        if (normalizedArgsData !== undefined) {
+            args.data = normalizedArgsData;
+        }
 
         args.opts = args.opts || {};
         const headers: Record<string, string> = {};
@@ -406,9 +535,10 @@ export class OzonApiService {
                 const reg = this.remotePayloads.get(reqId);
 
                 if (reg) {
+                    const normalizedPayload = this.normalizeFormioRequestPayload(reg.payload);
                     args.method = args.opts.method = 'POST';
-                    args.data = reg.payload;
-                    args.opts.body = JSON.stringify(reg.payload);
+                    args.data = normalizedPayload;
+                    delete args.opts.body;
                     Object.assign(headers, reg.headers);
 
                     let path = urlObj.pathname.replace(/.*__ozon_remote__/, '');
@@ -426,6 +556,75 @@ export class OzonApiService {
 
         args.opts.headers = headers;
         args.headers = headers;
+    }
+
+    private normalizeFormioRequestPayload(payload: unknown): unknown {
+        if (typeof payload !== 'string') return payload;
+        const normalized = payload.trim();
+        if (!normalized) return payload;
+        try {
+            return JSON.parse(normalized);
+        } catch {
+            return payload;
+        }
+    }
+
+    private unwrapFormioBuilderRewriteResponse(data: unknown, args?: any): unknown[] {
+        if (Array.isArray(data)) return data;
+        const content = this.extractResponseContent(data);
+        if (Array.isArray(content)) return content;
+        const list = this.normalizeRecordList(data);
+        if (!Array.isArray(list)) return [];
+        if (args?._ozonBuilderRewrite === 'list') {
+            return list.map(item => this.normalizeFormioBuilderResourceItem(item));
+        }
+        return list;
+    }
+
+    private normalizeFormioBuilderResourceItem(item: unknown): unknown {
+        if (!this.isRecord(item)) return item;
+        const normalized = { ...item };
+        const id = this.firstNonEmptyString(normalized['rec_name'], normalized['name'], normalized['id'], normalized['_id']);
+        const label = this.firstNonEmptyString(normalized['label'], normalized['title'], normalized['name'], normalized['rec_name'], id);
+        const components = this.extractFormioBuilderResourceComponents(normalized);
+
+        if (id) {
+            normalized['id'] = id;
+            normalized['_id'] = id;
+            if (!this.firstNonEmptyString(normalized['rec_name'])) normalized['rec_name'] = id;
+            if (!this.firstNonEmptyString(normalized['name'])) normalized['name'] = id;
+        }
+        if (label) {
+            normalized['label'] = label;
+            if (!this.firstNonEmptyString(normalized['title'])) normalized['title'] = label;
+        }
+        if (components && !Array.isArray(normalized['components'])) normalized['components'] = components;
+        return normalized;
+    }
+
+    private extractFormioBuilderResourceComponents(item: Record<string, unknown>): unknown[] | null {
+        const directComponents = item['components'];
+        if (Array.isArray(directComponents)) return directComponents;
+        const nestedRecords = [
+            item['schema'],
+            item['formio'],
+            this.isRecord(item['data']) ? item['data']['schema'] : null,
+            this.isRecord(item['data']) ? item['data']['formio'] : null
+        ];
+        for (const candidate of nestedRecords) {
+            if (!this.isRecord(candidate)) continue;
+            const components = candidate['components'];
+            if (Array.isArray(components)) return components as unknown[];
+        }
+        return null;
+    }
+
+    private firstNonEmptyString(...values: unknown[]): string {
+        for (const value of values) {
+            const normalized = String(value ?? '').trim();
+            if (normalized) return normalized;
+        }
+        return '';
     }
 
     private resolveSessionCacheTtlMs(override?: number): number {
@@ -454,7 +653,11 @@ export class OzonApiService {
         const init: RequestInit = { method, headers: h, credentials: 'include' };
         const explicitRedirect = opt?.redirect as RequestRedirect | undefined;
         init.redirect = explicitRedirect ?? 'manual';
-        if (opt?.body) { h.set('Content-Type', 'application/json'); init.body = JSON.stringify(opt.body); }
+        const body = this.serializeRequestBody(opt?.body);
+        if (body) {
+            if (body.isJson) h.set('Content-Type', 'application/json');
+            init.body = body.value;
+        }
         let response = await fetch(url, init);
         const shouldFollowInternalRedirects = !explicitRedirect && (method === 'GET' || method === 'HEAD');
         if (!shouldFollowInternalRedirects) return response;
@@ -469,6 +672,15 @@ export class OzonApiService {
             redirectCount += 1;
         }
         return response;
+    }
+
+    private serializeRequestBody(body: unknown): { value: BodyInit; isJson: boolean } | null {
+        if (body == null) return null;
+        if (typeof body === 'string') return { value: body, isJson: true };
+        if (typeof FormData !== 'undefined' && body instanceof FormData) return { value: body, isJson: false };
+        if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) return { value: body, isJson: false };
+        if (typeof Blob !== 'undefined' && body instanceof Blob) return { value: body, isJson: false };
+        return { value: JSON.stringify(body), isJson: true };
     }
 
     private isRedirectStatus(status: number): boolean {
@@ -537,6 +749,13 @@ export class OzonApiService {
         if (rawPath === '/api' || rawPath.startsWith('/api/')) return rawPath;
         const base = cfg.useProxy ? '/api' : cfg.backendUrl.replace(/\/+$/, '');
         return `${base}${rawPath}`;
+    }
+
+    private withParent(path: string, parent: string): string {
+        const normalizedParent = String(parent ?? '').trim();
+        if (!normalizedParent) return path;
+        const query = new URLSearchParams({ parent: normalizedParent });
+        return `${path}?${query.toString()}`;
     }
 
     private parseJsonOrText(t: string): any { try { return JSON.parse(t); } catch { return t; } }

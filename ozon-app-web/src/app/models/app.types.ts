@@ -8,9 +8,27 @@ export interface TableRow extends Record<string, unknown> {
     __rec_name: string;
 }
 
+export type TableSortDirection = 'asc' | 'desc';
+
+export interface ListSortChange {
+    field: string;
+    direction: TableSortDirection;
+}
+
+export interface ListPageChange {
+    pageIndex: number;
+    pageSize: number;
+}
+
+export interface ListRowReorderChange {
+    previousIndex: number;
+    currentIndex: number;
+}
+
 export interface SelectValueOption {
     label: string;
     value: unknown;
+    data?: unknown;
 }
 
 export interface QueryBuilderFieldConfig {
@@ -85,5 +103,64 @@ export interface MenuDrillDownGroup {
     buttons: MenuButton[];
 }
 
+export type ExportFileType = 'xls' | 'csv' | 'json';
+export type ImportTemplateFormat = 'excel' | 'json';
+
+export interface ListExportConfig {
+    visible: boolean;
+    model: string;
+    searchModel: string;
+    parent: string;
+    hideAll: boolean;
+    xlsFilteredLabel: string;
+    csvFilteredLabel: string;
+    jsonFilteredLabel: string;
+}
+
+export interface ListImportConfig {
+    visible: boolean;
+    model: string;
+    title: string;
+}
+
+export interface ListSearchSessionContext {
+    searchModel: string;
+    dataModel: string;
+    actionName: string;
+    baseQuery: Record<string, unknown>;
+    currentQuery: Record<string, unknown>;
+    order: string;
+    totalCount: number;
+    fastSearchActive: boolean;
+    fastSearchFormModel: string;
+    fastSearchDataModel: string;
+    fastSearchQueryFields: Record<string, unknown>[];
+    fastSearchFormData: Record<string, unknown>;
+}
+
+export interface ImportColumnDescriptor {
+    name: string;
+}
+
+export interface ImportPreviewRow extends Record<string, unknown> {}
+
+export interface ImportSubmissionPayload {
+    fields: ImportColumnDescriptor[];
+    data: ImportPreviewRow[];
+    delete_before?: boolean;
+}
+
 export type ThemeMode = 'light' | 'dark';
 export type AppViewMode = 'dashboard' | 'list' | 'form';
+
+/** Action button supplied by the backend in `context_actions`. */
+export interface ContextAction {
+    rec_name: string;
+    action_type: string;
+    label: string;
+    button_icon: string;
+    modal: boolean;
+    /** Empty array → all contexts. Otherwise list of contexts: "form", "list". */
+    context_button_mode: string[];
+    url_action: string;
+}

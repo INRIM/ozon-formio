@@ -1,0 +1,104 @@
+.ozon-table-wrap {
+  border: 1px solid var(--ozon-border);
+  border-radius: 8px;
+  min-height: 240px;
+  max-height: 460px;
+  background: var(--ozon-surface);
+  overflow: auto;
+}
+
+.ozon-record-table {
+  display: flex;
+  flex-direction: column;
+  min-width: max-content;
+}
+
+.ozon-record-table__header,
+.ozon-record-table__row {
+  display: grid;
+  align-items: center;
+}
+
+.ozon-record-table__header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--ozon-surface);
+  border-bottom: 1px solid var(--ozon-border);
+}
+
+.ozon-record-table__row {
+  border-bottom: 1px solid var(--ozon-border);
+  min-height: 3rem;
+}
+
+.ozon-record-table__row:hover {
+  background: rgba(111, 182, 255, 0.08);
+  cursor: pointer;
+}
+
+.ozon-record-table__header-cell,
+.ozon-record-table__cell {
+  padding: 0.75rem 0.85rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ozon-record-table__header-cell {
+  font-weight: 700;
+}
+
+.ozon-record-table__cell--select,
+.ozon-record-table__cell--handle,
+.ozon-record-table__action-cell,
+.ozon-record-table__action-header {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ozon-record-table__sort {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  font-weight: inherit;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.ozon-record-table__sort-indicator {
+  color: var(--ozon-muted);
+}
+
+.ozon-record-table__sort-indicator.is-active {
+  color: var(--ozon-text);
+}
+
+.ozon-record-table__drag-handle {
+  border: 0;
+  background: transparent;
+  color: var(--ozon-muted);
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: move;
+}
+
+.ozon-row-selected {
+  background: rgba(111, 182, 255, 0.2);
+}
+
+.ozon-record-table__empty {
+  min-height: 4.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ozon-muted);
+}

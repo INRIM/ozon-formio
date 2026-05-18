@@ -112,6 +112,31 @@ function createBuiltinBuilderConfig(): Record<string, unknown> {
             hideOnChildrenHidden: false
           }
         },
+        persona: {
+          title: 'Persona',
+          icon: 'user',
+          group: 'basic',
+          weight: 8,
+          schema: {
+            label: 'Persona',
+            widget: 'choicesjs',
+            description: 'Select User.',
+            tableView: true,
+            dataSrc: 'resource',
+            data: {
+              resource: 'User'
+            },
+            idPath: 'rec_name',
+            template: '<span>{{ item.data.full_name }}</span>',
+            validateWhenHidden: false,
+            key: 'persona',
+            type: 'select',
+            noRefreshOnScroll: false,
+            addResource: false,
+            reference: false,
+            input: true
+          }
+        },
         buttondelete: {
           title: 'Button Delete Record',
           icon: 'trash',
@@ -611,6 +636,25 @@ function createBuiltinBuilderConfig(): Record<string, unknown> {
                 ]
               }
             ],
+            type: 'well',
+            input: false,
+            tableView: false,
+            components: []
+          }
+        },
+        importComponent: {
+          title: 'Import',
+          key: 'import_component',
+          icon: 'upload',
+          schema: {
+            label: 'Import',
+            customClass: 'col-12',
+            key: 'import_component',
+            properties: {
+              type: 'import_component',
+              title: 'Import Data',
+              model: '_model_'
+            },
             type: 'well',
             input: false,
             tableView: false,

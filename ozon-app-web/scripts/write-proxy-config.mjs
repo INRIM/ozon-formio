@@ -220,6 +220,12 @@ function writeProxyConfig(target) {
         '^/api': ''
       }
     },
+    '/record': {
+      target,
+      secure: false,
+      changeOrigin: true,
+      logLevel: 'warn'
+    },
     '/auth': {
       target,
       secure: false,

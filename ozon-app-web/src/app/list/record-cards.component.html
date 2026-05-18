@@ -1,0 +1,68 @@
+<div class="ozon-record-cards">
+  <article
+    *ngFor="let row of rows; trackBy: trackRow"
+    class="ozon-record-card"
+    [class.ozon-record-card--selected]="selectedRecordName === row.__rec_name"
+    (click)="onCardClick(row, $event)"
+  >
+    <header class="ozon-record-card__header">
+      <div class="d-flex align-items-center gap-2 flex-grow-1 min-w-0">
+        <input
+          type="checkbox"
+          class="form-check-input"
+          data-row-select
+          [checked]="isRowSelected(row)"
+          (click)="$event.stopPropagation()"
+          (change)="onToggleRow(row, $any($event.target).checked)"
+          [attr.aria-label]="'Seleziona ' + row.__rec_name"
+        />
+        <div class="ozon-record-card__title text-truncate">{{ row.__rec_name }}</div>
+      </div>
+      <div class="ozon-record-card__badge" *ngIf="selectedRecordName === row.__rec_name">Selezionato</div>
+    </header>
+
+    <div class="ozon-record-card__body" *ngIf="primaryFields(row).length">
+      <div class="ozon-record-card__field" *ngFor="let field of primaryFields(row)">
+        <div class="ozon-record-card__label">{{ field.title }}</div>
+        <div class="ozon-record-card__value">{{ field.value }}</div>
+      </div>
+    </div>
+
+    <details *ngIf="hasExtraFields(row)" class="ozon-record-card__details" (click)="$event.stopPropagation()">
+      <summary>Altri campi</summary>
+      <div class="ozon-record-card__body mt-2">
+        <div class="ozon-record-card__field" *ngFor="let field of extraFields(row)">
+          <div class="ozon-record-card__label">{{ field.title }}</div>
+          <div class="ozon-record-card__value">{{ field.value }}</div>
+        </div>
+      </div>
+    </details>
+
+    <footer class="ozon-record-card__footer" *ngIf="showCopyAction || showRemoveAction">
+      <button
+        *ngIf="showCopyAction"
+        type="button"
+        class="btn btn-sm btn-outline-secondary"
+        data-row-action
+        (click)="onCopyButton(row, $event)"
+      >
+        <span class="pi pi-copy me-1"></span>
+        Copia
+      </button>
+      <button
+        *ngIf="showRemoveAction"
+        type="button"
+        class="btn btn-sm btn-outline-danger"
+        data-row-action
+        (click)="onRemoveButton(row, $event)"
+      >
+        <span class="pi pi-trash me-1"></span>
+        Rimuovi
+      </button>
+    </footer>
+  </article>
+
+  <div *ngIf="!rows.length" class="ozon-record-cards__empty">
+    Nessun record
+  </div>
+</div>

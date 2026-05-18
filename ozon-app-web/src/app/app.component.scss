@@ -75,7 +75,7 @@
   border-radius: 10px;
   padding: 0.45rem 0.65rem;
   position: relative;
-  z-index: 20;
+  z-index: 200;
   overflow: visible;
 }
 
@@ -390,52 +390,6 @@
   padding: 1.1rem;
 }
 
-.ozon-workspace-card {
-  border: 1px solid var(--ozon-border);
-  background: var(--ozon-surface);
-}
-
-.ozon-workspace-title {
-  font-size: 1.25rem;
-  font-weight: 700;
-}
-
-.ozon-fast-search-shell {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.ozon-fast-search-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.ozon-fast-search-title {
-  font-size: 1.15rem;
-  font-weight: 700;
-}
-
-.ozon-fast-search-reset {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  font: inherit;
-  font-weight: 600;
-  line-height: 1.2;
-}
-
-.ozon-fast-search-form {
-  width: 100%;
-}
-
-.form-label {
-  font-weight: 600;
-}
-
 .ozon-menu-badge {
   font-size: 0.68rem;
   font-weight: 700;
@@ -449,28 +403,6 @@
   justify-content: center;
   background: #1f66c2;
   color: #ffffff;
-}
-
-.ozon-table-wrap {
-  border: 1px solid var(--ozon-border);
-  border-radius: 8px;
-  min-height: 240px;
-  max-height: 460px;
-  background: var(--ozon-surface);
-  overflow: hidden;
-}
-
-.ozon-row-selected > td {
-  background: rgba(111, 182, 255, 0.2) !important;
-}
-
-.ozon-row-handle {
-  text-align: center;
-}
-
-.ozon-row-handle .pi-bars {
-  cursor: move;
-  color: var(--ozon-muted);
 }
 
 .ozon-transition-loader {
@@ -498,70 +430,87 @@
   box-shadow: 0 14px 28px rgba(10, 34, 63, 0.22);
 }
 
-:host ::ng-deep .ozon-prime-table .p-datatable-header-cell,
-:host ::ng-deep .ozon-prime-table .p-datatable-thead > tr > th {
-  white-space: nowrap;
+.ozon-form-viewer-card-body {
+  position: relative;
+  min-height: 18rem;
 }
 
-:host ::ng-deep .ozon-prime-table .p-datatable-tbody > tr > td {
-  white-space: nowrap;
-  max-width: 360px;
+/* Hide the native Form.io submit button — actions come from the sticky toolbar */
+::ng-deep .ozon-form-viewer button[type='submit'],
+::ng-deep .ozon-form-viewer .btn-wizard-nav-submit {
+  display: none !important;
+}
+
+.ozon-form-viewer-card-body.is-loading {
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-:host ::ng-deep .ozon-prime-table .p-datatable-tbody > tr:hover > td {
-  cursor: pointer;
+.ozon-form-viewer.is-pending {
+  visibility: hidden;
 }
 
-:host ::ng-deep .ozon-prime-table .p-checkbox {
-  transform: scale(1.1);
+.ozon-form-placeholder {
+  position: absolute;
+  inset: 1rem;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 0.25rem 0;
+  background: var(--ozon-surface);
 }
 
-:host ::ng-deep .ozon-fast-search-form .card,
-:host ::ng-deep .ozon-fast-search-form .panel.card,
-:host ::ng-deep .ozon-fast-search-form .formio-component-panel > .card,
-:host ::ng-deep .ozon-fast-search-form .formio-component-well > .card {
-  background: transparent !important;
-  border: 0 !important;
-  box-shadow: none !important;
+.ozon-form-placeholder__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
-:host ::ng-deep .ozon-fast-search-form .card-header,
-:host ::ng-deep .ozon-fast-search-form .panel-heading {
-  display: none !important;
+.ozon-form-placeholder__message {
+  font-size: 0.875rem;
+  color: var(--ozon-muted);
 }
 
-:host ::ng-deep .ozon-fast-search-form .card-body,
-:host ::ng-deep .ozon-fast-search-form .panel-body,
-:host ::ng-deep .ozon-fast-search-form .formio-component-content {
-  padding: 0 !important;
-  background: transparent !important;
+.ozon-form-placeholder__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
 }
 
-:host ::ng-deep .ozon-fast-search-form .row {
-  row-gap: 0.75rem;
+.ozon-form-skeleton {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: 0.8rem;
+  background: color-mix(in srgb, var(--ozon-border) 72%, transparent 28%);
 }
 
-:host ::ng-deep .ozon-fast-search-form .formio-form {
-  margin-bottom: 0;
+.ozon-form-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.58), transparent);
+  animation: ozon-form-skeleton-shimmer 1.25s ease-in-out infinite;
 }
 
-:host ::ng-deep .ozon-fast-search-form .formio-component {
+.ozon-form-skeleton--title {
+  width: 11rem;
+  height: 1rem;
+  border-radius: 999px;
+}
+
+.ozon-form-skeleton--field {
   width: 100%;
-  margin-bottom: 0.9rem;
+  height: 2.8rem;
 }
 
-:host ::ng-deep .ozon-fast-search-form fieldset {
-  min-inline-size: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-:host ::ng-deep .ozon-fast-search-form button[type='submit'],
-:host ::ng-deep .ozon-fast-search-form .btn-wizard-nav-submit {
-  display: none !important;
+@keyframes ozon-form-skeleton-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 @media (max-width: 991px) {
@@ -596,10 +545,6 @@
 
   .ozon-card-title {
     font-size: 1.7rem;
-  }
-
-  .ozon-fast-search-header {
-    align-items: center;
   }
 }
 

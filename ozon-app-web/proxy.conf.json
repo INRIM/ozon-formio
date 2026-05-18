@@ -8,6 +8,12 @@
       "^/api": ""
     }
   },
+  "/record": {
+    "target": "http://ozon-env-app:8000",
+    "secure": false,
+    "changeOrigin": true,
+    "logLevel": "warn"
+  },
   "/auth": {
     "target": "http://ozon-env-app:8000",
     "secure": false,

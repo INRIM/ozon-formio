@@ -122,161 +122,57 @@
     </article>
   </section>
 
-  <section class="card ozon-workspace-card" *ngIf="isListPage">
-    <div class="card-body">
-      <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
-        <div>
-          <div class="ozon-workspace-title">{{ dashboardTitle }}</div>
-          <div class="small text-muted">{{ selectedInfo }}</div>
-        </div>
-        <div class="small text-muted text-md-end">
-          Stream: {{ streamCount }} | Totale: {{ tableTotalRecords }} | Limit: {{ limit }}
-        </div>
-      </div>
-
-      <div class="ozon-fast-search-shell mb-2" *ngIf="fastSearchEnabled && fastSearchSchema">
-        <div class="ozon-fast-search-header">
-          <div class="ozon-fast-search-title">Ricerca Veloce</div>
-          <button class="ozon-fast-search-reset" type="button" (click)="resetFastSearch()">Reimposta</button>
-        </div>
-        <div class="ozon-fast-search-form" (keydown)="onFastSearchKeydown($event)">
-          <formio
-            [form]="fastSearchSchema"
-            [submission]="fastSearchSubmission"
-            (change)="onFastSearchFormChange($event)"
-            (submit)="doFastSearch()"
-          ></formio>
-        </div>
-      </div>
-
-      <div class="d-flex flex-wrap justify-content-between gap-2 align-items-end mb-2">
-        <div class="flex-fill" *ngIf="!fastSearchEnabled">
-          <label class="form-label mb-1">Record table</label>
-          <input
-            [(ngModel)]="filterText"
-            (ngModelChange)="onFilterChanged()"
-            class="form-control form-control-sm"
-            type="text"
-            placeholder="Filtra righe..."
-          />
-        </div>
-        <div class="d-grid d-lg-none" *ngIf="fastSearchEnabled">
-          <button class="btn btn-primary" type="button" (click)="doFastSearch()">Cerca</button>
-        </div>
-        <div class="d-flex flex-wrap gap-2 ms-auto">
-          <div class="d-grid">
-            <button class="btn btn-success" type="button" [disabled]="!canOpenRecord" (click)="openRecordFromListSelection()">
-              Apri record
-            </button>
-          </div>
-          <div class="d-grid">
-            <button class="btn btn-primary" type="button" [disabled]="!canOpenNewRecord" (click)="openNewRecord()">
-              Nuovo record
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div *ngIf="!tableColumns.length" class="text-danger text-center py-2">
-        Header `X-Columns` mancante o non valido
-      </div>
-      <div class="ozon-table-wrap">
-        <p-table
-          [value]="tableRows"
-          [columns]="tableColumns"
-          dataKey="__rowid"
-          [(selection)]="selectedRows"
-          [lazy]="true"
-          [lazyLoadOnInit]="false"
-          [paginator]="true"
-          [first]="skip"
-          [rows]="pageSize"
-          [totalRecords]="tableTotalRecords"
-          [rowsPerPageOptions]="pageSizeOptions"
-          [showCurrentPageReport]="true"
-          currentPageReportTemplate="Mostra {first} - {last} di {totalRecords}"
-          [scrollable]="true"
-          scrollHeight="420px"
-          [sortField]="primeSortField"
-          [sortOrder]="primeSortOrder"
-          styleClass="p-datatable-sm p-datatable-gridlines ozon-prime-table"
-          (onLazyLoad)="onTableLazyLoad($event)"
-          (onRowReorder)="onRowReorder($event)"
-          (selectionChange)="onTableSelectionChange($event)"
-        >
-          <ng-template pTemplate="header" let-columns>
-            <tr>
-              <th style="width: 3.5rem">
-                <p-tableHeaderCheckbox></p-tableHeaderCheckbox>
-              </th>
-              <th style="width: 2.5rem"></th>
-              <th *ngFor="let column of columns; trackBy: trackColumnBy" [pSortableColumn]="column.field">
-                {{ column.title }}
-                <p-sortIcon [field]="column.field"></p-sortIcon>
-              </th>
-              <th *ngIf="showTableRowCopyAction" style="width: 4rem">Copia</th>
-              <th *ngIf="showTableRowRemoveAction" style="width: 5rem">Rimuovi</th>
-            </tr>
-          </ng-template>
-
-          <ng-template pTemplate="body" let-rowData let-columns="columns" let-rowIndex="rowIndex">
-            <tr
-              [pReorderableRow]="rowIndex"
-              (click)="onTableRowClick(rowData, $event)"
-              (dblclick)="onTableRowDblClick(rowData, $event)"
-              [class.ozon-row-selected]="selectedRecordName === rowData.__rec_name"
-            >
-              <td>
-                <p-tableCheckbox [value]="rowData"></p-tableCheckbox>
-              </td>
-              <td class="ozon-row-handle">
-                <span class="pi pi-bars" pReorderableRowHandle aria-label="Riordina"></span>
-              </td>
-              <td *ngFor="let column of columns; trackBy: trackColumnBy">
-                {{ displayCell(rowData, column.field) }}
-              </td>
-              <td class="text-center" *ngIf="showTableRowCopyAction">
-                <button
-                  pButton
-                  type="button"
-                  icon="pi pi-copy"
-                  class="p-button-sm p-button-text"
-                  (click)="onCopyRow(rowData, $event)"
-                  aria-label="Copia record"
-                ></button>
-              </td>
-              <td class="text-center" *ngIf="showTableRowRemoveAction">
-                <button
-                  pButton
-                  type="button"
-                  icon="pi pi-trash"
-                  class="p-button-sm p-button-text p-button-danger"
-                  (click)="onRemoveRow(rowData, $event)"
-                  aria-label="Rimuovi record"
-                ></button>
-              </td>
-            </tr>
-          </ng-template>
-
-          <ng-template pTemplate="emptymessage">
-            <tr>
-              <td [attr.colspan]="tableColumnCount + tableExtraColumnCount" class="text-muted text-center py-4">
-                Nessun record
-              </td>
-            </tr>
-          </ng-template>
-        </p-table>
-      </div>
-
-      <div class="small mt-2" [class.text-danger]="statusError" [class.text-success]="!statusError">
-        {{ statusText }}
-      </div>
-      <button *ngIf="serverErrorRetryVisible" class="btn btn-sm btn-outline-secondary mt-2" type="button"
-        (click)="retryServerError()">
-        Riprova
-      </button>
-    </div>
-  </section>
+  <app-record-list
+    *ngIf="isListPage"
+    [dashboardTitle]="dashboardTitle"
+    [isAdmin]="isAdminUser"
+    [streamCount]="streamCount"
+    [totalRecords]="tableTotalRecords"
+    [limit]="limit"
+    [skip]="skip"
+    [sortField]="primeSortField"
+    [sortDirection]="sortDirection"
+    [tableColumns]="tableColumns"
+    [tableRows]="tableRows"
+    [selectedRows]="selectedRows"
+    [selectedRecordName]="selectedRecordName"
+    [pageSizeOptions]="pageSizeOptions"
+    [showTableRowCopyAction]="showTableRowCopyAction"
+    [showTableRowRemoveAction]="showTableRowRemoveAction"
+    [canOpenRecord]="canOpenRecord"
+    [canOpenNewRecord]="canOpenNewRecord"
+    [contextActions]="listContextActions"
+    [isLoadingRecords]="isLoadingRecords"
+    [fastSearchEnabled]="fastSearchEnabled"
+    [fastSearchLoading]="fastSearchLoading"
+    [fastSearchSchema]="fastSearchSchema"
+    [fastSearchSubmission]="fastSearchSubmission"
+    [tableRenderLoading]="tableRenderLoading"
+    [formioRenderOptions]="formioRenderOptions"
+    [exportConfig]="tableManager.listExportConfig"
+    [importConfig]="tableManager.listImportConfig"
+    [searchContext]="tableManager.listSearchSessionContext"
+    [statusText]="statusText"
+    [statusError]="statusError"
+    [serverErrorRetryVisible]="serverErrorRetryVisible"
+    [displayCell]="recordDisplayCell"
+    (fastSearchFormChange)="onFastSearchFormChange($event)"
+    (fastSearchKeydown)="onFastSearchKeydown($event)"
+    (fastSearchSearch)="doFastSearch()"
+    (fastSearchReset)="resetFastSearch()"
+    (openRecord)="openRecordFromListSelection()"
+    (openNewRecord)="openNewRecord()"
+    (contextActionClick)="onContextActionClick($event)"
+    (retryServerError)="retryServerError()"
+    (rowClick)="onTableRowClick($event.row, $event.event)"
+    (rowDblClick)="onTableRowDblClick($event.row, $event.event)"
+    (selectionChange)="onTableSelectionChange($event)"
+    (sortChange)="onListSortChange($event)"
+    (pageChange)="onListPageChange($event)"
+    (rowReorder)="onRowReorder($event)"
+    (copyRow)="onCopyRow($event.row, $event.event)"
+    (removeRow)="onRemoveRow($event.row, $event.event)"
+  ></app-record-list>
 
   <!-- ═══════════ FORM EDITOR PAGE (Design → Form → name) ═══════════ -->
   <div class="col-12 ozon-form-editor-shell mt-4" *ngIf="isFormEditorPage">
@@ -577,11 +473,11 @@
     </div>
   </div>
 
-  <div class="card mt-3" *ngIf="isFormPage && formSchema && !showFormBuilder && !isFormEditorPage">
-    <div class="card-header d-flex align-items-center justify-content-between gap-2">
-      <span>Form Viewer</span>
+  <div class="card mt-3" *ngIf="showFormViewerShell">
+    <div class="card-header ozon-form-viewer-header d-flex align-items-center justify-content-between gap-2">
+      <span>{{ formViewerTitle }}</span>
       <div class="d-flex flex-wrap align-items-center justify-content-end gap-2">
-        <ng-container *ngIf="showFormViewerActionButtons">
+        <ng-container *ngIf="formSchema && showFormViewerActionButtons">
           <button
             *ngFor="let btn of currentFormActionButtons"
             type="button"
@@ -593,13 +489,32 @@
             {{ btn.label }}
           </button>
         </ng-container>
-        <button *ngIf="formEditorDesignContext && builderEligibleCurrentForm && builderEnabled && isAdminUser" class="btn btn-sm btn-outline-warning" type="button" (click)="openFormEditorInline()">
+        <button *ngIf="formSchema && formEditorDesignContext && builderEligibleCurrentForm && builderEnabled && isAdminUser" class="btn btn-sm btn-outline-warning" type="button" (click)="openFormEditorInline()">
           Edit Form
         </button>
       </div>
     </div>
-    <div class="card-body">
-      <formio #formioViewer [form]="formSchema" [submission]="viewerFormSubmission" (change)="onFormSubmissionChanged($event)"></formio>
+    <div class="card-body ozon-form-viewer-card-body" [class.is-loading]="formViewerLoading" [attr.aria-busy]="formViewerLoading ? 'true' : null">
+      <div class="ozon-form-placeholder" *ngIf="formViewerLoading" aria-live="polite" aria-busy="true">
+        <div class="ozon-form-placeholder__header">
+          <span class="ozon-form-skeleton ozon-form-skeleton--title"></span>
+          <span class="ozon-form-placeholder__message">Preparazione form in corso</span>
+        </div>
+        <div class="ozon-form-placeholder__body">
+          <span class="ozon-form-skeleton ozon-form-skeleton--field" *ngFor="let row of formPlaceholderRows"></span>
+        </div>
+      </div>
+      <formio
+        *ngIf="formSchema"
+        #formioViewer
+        class="ozon-form-viewer"
+        [class.is-pending]="formViewerLoading"
+        [form]="formSchema"
+        [submission]="viewerFormSubmission"
+        [renderOptions]="formioRenderOptions"
+        (ready)="onFormViewerReady()"
+        (change)="onFormSubmissionChanged($event)"
+      ></formio>
     </div>
   </div>
 

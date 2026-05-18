@@ -1,0 +1,130 @@
+<section class="ozon-transfer-tools" *ngIf="hasExport || hasImport">
+  <div class="ozon-transfer-tools__toolbar">
+    <div class="ozon-transfer-tools__cluster" *ngIf="hasExport">
+      <div class="ozon-transfer-tools__label">Export</div>
+      <div class="ozon-transfer-tools__actions">
+        <ng-container *ngIf="!exportConfig?.hideAll">
+          <button class="btn btn-outline-secondary btn-sm" type="button" [disabled]="exportBusy" (click)="exportAll('xls')">
+            XLS Tutti
+          </button>
+        </ng-container>
+        <button class="btn btn-outline-secondary btn-sm" type="button" [disabled]="exportBusy" (click)="exportFiltered('xls')">
+          {{ exportConfig?.xlsFilteredLabel || 'XLS' }}
+        </button>
+        <ng-container *ngIf="!exportConfig?.hideAll">
+          <button class="btn btn-outline-secondary btn-sm" type="button" [disabled]="exportBusy" (click)="exportAll('csv')">
+            CSV Tutti
+          </button>
+        </ng-container>
+        <button class="btn btn-outline-secondary btn-sm" type="button" [disabled]="exportBusy" (click)="exportFiltered('csv')">
+          {{ exportConfig?.csvFilteredLabel || 'CSV' }}
+        </button>
+        <ng-container *ngIf="!exportConfig?.hideAll">
+          <button class="btn btn-outline-secondary btn-sm" type="button" [disabled]="exportBusy" (click)="exportAll('json')">
+            JSON Tutti
+          </button>
+        </ng-container>
+        <button class="btn btn-outline-secondary btn-sm" type="button" [disabled]="exportBusy" (click)="exportFiltered('json')">
+          {{ exportConfig?.jsonFilteredLabel || 'JSON' }}
+        </button>
+      </div>
+    </div>
+
+    <div class="ozon-transfer-tools__cluster" *ngIf="hasImport">
+      <div class="ozon-transfer-tools__label">Import</div>
+      <div class="ozon-transfer-tools__actions">
+        <button class="btn btn-outline-secondary btn-sm" type="button" (click)="toggleImportPanel()">
+          {{ importPanelOpen ? 'Chiudi import' : 'Apri import' }}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="small mt-2" *ngIf="panelMessage" [class.text-danger]="panelError" [class.text-success]="!panelError">
+    {{ panelMessage }}
+  </div>
+
+  <section class="ozon-import-panel mt-3" *ngIf="importPanelOpen && hasImport">
+    <div class="ozon-import-panel__header">
+      <div>
+        <div class="ozon-import-panel__title">{{ importConfig?.title || 'Import Data' }}</div>
+        <div class="small text-muted">Carica file `.xlsx`, `.xls`, `.csv` oppure `.json`.</div>
+      </div>
+      <div class="ozon-import-panel__header-actions">
+        <button class="btn btn-outline-secondary btn-sm" type="button" [disabled]="templateBusy" (click)="downloadTemplate('excel', false)">
+          Template xlsx
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" type="button" [disabled]="templateBusy" (click)="downloadTemplate('excel', true)">
+          Template xlsx e dati
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" type="button" [disabled]="templateBusy" (click)="downloadTemplate('json', true)">
+          Template JSON e dati
+        </button>
+      </div>
+    </div>
+
+    <label
+      class="ozon-import-dropzone"
+      [class.is-active]="dragActive"
+      (dragover)="onDragOver($event)"
+      (dragleave)="onDragLeave($event)"
+      (drop)="onFileDrop($event)"
+    >
+      <input type="file" class="d-none" accept=".xlsx,.xls,.csv,.json" (change)="onFileInputChange($event)" />
+      <span class="ozon-import-dropzone__title">Trascina qui il file oppure selezionalo</span>
+      <span class="ozon-import-dropzone__hint">La prima sheet viene usata come sorgente per l’anteprima.</span>
+    </label>
+
+    <div class="small text-muted mt-2" *ngIf="selectedFileName">
+      File: {{ selectedFileName }}
+    </div>
+
+    <div class="d-flex flex-wrap align-items-center gap-3 mt-3" *ngIf="previewRows.length">
+      <label class="form-check d-flex align-items-center gap-2 m-0">
+        <input class="form-check-input mt-0" type="checkbox" [(ngModel)]="deleteBefore" />
+        <span class="form-check-label text-danger">Elimina TUTTO e importa</span>
+      </label>
+
+      <button class="btn btn-primary btn-sm" type="button" [disabled]="!canSubmitImport" (click)="submitImport()">
+        {{ importBusy ? 'Import in corso...' : 'Importa' }}
+      </button>
+      <button class="btn btn-outline-secondary btn-sm" type="button" [disabled]="importBusy" (click)="clearPreview()">
+        Pulisci
+      </button>
+    </div>
+
+    <div class="ozon-import-result mt-3" *ngIf="importResultLines.length">
+      <div class="ozon-import-result__title">Dettaglio errori</div>
+      <ul class="mb-0">
+        <li *ngFor="let line of importResultLines">{{ line }}</li>
+      </ul>
+    </div>
+
+    <div class="ozon-import-preview mt-3" *ngIf="previewColumns.length && previewRows.length">
+      <div class="ozon-import-preview__header">
+        <div class="ozon-import-preview__title">Anteprima</div>
+        <div class="small text-muted">
+          {{ previewRows.length }} righe
+          <span *ngIf="previewTruncated">, mostrate le prime {{ previewRowsVisible.length }}</span>
+        </div>
+      </div>
+
+      <div class="table-responsive ozon-import-preview__table-wrap">
+        <table class="table table-sm table-striped table-bordered align-middle mb-0">
+          <thead>
+            <tr>
+              <th *ngFor="let column of previewColumns; trackBy: trackPreviewColumn">{{ column }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let row of previewRowsVisible">
+              <td *ngFor="let column of previewColumns; trackBy: trackPreviewColumn">
+                {{ row[column] }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</section>

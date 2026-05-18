@@ -1,7 +1,8 @@
 import { Injectable } from '@angular/core';
 import { OzonApiService } from '../core/ozon-api.service';
+import { selectOptionPrimitiveValue, toSelectValueOption as mapSelectValueOption } from '../core/select-option.util';
 import { SelectValueOption } from '../models/app.types';
-import { RemoteSelectRequestPayload } from '../models/ozon.types';
+import { ListRequestPayload, RemoteSelectRequestPayload } from '../models/ozon.types';
 
 @Injectable()
 export class AppFormioRendererService {
@@ -10,15 +11,26 @@ export class AppFormioRendererService {
     formPreviewSubmission: { data: Record<string, unknown> } | null = null;
     rawFormSchema: Record<string, unknown> | null = null;
     rawFormSchemaModel = '';
+    formViewerLoading = false;
 
     selectedModel = '';
     selectedRecordName = '';
     sessionLocale = 'it';
     sessionTimezone = '';
 
+    pendingHydrationPromise: Promise<void> | null = null;
     private isRefreshingDependentSelects = false;
     private remoteSelectCache = new Map<string, SelectValueOption[]>();
     private remoteSelectInflight = new Map<string, Promise<SelectValueOption[]>>();
+    private pendingPostRenderHydration: {
+        requestId: number;
+        submission: Record<string, unknown> | null;
+        resolve: () => void;
+        reject: (reason?: unknown) => void;
+    } | null = null;
+    private nextPostRenderHydrationRequestId = 0;
+    private activePostRenderHydrationRequestId = 0;
+    private activePostRenderHydrationPromise: Promise<void> | null = null;
     private readonly responseWrappers: Array<'content' | 'payload' | 'response' | 'result' | 'action'> = [
         'content', 'payload', 'response', 'result', 'action'
     ];
@@ -34,6 +46,17 @@ export class AppFormioRendererService {
     readFirstString(...candidates: unknown[]): string {
         for (const entry of candidates) { if (typeof entry === 'string' && entry.trim()) return entry.trim(); }
         return '';
+    }
+
+    readFirstNumber(...candidates: unknown[]): number | null {
+        for (const entry of candidates) {
+            if (typeof entry === 'number' && Number.isFinite(entry)) return entry;
+            if (typeof entry === 'string') {
+                const parsed = Number(entry.trim());
+                if (Number.isFinite(parsed)) return parsed;
+            }
+        }
+        return null;
     }
 
     toDisplayValue(v: unknown): string {
@@ -141,8 +164,24 @@ export class AppFormioRendererService {
         const formKey = String(hydrated['key'] || hydrated['name'] || hydrated['path'] || this.selectedModel || '').trim();
         this.normalizeFormTableComponents(hydrated);
         this.normalizeFormWysiwygComponents(hydrated);
+        this.normalizeInteractiveSchemaComponents(hydrated);
 
         for (const comp of this.findSelectComponents(hydrated)) {
+            const resourcePayload = this.extractResourceSelectPayload(comp, formKey);
+            if (resourcePayload) {
+                try {
+                    const resourceOptions = await this.fetchResourceSelectOptions(resourcePayload);
+                    const selectedOptions = this.extractSubmissionSelectOptions(comp, sub);
+                    this.applyRemoteSelectValues(comp, this.mergeSelectValues(resourceOptions, selectedOptions));
+                } catch (error) {
+                    const selectedOptions = this.extractSubmissionSelectOptions(comp, sub);
+                    this.applyRemoteSelectValues(comp, selectedOptions);
+                    console.error('Remote select fetch failed', error);
+                }
+                this.ensureSelectTemplate(comp);
+                continue;
+            }
+
             const payload = this.extractRemoteSelectPayload(comp, formKey);
             if (payload) {
                 try {
@@ -170,6 +209,137 @@ export class AppFormioRendererService {
             this.ensureSelectTemplate(comp);
         }
         return hydrated;
+    }
+
+    /** Sync-only: clone + normalize schema, apply inline/custom selects. Remote selects get empty options. */
+    prepareSchemaForRender(schema: Record<string, unknown>, sub: Record<string, unknown> | null): Record<string, unknown> {
+        const hydrated = this.cloneSchema(schema);
+        const formKey = String(hydrated['key'] || hydrated['name'] || hydrated['path'] || this.selectedModel || '').trim();
+        this.normalizeFormTableComponents(hydrated);
+        this.normalizeFormWysiwygComponents(hydrated);
+        this.normalizeInteractiveSchemaComponents(hydrated);
+
+        for (const comp of this.findSelectComponents(hydrated)) {
+            const resourcePayload = this.extractResourceSelectPayload(comp, formKey);
+            if (resourcePayload) {
+                this.ensureSelectTemplate(comp);
+                continue;
+            }
+            const payload = this.extractRemoteSelectPayload(comp, formKey);
+            if (payload) {
+                this.ensureSelectTemplate(comp);
+                continue;
+            }
+            if (String(comp['dataSrc'] ?? '').trim() === 'custom' && sub) {
+                const data = this.isRecord(comp['data']) ? comp['data'] : {};
+                const customKey = String(data['custom'] ?? '').trim();
+                const customValue = customKey ? (sub[customKey] ?? (this.isRecord(sub['data_value']) ? sub['data_value'][customKey] : null)) : null;
+                if (Array.isArray(customValue)) {
+                    const options = customValue.map(e => this.toSelectValueOption(e)).filter((e): e is SelectValueOption => Boolean(e));
+                    this.applyRemoteSelectValues(comp, options);
+                }
+            }
+            this.ensureSelectTemplate(comp);
+        }
+        return hydrated;
+    }
+
+    /** Background: fetch remote selects for the current formSchema and patch it in-place, then trigger re-render. */
+    async hydrateRemoteSelectsInBackground(sub: Record<string, unknown> | null): Promise<void> {
+        if (!this.formSchema) return;
+        const schema = this.formSchema;
+        const formKey = String(schema['key'] || schema['name'] || schema['path'] || this.selectedModel || '').trim();
+        let changed = false;
+        for (const comp of this.findSelectComponents(schema)) {
+            const resourcePayload = this.extractResourceSelectPayload(comp, formKey);
+            if (resourcePayload) {
+                try {
+                    const resourceOptions = await this.fetchResourceSelectOptions(resourcePayload);
+                    const selectedOptions = this.extractSubmissionSelectOptions(comp, sub);
+                    this.applyRemoteSelectValues(comp, this.mergeSelectValues(resourceOptions, selectedOptions));
+                    changed = true;
+                } catch (error) {
+                    const selectedOptions = this.extractSubmissionSelectOptions(comp, sub);
+                    this.applyRemoteSelectValues(comp, selectedOptions);
+                    console.error('Remote select fetch failed', error);
+                }
+                this.ensureSelectTemplate(comp);
+                continue;
+            }
+            const payload = this.extractRemoteSelectPayload(comp, formKey);
+            if (!payload) continue;
+            try {
+                const remoteOptions = await this.fetchRemoteSelectOptions(payload);
+                const selectedOptions = this.extractSubmissionSelectOptions(comp, sub);
+                this.applyRemoteSelectValues(comp, this.mergeSelectValues(remoteOptions, selectedOptions));
+                changed = true;
+            } catch (error) {
+                const selectedOptions = this.extractSubmissionSelectOptions(comp, sub);
+                this.applyRemoteSelectValues(comp, selectedOptions);
+                console.error('Remote select fetch failed', error);
+            }
+            this.ensureSelectTemplate(comp);
+        }
+        if (changed && this.formSchema === schema) {
+            this.formSchema = this.cloneSchema(schema);
+        }
+    }
+
+    scheduleRemoteSelectHydrationAfterRender(sub: Record<string, unknown> | null): Promise<void> {
+        this.clearScheduledRemoteSelectHydration();
+        const schema = this.formSchema;
+        if (!schema || !this.schemaHasRemoteSelectHydrationTargets(schema)) {
+            this.pendingHydrationPromise = Promise.resolve();
+            return this.pendingHydrationPromise;
+        }
+        let resolve!: () => void;
+        let reject!: (reason?: unknown) => void;
+        const promise = new Promise<void>((res, rej) => {
+            resolve = res;
+            reject = rej;
+        });
+        this.pendingHydrationPromise = promise;
+        this.pendingPostRenderHydration = {
+            requestId: ++this.nextPostRenderHydrationRequestId,
+            submission: this.cloneSubmissionData(sub),
+            resolve,
+            reject
+        };
+        return promise;
+    }
+
+    beginFormViewerLoad(): void {
+        this.formViewerLoading = true;
+    }
+
+    cancelFormViewerLoad(): void {
+        this.formViewerLoading = false;
+    }
+
+    async onFormViewerReady(): Promise<void> {
+        this.formViewerLoading = false;
+        const scheduled = this.pendingPostRenderHydration;
+        if (!scheduled) return;
+        if (this.activePostRenderHydrationRequestId === scheduled.requestId && this.activePostRenderHydrationPromise) {
+            return this.activePostRenderHydrationPromise;
+        }
+        this.activePostRenderHydrationRequestId = scheduled.requestId;
+        this.activePostRenderHydrationPromise = this.hydrateRemoteSelectsInBackground(scheduled.submission)
+            .then(() => { scheduled.resolve(); })
+            .catch((error) => {
+                scheduled.reject(error);
+                throw error;
+            })
+            .finally(() => {
+                if (this.pendingPostRenderHydration?.requestId === scheduled.requestId) {
+                    this.pendingPostRenderHydration = null;
+                }
+                if (this.activePostRenderHydrationRequestId === scheduled.requestId) {
+                    this.activePostRenderHydrationRequestId = 0;
+                }
+                this.activePostRenderHydrationPromise = null;
+            });
+        return this.activePostRenderHydrationPromise;
     }
 
     seedSubmissionDefaultsIntoSchema(schema: Record<string, unknown> | null, submissionData: Record<string, unknown> | null): void {
@@ -220,11 +390,13 @@ export class AppFormioRendererService {
     }
 
     resetFormState(): void {
+        this.clearScheduledRemoteSelectHydration();
         this.formSchema = null;
         this.formSubmission = null;
         this.formPreviewSubmission = null;
         this.rawFormSchema = null;
         this.rawFormSchemaModel = '';
+        this.formViewerLoading = false;
         this.remoteSelectCache.clear();
         this.remoteSelectInflight.clear();
     }
@@ -357,8 +529,8 @@ export class AppFormioRendererService {
         if (typeof value === 'string') {
             const normalized = value.trim().toLowerCase();
             if (!normalized) return null;
-            if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
-            if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+            if (['1', 'true', 'yes', 'on', 'y', 'si', 'sì'].includes(normalized)) return true;
+            if (['0', 'false', 'no', 'off', 'n'].includes(normalized)) return false;
             return null;
         }
         return null;
@@ -508,6 +680,25 @@ export class AppFormioRendererService {
         return false;
     }
 
+    private clearScheduledRemoteSelectHydration(): void {
+        if (this.pendingPostRenderHydration) {
+            this.pendingPostRenderHydration.resolve();
+            this.pendingPostRenderHydration = null;
+        }
+        this.pendingHydrationPromise = null;
+    }
+
+    private schemaHasRemoteSelectHydrationTargets(schema: Record<string, unknown>): boolean {
+        const formKey = String(schema['key'] || schema['name'] || schema['path'] || this.selectedModel || '').trim();
+        return this.findSelectComponents(schema).some(comp => Boolean(this.extractResourceSelectPayload(comp, formKey) || this.extractRemoteSelectPayload(comp, formKey)));
+    }
+
+    private cloneSubmissionData(submission: Record<string, unknown> | null): Record<string, unknown> | null {
+        if (!submission) return null;
+        try { return this.normalizeFormSubmissionData(JSON.parse(JSON.stringify(submission))); }
+        catch { return this.normalizeFormSubmissionData({ ...submission }); }
+    }
+
     private normalizeFormTableComponents(schema: Record<string, unknown>): void {
         const visit = (node: unknown): void => {
             if (Array.isArray(node)) { node.forEach(visit); return; }
@@ -534,6 +725,44 @@ export class AppFormioRendererService {
         visit(schema);
     }
 
+    private normalizeInteractiveSchemaComponents(schema: Record<string, unknown>): void {
+        const visit = (node: unknown): void => {
+            if (Array.isArray(node)) { node.forEach(visit); return; }
+            if (!this.isRecord(node)) return;
+            this.normalizeReadonlyComponent(node);
+            this.normalizeOutlineButtonComponent(node);
+            Object.values(node).forEach(visit);
+        };
+        visit(schema);
+    }
+
+    private normalizeReadonlyComponent(component: Record<string, unknown>): void {
+        const properties = this.readComponentProperties(component);
+        const readonlyFlag = this.toOptionalBooleanFlag(properties['readonly'])
+            ?? this.toOptionalBooleanFlag(component['readonly'])
+            ?? this.toOptionalBooleanFlag(component['readOnly']);
+        if (readonlyFlag !== true) return;
+
+        component['disabled'] = true;
+        component['readOnly'] = true;
+
+        const type = String(component['type'] ?? '').trim().toLowerCase();
+        if (type !== 'select') return;
+
+        component['searchEnabled'] = false;
+        component['removeItemButton'] = false;
+        component['customClass'] = this.appendCustomClass(component['customClass'], 'ozon-select-readonly');
+    }
+
+    private normalizeOutlineButtonComponent(component: Record<string, unknown>): void {
+        const type = String(component['type'] ?? '').trim().toLowerCase();
+        if (type !== 'button') return;
+
+        const customClass = String(component['customClass'] ?? '').trim();
+        if (!/\bbtn-outline-/.test(customClass)) return;
+        component['customClass'] = this.appendCustomClass(customClass, 'ozon-btn-custom-outline');
+    }
+
     private appendCustomClass(source: unknown, className: string): string {
         const classes = String(source ?? '').split(/\s+/).map(e => e.trim()).filter(Boolean);
         if (!classes.includes(className)) classes.push(className);
@@ -557,6 +786,7 @@ export class AppFormioRendererService {
         const currModel = String(formKey || this.selectedModel || '').trim();
         const url = this.readFirstString(data['url'], comp['url'], this.readPropertyValue(props, ['url']));
         const src = this.readFirstString(comp['dataSrc'], props['src'], url ? 'url' : '');
+        if (src === 'resource') return null;
         const hasInlineValues = (Array.isArray(data['values']) && (data['values'] as unknown[]).length > 0) || (Array.isArray(comp['values']) && (comp['values'] as unknown[]).length > 0);
         if (src === 'values' || (!url && !src && hasInlineValues)) return null;
         const hasAbsoluteRemoteUrl = /^https?:\/\//i.test(url);
@@ -590,6 +820,39 @@ export class AppFormioRendererService {
         return payload;
     }
 
+    private extractResourceSelectPayload(comp: Record<string, unknown>, _formKey: string): { model: string; payload: ListRequestPayload } | null {
+        const data = this.isRecord(comp['data']) ? comp['data'] : {};
+        const props = this.readComponentProperties(comp);
+        const src = this.readFirstString(comp['dataSrc'], props['src']);
+        if (src !== 'resource') return null;
+
+        const model = this.readFirstString(data['resource'], comp['resource'], props['resource']);
+        if (!model) return null;
+
+        const query = this.normalizeResourceSelectQuery(data['query'], props['query'], data['filter'], props['filter']);
+        const limit = this.readFirstNumber(data['limit'], props['limit']) ?? 1000;
+        const order = this.readFirstString(data['order'], props['order']) || 'rec_name asc';
+        return {
+            model,
+            payload: {
+                query,
+                skip: 0,
+                limit,
+                order
+            }
+        };
+    }
+
+    private normalizeResourceSelectQuery(...candidates: unknown[]): Record<string, unknown> {
+        for (const candidate of candidates) {
+            if (!candidate) continue;
+            if (this.isRecord(candidate)) return candidate;
+            const parsed = this.parseJsonMaybe(candidate);
+            if (this.isRecord(parsed)) return parsed;
+        }
+        return {};
+    }
+
     private normalizeRemoteHeaders(raw: unknown): Array<{ key: string; value: string }> {
         if (!Array.isArray(raw)) return [];
         const headers: Array<{ key: string; value: string }> = [];
@@ -618,6 +881,25 @@ export class AppFormioRendererService {
         const request = this.api.getRemoteSelect(payload)
             .then((response: unknown) => this.normalizeRemoteSelectResponse(response))
             .then((options: SelectValueOption[]) => { this.remoteSelectCache.set(cacheKey, options); return options; })
+            .finally(() => { this.remoteSelectInflight.delete(cacheKey); });
+        this.remoteSelectInflight.set(cacheKey, request);
+        return request;
+    }
+
+    private async fetchResourceSelectOptions(payload: { model: string; payload: ListRequestPayload }): Promise<SelectValueOption[]> {
+        const cacheKey = `resource:${this.stableStringify(payload)}`;
+        const cached = this.remoteSelectCache.get(cacheKey);
+        if (cached) return cached;
+        const inflight = this.remoteSelectInflight.get(cacheKey);
+        if (inflight) return inflight;
+        const options: SelectValueOption[] = [];
+        const request = this.api.streamList(payload.model, payload.payload, (item: unknown) => {
+            const option = this.toSelectValueOption(item);
+            if (option) options.push(option);
+        }, undefined, { stream: false }).then(() => {
+                this.remoteSelectCache.set(cacheKey, options);
+                return options;
+            })
             .finally(() => { this.remoteSelectInflight.delete(cacheKey); });
         this.remoteSelectInflight.set(cacheKey, request);
         return request;
@@ -662,10 +944,13 @@ export class AppFormioRendererService {
     private applyRemoteSelectValues(c: Record<string, unknown>, v: SelectValueOption[]): void {
         const currentData = this.isRecord(c['data']) ? c['data'] : {};
         const cleanedData: Record<string, unknown> = {};
-        Object.entries(currentData).forEach(([key, value]) => { if (key === 'url' || key === 'method' || key === 'headers' || key === 'selectValues') return; cleanedData[key] = value; });
+        Object.entries(currentData).forEach(([key, value]) => {
+            if (key === 'url' || key === 'method' || key === 'headers' || key === 'selectValues' || key === 'resource' || key === 'searchField' || key === 'searchDebounce') return;
+            cleanedData[key] = value;
+        });
         c['data'] = { ...cleanedData, values: v };
         c['dataSrc'] = 'values';
-        delete c['url']; delete c['method']; delete c['lazyLoad']; delete c['selectValues'];
+        delete c['url']; delete c['method']; delete c['lazyLoad']; delete c['selectValues']; delete c['resource']; delete c['searchField']; delete c['searchDebounce'];
         if (!c['valueProperty']) c['valueProperty'] = 'value';
     }
 
@@ -692,19 +977,11 @@ export class AppFormioRendererService {
     }
 
     private optionPrimitiveValue(value: unknown): unknown {
-        if (!this.isRecord(value)) return value;
-        const nested = this.isRecord(value['data']) ? value['data'] : null;
-        const primitive = value['value'] ?? value['id'] ?? value['_id'] ?? value['code'] ?? value['key'] ?? value['k'] ?? value['name'] ?? nested?.['value'] ?? nested?.['id'] ?? nested?.['_id'] ?? nested?.['code'] ?? nested?.['key'] ?? nested?.['k'] ?? nested?.['name'];
-        return primitive !== undefined ? primitive : value;
+        return selectOptionPrimitiveValue(value);
     }
 
     toSelectValueOption(e: unknown): SelectValueOption | null {
-        if (e == null) return null;
-        if (!this.isRecord(e)) return { label: this.toDisplayValue(e), value: e };
-        const nested = this.isRecord(e['data']) ? e['data'] : null;
-        const v = e['value'] ?? e['id'] ?? e['_id'] ?? e['code'] ?? e['key'] ?? e['k'] ?? e['name'] ?? e['rec_name'] ?? nested?.['value'] ?? nested?.['id'] ?? nested?.['_id'] ?? nested?.['code'] ?? nested?.['key'] ?? nested?.['k'] ?? nested?.['name'];
-        const l = e['label'] ?? e['title'] ?? e['name'] ?? e['description'] ?? e['v'] ?? nested?.['label'] ?? nested?.['title'] ?? nested?.['name'] ?? nested?.['description'] ?? nested?.['v'] ?? v;
-        return v !== undefined ? { label: this.toDisplayValue(l), value: v } : null;
+        return mapSelectValueOption(e);
     }
 
     private isEnvelopeNode(node: Record<string, unknown>): boolean {

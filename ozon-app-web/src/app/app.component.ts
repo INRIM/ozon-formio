@@ -2,24 +2,23 @@ import { Component, Inject, OnDestroy, OnInit, Optional, ViewChild } from '@angu
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { FormioComponent, FormioModule } from '@formio/angular';
-import { ButtonModule } from 'primeng/button';
 import { EditorModule } from 'primeng/editor';
 import { InputSwitchModule } from 'primeng/inputswitch';
-import { TableLazyLoadEvent, TableModule, TableRowReorderEvent } from 'primeng/table';
 import { FORMIO_BUILDER_EXTENSIONS, FormioBuilderExtension } from './formio/formio-builder-config';
 import { OzonFormBuilderHostComponent } from './formio/ozon-form-builder-host.component';
+import { RecordListComponent } from './list/record-list.component';
 import { AppThemeService } from './managers/app-theme.service';
 import { AppManagerService } from './managers/app-manager.service';
 import { AppTableManagerService } from './managers/app-table-manager.service';
 import { AppFormioRendererService } from './managers/app-formio-renderer.service';
 import { AppFormioBuilderService } from './managers/app-formio-builder.service';
 import { AppActionManagerService } from './managers/app-action-manager.service';
-import { MenuButton, MenuCard, MenuDrillDownGroup, TableColumn, TableRow } from './models/app.types';
+import { ContextAction, ListPageChange, ListSortChange, TableColumn, TableRow, MenuButton, MenuCard, MenuDrillDownGroup } from './models/app.types';
 
 @Component({
     selector: 'app-root',
     standalone: true,
-    imports: [CommonModule, FormsModule, FormioModule, TableModule, ButtonModule, InputSwitchModule, EditorModule, OzonFormBuilderHostComponent],
+    imports: [CommonModule, FormsModule, FormioModule, InputSwitchModule, EditorModule, OzonFormBuilderHostComponent, RecordListComponent],
     templateUrl: './app.component.html',
     styleUrl: './app.component.scss',
     providers: [AppThemeService, AppManagerService, AppTableManagerService, AppFormioRendererService, AppFormioBuilderService, AppActionManagerService]
@@ -27,6 +26,7 @@ import { MenuButton, MenuCard, MenuDrillDownGroup, TableColumn, TableRow } from 
 export class AppComponent implements OnInit, OnDestroy {
     @ViewChild(OzonFormBuilderHostComponent) activeBuilderHost?: OzonFormBuilderHostComponent;
     @ViewChild('formioViewer') formioViewer?: FormioComponent;
+    readonly formPlaceholderRows = [0, 1, 2, 3, 4];
 
     constructor(
         readonly theme: AppThemeService,
@@ -120,6 +120,8 @@ export class AppComponent implements OnInit, OnDestroy {
     }
     get canOpenRecord(): boolean { return this.actionManager.canOpenRecord; }
     get canOpenNewRecord(): boolean { return this.actionManager.canOpenNewRecord; }
+    get listContextActions() { return this.actionManager.listContextActions; }
+    get isLoadingRecords(): boolean { return this.tableManager.isLoadingRecords; }
 
     login(): void { this.actionManager.login(); }
     logout(): void { this.actionManager.logout(); }
@@ -132,6 +134,10 @@ export class AppComponent implements OnInit, OnDestroy {
     resolveBootstrapItaliaIconSrc(button: MenuButton): string { return this.actionManager.resolveBootstrapItaliaIconSrc(button); }
     async openRecordFromListSelection(): Promise<void> { return this.actionManager.openRecordFromListSelection(); }
     async openNewRecord(): Promise<void> { return this.actionManager.openNewRecord(); }
+    async onContextActionClick(action: ContextAction): Promise<void> {
+        const btn = this.actionManager.contextActionToMenuButtonPublic(action);
+        return this.actionManager.runTopMenuAction(btn);
+    }
     async retryServerError(): Promise<void> { return this.actionManager.retryServerError(); }
     async saveCurrentRecord(): Promise<void> { return this.actionManager.saveCurrentRecord(this.activeBuilderHost, this.formioViewer); }
     menuDrilldownGroups(card: MenuCard): MenuDrillDownGroup[] { return this.actionManager.menuDrilldownGroups(card); }
@@ -149,6 +155,7 @@ export class AppComponent implements OnInit, OnDestroy {
     get limit(): number { return this.tableManager.limit; }
     get primeSortField(): string { return this.tableManager.primeSortField; }
     get primeSortOrder(): number { return this.tableManager.primeSortOrder; }
+    get sortDirection() { return this.tableManager.sortDirection; }
     get streamCount(): number { return this.tableManager.streamCount; }
     get tableTotalRecords(): number { return this.tableManager.tableTotalRecords; }
     get pageSize(): number { return this.tableManager.pageSize; }
@@ -157,13 +164,20 @@ export class AppComponent implements OnInit, OnDestroy {
     get tableExtraColumnCount(): number { return this.tableManager.tableExtraColumnCount; }
     get showTableRowCopyAction(): boolean { return this.tableManager.showTableRowCopyAction; }
     get showTableRowRemoveAction(): boolean { return this.tableManager.showTableRowRemoveAction; }
+    readonly recordDisplayCell = (row: TableRow, field: string): string => this.tableManager.displayCell(row, field);
 
     displayCell(row: TableRow, field: string): string { return this.tableManager.displayCell(row, field); }
     trackRowBy(_index: number, row: TableRow): number { return row.__rowid; }
     trackColumnBy(_index: number, col: TableColumn): string { return col.field; }
 
-    onTableLazyLoad(event: TableLazyLoadEvent): void {
+    onTableLazyLoad(event: unknown): void {
         this.tableManager.onTableLazyLoad(event, preserve => this.actionManager.loadRecords(preserve));
+    }
+    onListPageChange(change: ListPageChange): void {
+        this.tableManager.onListPageChange(change, preserve => this.actionManager.loadRecords(preserve));
+    }
+    onListSortChange(change: ListSortChange): void {
+        this.tableManager.onListSortChange(change, preserve => this.actionManager.loadRecords(preserve));
     }
     onTableRowClick(row: TableRow, event: Event): void {
         this.tableManager.onTableRowClick(row, event, () => this.actionManager.rebuildMenus());
@@ -177,7 +191,7 @@ export class AppComponent implements OnInit, OnDestroy {
     onFilterChanged(): void {
         this.tableManager.onFilterChanged(() => { void this.actionManager.loadRecords(); });
     }
-    onRowReorder(event: TableRowReorderEvent): void {
+    onRowReorder(event: unknown): void {
         this.tableManager.onRowReorder(event, (m, e) => this.appManager.setStatus(m, e));
     }
     async onCopyRow(row: TableRow, event: Event): Promise<void> { return this.actionManager.onCopyRow(row, event); }
@@ -186,8 +200,18 @@ export class AppComponent implements OnInit, OnDestroy {
     // --- Fast Search ---
 
     get fastSearchEnabled(): boolean { return this.tableManager.fastSearchEnabled; }
+    get fastSearchLoading(): boolean { return this.tableManager.fastSearchLoading; }
     get fastSearchSchema(): Record<string, unknown> | null { return this.tableManager.fastSearchSchema; }
     get fastSearchSubmission(): { data: Record<string, unknown> } { return this.tableManager.fastSearchSubmission; }
+    get tableRenderLoading(): boolean { return this.tableManager.tableRenderLoading; }
+    get formioRenderOptions(): Record<string, unknown> { return this.appManager.formioRenderOptions; }
+    get formViewerLoading(): boolean { return this.renderer.formViewerLoading; }
+    get showFormViewerShell(): boolean {
+        return this.isFormPage
+            && !this.showFormBuilder
+            && !this.isFormEditorPage
+            && (this.formViewerLoading || Boolean(this.formSchema));
+    }
 
     async onFastSearchFormChange(event: unknown): Promise<void> {
         const shouldAutoSearch = await this.tableManager.applyFastSearchFormChange(event);
@@ -210,9 +234,15 @@ export class AppComponent implements OnInit, OnDestroy {
     // --- Formio Renderer ---
 
     get formSchema(): Record<string, unknown> | null { return this.renderer.formSchema; }
+    get formViewerTitle(): string {
+        return this.actionManager.dashboardTitle || 'Form Viewer';
+    }
     get formSubmission(): { data: Record<string, unknown> } | null { return this.renderer.formSubmission; }
     get viewerFormSubmission(): { data: Record<string, unknown> } | null {
         return this.renderer.formPreviewSubmission ?? this.renderer.formSubmission;
+    }
+    async onFormViewerReady(): Promise<void> {
+        return this.renderer.onFormViewerReady();
     }
     async onFormSubmissionChanged(event: unknown): Promise<void> {
         return this.renderer.onFormSubmissionChanged(event, (m, e) => this.appManager.setStatus(m, e));

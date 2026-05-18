@@ -4,6 +4,7 @@ import { AppComponent } from './app.component';
 import { OzonApiService } from './core/ozon-api.service';
 import { MainManagerService } from './core/main-manager.service';
 import { BackendAuthService } from './core/backend-auth.service';
+import { ListRequestPayload } from './models/ozon.types';
 
 const runtimeConfig = {
   backendUrl: '',
@@ -34,13 +35,19 @@ describe('AppComponent', () => {
       'getActionDashboard',
       'getAction',
       'getNextAction',
+      'getExportData',
+      'getSchemaModel',
+      'getResourceData',
       'postAction',
       'deleteAction',
       'getRecordSchema',
       'getRecord',
       'updateRecord',
+      'importData',
       'postActionPath',
       'getRemoteSelect',
+      'storeSearchQuery',
+      'persistFastSearchSession',
       'streamList',
       'filterFastSearch'
     ]);
@@ -53,13 +60,19 @@ describe('AppComponent', () => {
     apiMock.getActionDashboard.and.resolveTo({ mode: 'card', data: [] });
     apiMock.getAction.and.resolveTo({ mode: 'action', data: { status: 'ok' } });
     apiMock.getNextAction.and.resolveTo({ mode: 'action', data: { redirect: 'form_form_demo/rec-1' } });
+    apiMock.getExportData.and.resolveTo({ content: { data: [] } });
+    apiMock.getSchemaModel.and.resolveTo({ fields: ['rec_name'], schema: { properties: { rec_name: { type: 'string' } } } });
+    apiMock.getResourceData.and.resolveTo({ content: { data: [] } });
     apiMock.postAction.and.resolveTo({ mode: 'action', data: { status: 'ok' } });
     apiMock.deleteAction.and.resolveTo({ mode: 'action', data: { status: 'ok' } });
     apiMock.getRecordSchema.and.resolveTo({});
     apiMock.getRecord.and.resolveTo({ content: { data: { rec_name: 'r1' } } });
     apiMock.updateRecord.and.resolveTo({ content: { data: { rec_name: 'r1' } } });
+    apiMock.importData.and.resolveTo({ status: 'done', ok: 0 });
     apiMock.postActionPath.and.resolveTo({ mode: 'action', data: { status: 'ok' } });
     apiMock.getRemoteSelect.and.resolveTo([]);
+    apiMock.storeSearchQuery.and.resolveTo({ link: '#' });
+    apiMock.persistFastSearchSession.and.resolveTo({ content: { data: {} } });
     apiMock.streamList.and.resolveTo({
       result: {
         count: 0,
@@ -243,6 +256,9 @@ describe('AppComponent', () => {
     app.selectedModel = 'anagrafica';
 
     await app.actionManager.loadSchema();
+    expect(apiMock.getRemoteSelect).not.toHaveBeenCalled();
+    await app.onFormViewerReady();
+    await app.renderer.pendingHydrationPromise;
 
     expect(apiMock.getRemoteSelect).toHaveBeenCalledWith(
       jasmine.objectContaining({
@@ -263,9 +279,22 @@ describe('AppComponent', () => {
     const selectComponent = components[0];
     expect(selectComponent['dataSrc']).toBe('values');
     expect((selectComponent['data'] as Record<string, unknown>)['values']).toEqual([
-      { label: 'Italia', value: 'IT' },
-      { label: 'Francia', value: 'FR' }
+      jasmine.objectContaining({ label: 'Italia', value: 'IT', data: jasmine.objectContaining({ label: 'Italia', value: 'IT' }) }),
+      jasmine.objectContaining({ label: 'Francia', value: 'FR', data: jasmine.objectContaining({ label: 'Francia', value: 'FR' }) })
     ]);
+  });
+
+  it('should keep the form placeholder visible while the form viewer is mounting', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    app.appManager.viewMode = 'form';
+    app.renderer.formViewerLoading = true;
+    app.renderer.formSchema = { display: 'form', components: [] };
+
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.querySelector('.ozon-form-placeholder')).not.toBeNull();
+    expect(fixture.nativeElement.querySelector('formio')).not.toBeNull();
   });
 
   it('should preserve inline dataSrc values options without calling remote select endpoint', async () => {
@@ -334,6 +363,8 @@ describe('AppComponent', () => {
     await app.actionManager.loadSchema();
     app.tableManager.selectedRecordName = 'r1';
     await app.actionManager.openSelectedRecord();
+    await app.onFormViewerReady();
+    await app.renderer.pendingHydrationPromise;
 
     expect(apiMock.getRemoteSelect.calls.count()).toBe(1);
   });
@@ -360,6 +391,8 @@ describe('AppComponent', () => {
     app.selectedModel = 'ordine';
 
     await app.actionManager.loadSchema();
+    await app.onFormViewerReady();
+    await app.renderer.pendingHydrationPromise;
 
     expect(apiMock.getRemoteSelect).toHaveBeenCalledWith(
       jasmine.objectContaining({
@@ -376,6 +409,66 @@ describe('AppComponent', () => {
         })
       })
     );
+  });
+
+  it('should hydrate resource select values from streamed list endpoint', async () => {
+    apiMock.getRecordSchema.and.resolveTo({
+      components: [
+        {
+          type: 'select',
+          key: 'partner_id',
+          dataSrc: 'resource',
+          data: {
+            resource: 'res.partner'
+          }
+        }
+      ]
+    });
+    apiMock.streamList.and.callFake(async (model: string, payload: ListRequestPayload, onItem: (item: unknown) => void) => {
+      expect(model).toBe('res.partner');
+      expect(payload).toEqual(jasmine.objectContaining({
+        query: {},
+        skip: 0,
+        limit: 1000,
+        order: 'rec_name asc'
+      }));
+      onItem({ _id: '1', rec_name: 'Partner A' });
+      onItem({ _id: '2', rec_name: 'Partner B' });
+      return {
+        result: {
+          count: 2,
+          totalCount: 2,
+          contentType: 'application/x-ndjson',
+          order: '',
+          skip: '0',
+          limit: '1000',
+          columnsRaw: '',
+          columns: null
+        },
+        payloadLabel: 'default',
+        retries: 0
+      };
+    });
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    app.selectedModel = 'ordine';
+
+    await app.actionManager.loadSchema();
+    expect(apiMock.streamList).not.toHaveBeenCalled();
+    await app.onFormViewerReady();
+    await app.renderer.pendingHydrationPromise;
+
+    expect(apiMock.streamList).toHaveBeenCalledTimes(1);
+    expect(apiMock.streamList.calls.mostRecent().args[4]).toEqual({ stream: false });
+    const schema = app.formSchema as Record<string, unknown>;
+    const components = schema['components'] as Array<Record<string, unknown>>;
+    const selectComponent = components[0];
+    expect(selectComponent['dataSrc']).toBe('values');
+    expect((selectComponent['data'] as Record<string, unknown>)['values']).toEqual([
+      jasmine.objectContaining({ label: 'Partner A', value: '1', data: jasmine.objectContaining({ _id: '1', rec_name: 'Partner A' }) }),
+      jasmine.objectContaining({ label: 'Partner B', value: '2', data: jasmine.objectContaining({ _id: '2', rec_name: 'Partner B' }) })
+    ]);
   });
 
   it('should map remote select backend kv payload to label/value options', async () => {
@@ -405,13 +498,120 @@ describe('AppComponent', () => {
     app.selectedModel = 'ordine';
 
     await app.actionManager.loadSchema();
+    expect(apiMock.getRemoteSelect).not.toHaveBeenCalled();
+    await app.onFormViewerReady();
+    await app.renderer.pendingHydrationPromise;
 
     const schema = app.formSchema as Record<string, unknown>;
     const components = schema['components'] as Array<Record<string, unknown>>;
     const selectComponent = components[0];
     expect((selectComponent['data'] as Record<string, unknown>)['values']).toEqual([
-      { label: 'Fornitore A', value: 'SUP-1' },
-      { label: 'Fornitore B', value: 'SUP-2' }
+      jasmine.objectContaining({ label: 'Fornitore A', value: 'SUP-1', data: jasmine.objectContaining({ k: 'SUP-1', v: 'Fornitore A' }) }),
+      jasmine.objectContaining({ label: 'Fornitore B', value: 'SUP-2', data: jasmine.objectContaining({ k: 'SUP-2', v: 'Fornitore B' }) })
+    ]);
+  });
+
+  it('should preserve data_value payload for resource select templates', async () => {
+    apiMock.getRecordSchema.and.resolveTo({
+      components: [
+        {
+          type: 'select',
+          key: 'user_id',
+          dataSrc: 'resource',
+          data: {
+            resource: 'auth.user'
+          }
+        }
+      ]
+    });
+    apiMock.streamList.and.callFake(async (_model: string, _payload: ListRequestPayload, onItem: (item: unknown) => void) => {
+      onItem({
+        _id: '69f48d7c1eaec1bc77c2fcae',
+        rec_name: 'a.gerace',
+        data_value: {
+          _id: '69f59c48ebe70a3ba8c0ea7b',
+          rec_name: 'a.gerace'
+        }
+      });
+      return {
+        result: {
+          count: 1,
+          totalCount: 1,
+          contentType: 'application/x-ndjson',
+          order: '',
+          skip: '0',
+          limit: '1000',
+          columnsRaw: '',
+          columns: null
+        },
+        payloadLabel: 'default',
+        retries: 0
+      };
+    });
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    app.selectedModel = 'ordine';
+
+    await app.actionManager.loadSchema();
+    await app.onFormViewerReady();
+    await app.renderer.pendingHydrationPromise;
+
+    const schema = app.formSchema as Record<string, unknown>;
+    const components = schema['components'] as Array<Record<string, unknown>>;
+    const selectComponent = components[0];
+    expect((selectComponent['data'] as Record<string, unknown>)['values']).toEqual([
+      jasmine.objectContaining({
+        label: 'a.gerace',
+        value: '69f48d7c1eaec1bc77c2fcae',
+        data: jasmine.objectContaining({
+          rec_name: 'a.gerace',
+          data_value: jasmine.objectContaining({ rec_name: 'a.gerace' })
+        })
+      })
+    ]);
+  });
+
+  it('should defer record form remote select hydration until the viewer ready event', async () => {
+    apiMock.getRecordSchema.and.resolveTo({
+      components: [
+        {
+          type: 'select',
+          key: 'country',
+          properties: {
+            model: 'country',
+            src: 'url'
+          }
+        }
+      ]
+    });
+    apiMock.getRecord.and.resolveTo({
+      content: {
+        data: {
+          rec_name: 'REC-1',
+          country: 'IT'
+        }
+      }
+    });
+    apiMock.getRemoteSelect.and.resolveTo([{ label: 'Italia', value: 'IT' }]);
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    app.selectedModel = 'anagrafica';
+    app.tableManager.selectedRecordName = 'REC-1';
+
+    await app.actionManager.openSelectedRecord();
+
+    expect(apiMock.getRemoteSelect).not.toHaveBeenCalled();
+
+    await app.onFormViewerReady();
+    await app.renderer.pendingHydrationPromise;
+
+    expect(apiMock.getRemoteSelect).toHaveBeenCalledTimes(1);
+    const schema = app.formSchema as Record<string, unknown>;
+    const components = schema['components'] as Array<Record<string, unknown>>;
+    expect((components[0]['data'] as Record<string, unknown>)['values']).toEqual([
+      jasmine.objectContaining({ label: 'Italia', value: 'IT', data: jasmine.objectContaining({ label: 'Italia', value: 'IT' }) })
     ]);
   });
 
@@ -1158,6 +1358,104 @@ describe('AppComponent', () => {
     expect(app.statusText).toContain('Compila i campi obbligatori');
   });
 
+  it('should show Aggiorna and Abbandona when form config enables cancel button', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.appManager.viewMode = 'form';
+    app.appManager.selectedModel = 'ordine';
+    app.actionManager.currentActionName = 'list_ordini';
+    app.tableManager.selectedRecordName = 'ORD-1';
+    app.renderer.formSchema = {
+      display: 'form',
+      no_cancel: '0',
+      no_submit: '0',
+      components: []
+    };
+    app.renderer.rawFormSchema = app.renderer.formSchema;
+    app.renderer.formSubmission = { data: { rec_name: 'ORD-1' } };
+
+    const labels = app.currentFormActionButtons.map((button: any) => button.label);
+
+    expect(labels).toContain('Aggiorna');
+    expect(labels).toContain('Abbandona');
+  });
+
+  it('should hide submit and keep Abbandona when no_submit is enabled', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.appManager.viewMode = 'form';
+    app.appManager.selectedModel = 'ordine';
+    app.actionManager.currentActionName = 'list_ordini';
+    app.renderer.formSchema = {
+      display: 'form',
+      no_cancel: '0',
+      no_submit: '1',
+      components: []
+    };
+    app.renderer.rawFormSchema = app.renderer.formSchema;
+    app.renderer.formSubmission = { data: { rec_name: 'NEW-1' } };
+
+    const labels = app.currentFormActionButtons.map((button: any) => button.label);
+
+    expect(labels).not.toContain('Salva');
+    expect(labels).not.toContain('Aggiorna');
+    expect(labels).toContain('Abbandona');
+  });
+
+  it('should keep one save button and hide Preview/EditForm actions in the form editor', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.appManager.viewMode = 'form';
+    app.appManager.selectedModel = 'component';
+    app.tableManager.selectedRecordName = 'FORM-1';
+    app.renderer.formSchema = { display: 'form', components: [] };
+    app.renderer.formSubmission = { data: { rec_name: 'FORM-1' } };
+    app.actionManager.contextActions = [
+      {
+        rec_name: 'save',
+        action_type: 'save',
+        label: 'Salva',
+        button_icon: 'pi pi-save',
+        modal: false,
+        context_button_mode: ['form'],
+        url_action: '/action/save_component'
+      },
+      {
+        rec_name: 'update',
+        action_type: 'post',
+        label: 'Aggiorna',
+        button_icon: 'pi pi-save',
+        modal: false,
+        context_button_mode: ['form'],
+        url_action: '/action/update_component'
+      },
+      {
+        rec_name: 'preview',
+        action_type: 'window',
+        label: 'Preview',
+        button_icon: 'pi pi-eye',
+        modal: false,
+        context_button_mode: ['form'],
+        url_action: '/action/preview_component'
+      },
+      {
+        rec_name: 'edit_form',
+        action_type: 'window',
+        label: 'EditForm',
+        button_icon: 'pi pi-pencil',
+        modal: false,
+        context_button_mode: ['form'],
+        url_action: '/action/edit_form_component'
+      }
+    ];
+
+    const buttons = app.formEditorActionButtons;
+
+    expect(buttons.map((button: any) => button.label)).toEqual(['Aggiorna']);
+    expect(buttons[0].action_type).toBe('save');
+    expect(buttons[0].url_action).toBe('');
+  });
+
   it('should load dashboard cards only from mode card payload', async () => {
     apiMock.getActionDashboard.and.resolveTo({
       mode: 'card',
@@ -1408,7 +1706,9 @@ describe('AppComponent', () => {
     const components = schema['components'] as Array<Record<string, unknown>>;
     const targetSelect = components.find(component => component['key'] === 'fornitore') as Record<string, unknown>;
     expect(targetSelect['dataSrc']).toBe('values');
-    expect((targetSelect['data'] as Record<string, unknown>)['values']).toEqual([{ label: 'Vendor 1', value: 'V1' }]);
+    expect((targetSelect['data'] as Record<string, unknown>)['values']).toEqual([
+      jasmine.objectContaining({ label: 'Vendor 1', value: 'V1', data: jasmine.objectContaining({ label: 'Vendor 1', value: 'V1' }) })
+    ]);
   });
 
   it('should keep existing submission fields when form change event is partial', async () => {
@@ -1473,6 +1773,34 @@ describe('AppComponent', () => {
     expect(query).toEqual({ stato: 'APERTO' });
   });
 
+  it('should reconstruct import and export tools from list permissions when toolbar schema is absent', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.actionManager.currentActionName = 'list_component';
+
+    await app.actionManager.applyActionResponse({
+      mode: 'list',
+      model: 'component',
+      can_create: true,
+      editable: true,
+      columns: [['rec_name', 'Record']],
+      total_count: 1,
+      data: {
+        items: [{ rec_name: 'rec-1' }]
+      }
+    });
+
+    expect(app.tableManager.listExportConfig.visible).toBeTrue();
+    expect(app.tableManager.listExportConfig.model).toBe('component');
+    expect(app.tableManager.listImportConfig.visible).toBeTrue();
+    expect(app.tableManager.listImportConfig.model).toBe('component');
+    expect(app.tableManager.listSearchSessionContext).toEqual(jasmine.objectContaining({
+      dataModel: 'component',
+      searchModel: 'component',
+      actionName: 'list_component'
+    }));
+  });
+
   it('should not remove row when table remove action is not enabled', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
@@ -1523,6 +1851,51 @@ describe('AppComponent', () => {
     );
 
     expect(app.appManager.currentUserName).toBe('Mario Rossi');
+  });
+
+  it('should expose session user and admin flag in Formio evalContext for component jsonLogic', async () => {
+    apiMock.getSession.and.resolveTo({
+      content: {
+        data: {
+          is_admin: true,
+          user: {
+            full_name: 'Mario Rossi',
+            user: {
+              uid: 'mrossi',
+              divisione_code: 'SIR',
+              allowed_users: ['mrossi', 'admin']
+            }
+          }
+        }
+      }
+    });
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+
+    await app.appManager.loadSession();
+
+    expect(app.formioRenderOptions).toEqual(jasmine.objectContaining({
+      evalContext: jasmine.objectContaining({
+        is_admin: true,
+        user: jasmine.objectContaining({
+          uid: 'mrossi',
+          divisione_code: 'SIR',
+          allowed_users: ['mrossi', 'admin'],
+          is_admin: true
+        }),
+        session: jasmine.objectContaining({
+          is_admin: true,
+          user: jasmine.objectContaining({
+            full_name: 'Mario Rossi',
+            user: jasmine.objectContaining({
+              uid: 'mrossi',
+              divisione_code: 'SIR'
+            })
+          })
+        })
+      })
+    }));
   });
 
   it('should use locale and timezone from session when rendering datetime table cells', async () => {
@@ -1971,8 +2344,65 @@ describe('AppComponent', () => {
       ]
     });
 
+    await app.tableManager.warmTableCellRenderers(app.tableManager.allRows);
     expect(apiMock.getRemoteSelect).toHaveBeenCalled();
     expect(app.displayCell(app.tableRows[0], 'country')).toBe('Italia');
+  });
+
+  it('should fallback to model schema to render select labels in action lists without inline schema', async () => {
+    apiMock.getRecordSchema.and.resolveTo({
+      components: [
+        {
+          type: 'select',
+          key: 'classificazione',
+          data: {
+            values: [
+              { label: 'Personale tecnico', value: 'personale_tecnico' },
+              { label: 'Personale amministrativo', value: 'personale_amministrativo' }
+            ]
+          }
+        },
+        {
+          type: 'select',
+          key: 'ruoli_sicurezza',
+          multiple: true,
+          data: {
+            values: [
+              { label: 'Antincendio', value: 'anti_incendio' },
+              { label: 'Emergenza sanitaria', value: 'emergenza_sanitaria' },
+              { label: 'Emergenza', value: 'emergenza' }
+            ]
+          }
+        }
+      ]
+    });
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+
+    await app.actionManager.applyActionResponse({
+      mode: 'list',
+      model: 'anagrafica',
+      columns: [
+        ['ruoli_sicurezza', 'Ruoli Sicurezza'],
+        ['classificazione', 'Classificazione']
+      ],
+      total_count: 1,
+      data: [
+        {
+          rec_name: 'ANA-1',
+          classificazione: 'personale_tecnico',
+          ruoli_sicurezza: ['anti_incendio', 'emergenza_sanitaria', 'emergenza']
+        }
+      ]
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(apiMock.getRecordSchema).toHaveBeenCalledWith('anagrafica');
+    expect(app.displayCell(app.tableRows[0], 'classificazione')).toBe('Personale tecnico');
+    expect(app.displayCell(app.tableRows[0], 'ruoli_sicurezza')).toBe('Antincendio, Emergenza sanitaria, Emergenza');
   });
 
   it('should render select labels in list table when schema is nested in data envelope', async () => {
@@ -2134,18 +2564,10 @@ describe('AppComponent', () => {
     expect(apiMock.streamList).toHaveBeenCalled();
   });
 
-  it('should combine table search text with server-side query payload', async () => {
+  it('should ignore deprecated table filter text when building server-side query payload', async () => {
     apiMock.streamList.and.callFake(async (_model, payload, _onItem, _onMeta) => {
       expect(payload.query).toEqual({
-        $and: [
-          { stato: 'APERTO' },
-          {
-            $or: [
-              { rec_name: { $regex: 'alpha', $options: 'i' } },
-              { titolo: { $regex: 'alpha', $options: 'i' } }
-            ]
-          }
-        ]
+        stato: 'APERTO'
       });
       return {
         result: {
@@ -2228,6 +2650,165 @@ describe('AppComponent', () => {
     }));
   });
 
+  it('should bootstrap action list load when action response has no inline rows payload', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+
+    apiMock.getAction.and.resolveTo({
+      mode: 'list',
+      model: 'customer',
+      fields: { action_name: 'list_customers' },
+      columns: [['rec_name', 'Record']],
+      total_count: 1,
+      data: [{ rec_name: 'CUST-1' }]
+    });
+
+    await app.actionManager.applyActionResponse({
+      mode: 'list',
+      model: 'customer',
+      fields: { action_name: 'list_customers' },
+      columns: [['rec_name', 'Record']],
+      total_count: 0,
+      data: { meta: true }
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(apiMock.getAction).toHaveBeenCalledWith('list_customers', jasmine.objectContaining({
+      query: {},
+      skip: 0,
+      limit: 20
+    }));
+    expect(app.tableRows.length).toBe(1);
+    expect(app.tableRows[0].__rec_name).toBe('CUST-1');
+  });
+
+  it('should prime action list route with limit 1 before loading table data', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+
+    apiMock.getAction.calls.reset();
+    apiMock.getAction.and.callFake(async (_name: string, options: any) => {
+      if (options.limit === 1) {
+        return {
+          mode: 'list',
+          model: 'customer',
+          fields: { action_name: 'list_customers' },
+          columns: [['rec_name', 'Record']],
+          total_count: 2,
+          data: [{ rec_name: 'PRIME-ROW' }]
+        };
+      }
+      if (options.limit === 20) {
+        return {
+          mode: 'list',
+          model: 'customer',
+          fields: { action_name: 'list_customers' },
+          columns: [['rec_name', 'Record']],
+          total_count: 2,
+          data: [{ rec_name: 'CUST-1' }, { rec_name: 'CUST-2' }]
+        };
+      }
+      throw new Error(`Unexpected limit ${options.limit}`);
+    });
+
+    await app.actionManager['runActionRoute']('/action/list_customers');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(apiMock.getAction.calls.argsFor(0)).toEqual([
+      'list_customers',
+      jasmine.objectContaining({
+        recName: '',
+        query: {},
+        skip: 0,
+        limit: 1
+      })
+    ]);
+    expect(apiMock.getAction.calls.argsFor(1)).toEqual([
+      'list_customers',
+      jasmine.objectContaining({
+        query: {},
+        skip: 0,
+        limit: 20
+      })
+    ]);
+    expect(app.viewMode).toBe('list');
+    expect(app.tableRows.map((row: any) => row.__rec_name)).toEqual(['CUST-1', 'CUST-2']);
+  });
+
+  it('should not bootstrap action list load when action response already includes inline rows payload', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+
+    apiMock.getAction.calls.reset();
+
+    await app.actionManager.applyActionResponse({
+      mode: 'list',
+      model: 'customer',
+      fields: { action_name: 'list_customers' },
+      columns: [['rec_name', 'Record']],
+      total_count: 1,
+      data: [{ rec_name: 'CUST-1' }]
+    });
+
+    expect(apiMock.getAction).not.toHaveBeenCalled();
+    expect(app.tableRows.length).toBe(1);
+    expect(app.tableRows[0].__rec_name).toBe('CUST-1');
+  });
+
+  it('should open inline action lists without waiting for fast search and table renderer warmup', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    const pendingWarmup = new Promise<void>(() => undefined);
+
+    spyOn(app.actionManager, 'applyFastSearchConfig').and.returnValue(pendingWarmup);
+    const tableWarmupSpy = spyOn(app.tableManager, 'warmTableCellRenderers').and.returnValue(pendingWarmup);
+
+    await app.actionManager.applyActionResponse({
+      mode: 'list',
+      model: 'customer',
+      fields: {
+        action_name: 'list_customers',
+        fast_search: {
+          schema: {
+            components: []
+          }
+        }
+      },
+      schema: {
+        components: []
+      },
+      columns: [['rec_name', 'Record']],
+      total_count: 1,
+      data: [{ rec_name: 'CUST-1' }]
+    });
+
+    expect(app.viewMode).toBe('list');
+    expect(app.tableRows.length).toBe(1);
+    expect(tableWarmupSpy).toHaveBeenCalled();
+  });
+
+  it('should resolve list navigation without waiting for background record bootstrap', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    const pendingLoad = new Promise<void>(() => undefined);
+
+    spyOn(app.actionManager, 'loadRecords').and.returnValue(pendingLoad);
+
+    await app.actionManager.applyActionResponse({
+      mode: 'list',
+      model: 'customer',
+      fields: { action_name: 'list_customers' },
+      columns: [['rec_name', 'Record']],
+      total_count: 0,
+      data: { meta: true }
+    });
+
+    expect(app.viewMode).toBe('list');
+    expect(app.actionManager.loadRecords).toHaveBeenCalledWith(true);
+  });
+
   it('should hydrate remote select options for fast search schema', async () => {
     apiMock.getRemoteSelect.and.resolveTo([{ label: 'Documento', value: 'documento' }]);
 
@@ -2263,7 +2844,41 @@ describe('AppComponent', () => {
     const components = schema['components'] as Array<Record<string, unknown>>;
     const select = components.find(component => component['key'] === 'model') as Record<string, unknown>;
     expect(select['dataSrc']).toBe('values');
-    expect((select['data'] as Record<string, unknown>)['values']).toEqual([{ label: 'Documento', value: 'documento' }]);
+    expect((select['data'] as Record<string, unknown>)['values']).toEqual([
+      jasmine.objectContaining({ label: 'Documento', value: 'documento', data: jasmine.objectContaining({ label: 'Documento', value: 'documento' }) })
+    ]);
+  });
+
+  it('should use fast search form model for remote select payloads when provided', async () => {
+    apiMock.getRemoteSelect.and.resolveTo([{ label: 'Documento', value: 'documento' }]);
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.appManager.selectedModel = 'action';
+    app.tableManager.selectedModel = 'action';
+
+    await app.tableManager.setFastSearchConfig('list_actions', {
+      display: 'form',
+      components: [
+        {
+          type: 'select',
+          key: 'user_function',
+          label: 'User Function',
+          properties: { src: 'url', model: 'ir.model' }
+        }
+      ]
+    }, 'fast_search_action');
+
+    expect(apiMock.getRemoteSelect).toHaveBeenCalledWith(
+      jasmine.objectContaining({
+        key: 'user_function',
+        curr_model: 'fast_search_action',
+        properties: jasmine.objectContaining({
+          src: 'url',
+          model: 'ir.model'
+        })
+      })
+    );
   });
 
   it('should merge partial fast search change events instead of overwriting filters', async () => {
@@ -2553,5 +3168,50 @@ describe('AppComponent', () => {
     const components = schema['components'] as Array<Record<string, unknown>>;
     expect(components.length).toBe(1);
     expect(components[0]['key']).toBe('nome');
+  });
+
+  it('should open the form without waiting for list renderers or builder warmup', async () => {
+    apiMock.getRecord.and.resolveTo({
+      content: {
+        schema: [
+          {
+            type: 'textfield',
+            key: 'title',
+            input: true
+          }
+        ],
+        data: {
+          rec_name: 'cmp-1',
+          data_model: 'res.partner',
+          title: 'Demo'
+        }
+      }
+    });
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    app.appManager.isAdminUser = true;
+    app.appManager.setBuilderEnabled(true, false);
+    app.appManager.selectedModel = 'component';
+    app.tableManager.selectedModel = 'component';
+    app.renderer.selectedModel = 'component';
+    app.tableManager.selectedRecordName = 'cmp-1';
+
+    const pendingWarmup = new Promise<void>(() => undefined);
+    const tableRefreshSpy = spyOn(app.tableManager, 'refreshTableCellRenderers').and.resolveTo();
+    const builderRefreshSpy = spyOn(app.builder, 'refreshFormBuilderConfigForCurrentForm').and.returnValue(pendingWarmup);
+
+    await app.actionManager.openSelectedRecord();
+
+    expect(app.viewMode).toBe('form');
+    expect(tableRefreshSpy).not.toHaveBeenCalled();
+    expect(builderRefreshSpy).toHaveBeenCalled();
+    expect(app.formSubmission).toEqual({
+      data: jasmine.objectContaining({
+        rec_name: 'cmp-1',
+        data_model: 'res.partner',
+        title: 'Demo'
+      })
+    });
   });
 });

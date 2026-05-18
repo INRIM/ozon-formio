@@ -103,6 +103,7 @@ export class AppFormioBuilderService {
 
     onBuilderSwitchChanged(enabled: boolean): void {
         this.setBuilderEnabled(enabled, true);
+        if (enabled) this.warmFormBuilderConfig();
     }
 
     setBuilderEnabled(enabled: boolean, persist: boolean): void {
@@ -154,6 +155,7 @@ export class AppFormioBuilderService {
 
     openFormEditorInline(): void {
         if (!this.builderEligibleCurrentForm) return;
+        this.warmFormBuilderConfig();
         this.formPreviewSubmission = null;
         this.formEditorExplicitlyOpened = true;
         this.formEditorActiveTab = 'builder';
@@ -263,6 +265,11 @@ export class AppFormioBuilderService {
         const parentModelComponents = await this.loadParentModelBuilderComponents(parentModel);
         if (revision !== this.builderPaletteRevision) return;
         this.applyFormBuilderConfig(parentModelComponents, true);
+    }
+
+    warmFormBuilderConfig(): void {
+        if (!this.appManager.isAdminUser || !this.builderEnabled || !this.builderEligibleCurrentForm) return;
+        void this.refreshFormBuilderConfigForCurrentForm();
     }
 
     applyFormBuilderConfig(parentModelComponents: Record<string, unknown> | null, rebuild = false): void {

@@ -376,6 +376,49 @@ body {
   min-width: 640px;
 }
 
+/* =========================================================
+   Form.io viewer fallbacks
+   - readonly select rendered by Choices.js
+   - explicit outline buttons with conflicting Form.io theme
+   ========================================================= */
+.formio-form .ozon-select-readonly {
+  pointer-events: none;
+}
+
+.formio-form .ozon-select-readonly .choices__input,
+.formio-form .ozon-select-readonly .choices__input--cloned,
+.formio-form .ozon-select-readonly .choices__button {
+  display: none !important;
+}
+
+.formio-form .ozon-select-readonly .choices__inner {
+  padding-bottom: 0.35rem !important;
+}
+
+.formio-form .ozon-select-readonly .choices__list--single {
+  padding-right: 0.5rem !important;
+}
+
+.formio-form .ozon-select-readonly .choices__list--multiple .choices__item {
+  padding-right: 0.65rem !important;
+}
+
+.formio-form .btn.btn-warning.ozon-btn-custom-outline,
+.formio-form button.btn.btn-warning.ozon-btn-custom-outline {
+  background: transparent !important;
+  color: var(--ozon-accent) !important;
+  border-color: var(--ozon-accent) !important;
+}
+
+.formio-form .btn.btn-warning.ozon-btn-custom-outline:hover,
+.formio-form .btn.btn-warning.ozon-btn-custom-outline:focus,
+.formio-form button.btn.btn-warning.ozon-btn-custom-outline:hover,
+.formio-form button.btn.btn-warning.ozon-btn-custom-outline:focus {
+  background: rgba(0, 83, 166, 0.08) !important;
+  color: var(--ozon-accent) !important;
+  border-color: var(--ozon-accent) !important;
+}
+
 :root[data-theme='dark'] .card {
   background-color: var(--ozon-surface);
   border-color: var(--ozon-border);
@@ -385,6 +428,17 @@ body {
 :root[data-theme='dark'] .card-header {
   background-color: var(--ozon-surface-soft);
   border-color: var(--ozon-border);
+}
+
+.card-header.ozon-form-viewer-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background-color: var(--bs-body-bg, #fff);
+}
+
+:root[data-theme='dark'] .card-header.ozon-form-viewer-header {
+  background-color: var(--ozon-surface-soft);
 }
 
 :root[data-theme='dark'] .form-control,
@@ -652,5 +706,21 @@ body {
     color: #0f1723;
     background-color: #9fc8ef;
     border-color: #9fc8ef;
+  }
+
+  .formio-form .btn.btn-warning.ozon-btn-custom-outline,
+  .formio-form button.btn.btn-warning.ozon-btn-custom-outline {
+    background: transparent !important;
+    color: #d9e7f6 !important;
+    border-color: #7daedc !important;
+  }
+
+  .formio-form .btn.btn-warning.ozon-btn-custom-outline:hover,
+  .formio-form .btn.btn-warning.ozon-btn-custom-outline:focus,
+  .formio-form button.btn.btn-warning.ozon-btn-custom-outline:hover,
+  .formio-form button.btn.btn-warning.ozon-btn-custom-outline:focus {
+    color: #0f1723 !important;
+    background-color: #9fc8ef !important;
+    border-color: #9fc8ef !important;
   }
 }

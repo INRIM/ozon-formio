@@ -42,6 +42,9 @@ export class AppManagerService {
     sessionLocale = 'it';
     sessionTimezone = '';
     sessionAppSettings: Record<string, unknown> = {};
+    sessionUser: Record<string, unknown> = {};
+    sessionRecord: Record<string, unknown> = {};
+    formioRenderOptions: Record<string, unknown> = { evalContext: { user: {}, is_admin: false, session: { user: {} } } };
     userNameSource: 'default' | 'session' | 'layout' = 'default';
     initialBuilderPreference = false;
 
@@ -119,6 +122,9 @@ export class AppManagerService {
             this.isAdminUser = this.resolveSessionAdminFlag(session);
             this.builderFeatureEnabled = this.isAdminUser;
             this.sessionAppSettings = this.extractSessionSettings(session);
+            this.sessionRecord = { ...session };
+            this.sessionUser = this.buildSessionUserContext(session);
+            this.refreshFormioRenderOptions();
             this.applySessionSettings(this.sessionAppSettings);
             this.setBuilderEnabled(this.initialBuilderPreference, false);
         } catch {
@@ -126,6 +132,9 @@ export class AppManagerService {
             this.sessionTimezone = '';
             this.isAdminUser = false;
             this.builderFeatureEnabled = false;
+            this.sessionUser = {};
+            this.sessionRecord = {};
+            this.refreshFormioRenderOptions();
             this.setBuilderEnabled(false, false);
         }
     }
@@ -170,6 +179,9 @@ export class AppManagerService {
         this.sessionTimezone = '';
         this.isAdminUser = false;
         this.builderFeatureEnabled = false;
+        this.sessionUser = {};
+        this.sessionRecord = {};
+        this.refreshFormioRenderOptions();
         this.userNameSource = 'default';
         this.viewMode = 'dashboard';
         this.actionMenuIntegrated = false;
@@ -415,6 +427,36 @@ export class AppManagerService {
         const settings = this.isRecord(app['settings']) ? app['settings'] : {};
         const settingsDataValue = this.isRecord(settings['data_value']) ? settings['data_value'] : {};
         return { ...settings, ...settingsDataValue };
+    }
+
+    private buildSessionUserContext(session: Record<string, unknown>): Record<string, unknown> {
+        const sessionUser = this.isRecord(session['user']) ? session['user'] : {};
+        const nestedUser = this.isRecord(sessionUser['user']) ? sessionUser['user'] : null;
+        const user = nestedUser ? { ...nestedUser } : { ...sessionUser };
+        const promotedKeys = [
+            'uid', 'user_name', 'username', 'name', 'full_name', 'display_name',
+            'divisione_code', 'allowed_users', 'groups', 'avatar',
+            'locale', 'lang', 'language', 'user_locale',
+            'tz', 'timezone'
+        ];
+        for (const key of promotedKeys) {
+            if (Object.prototype.hasOwnProperty.call(user, key)) continue;
+            if (Object.prototype.hasOwnProperty.call(sessionUser, key)) {
+                user[key] = sessionUser[key];
+                continue;
+            }
+            if (!Object.prototype.hasOwnProperty.call(session, key)) continue;
+            user[key] = session[key];
+        }
+        return user;
+    }
+
+    private refreshFormioRenderOptions(): void {
+        const user = { ...this.sessionUser };
+        if (!Object.prototype.hasOwnProperty.call(user, 'is_admin')) user['is_admin'] = this.isAdminUser;
+        const session: Record<string, unknown> = { ...this.sessionRecord };
+        if (!Object.prototype.hasOwnProperty.call(session, 'is_admin')) session['is_admin'] = this.isAdminUser;
+        this.formioRenderOptions = { evalContext: { user, is_admin: this.isAdminUser, session } };
     }
 
     private scoreSessionRecord(record: Record<string, unknown>): number {

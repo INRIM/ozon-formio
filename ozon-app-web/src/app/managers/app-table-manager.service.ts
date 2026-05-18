@@ -1,9 +1,12 @@
 import { Injectable } from '@angular/core';
-import { TableLazyLoadEvent, TableRowReorderEvent } from 'primeng/table';
+import jsonLogic from 'json-logic-js';
 import { OzonApiService } from '../core/ozon-api.service';
+import { selectOptionPrimitiveValue, toSelectValueOption as mapSelectValueOption } from '../core/select-option.util';
 import {
-    TableColumn, TableRow, SelectValueOption,
-    QueryBuilderConfig, QueryBuilderFieldConfig, QueryMode, RuleSet, Rule
+    ListPageChange, ListSortChange, ListRowReorderChange,
+    TableColumn, TableRow, SelectValueOption, TableSortDirection,
+    QueryBuilderConfig, QueryBuilderFieldConfig, QueryMode, RuleSet, Rule,
+    ListExportConfig, ListImportConfig, ListSearchSessionContext
 } from '../models/app.types';
 import { FastSearchPayload, ListRequestPayload, RemoteSelectRequestPayload } from '../models/ozon.types';
 
@@ -58,6 +61,28 @@ export class AppTableManagerService {
 
     rawFormSchema: Record<string, unknown> | null = null;
     rawFormSchemaModel = '';
+    listExportConfig: ListExportConfig = {
+        visible: false,
+        model: '',
+        searchModel: '',
+        parent: '',
+        hideAll: true,
+        xlsFilteredLabel: 'XLS',
+        csvFilteredLabel: 'CSV',
+        jsonFilteredLabel: 'JSON'
+    };
+    listImportConfig: ListImportConfig = {
+        visible: false,
+        model: '',
+        title: 'Import Data'
+    };
+    private listActionName = '';
+    private listSearchModel = '';
+    private fastSearchFormModel = '';
+    private fastSearchConfigRevision = 0;
+    private tableCellRendererRevision = 0;
+    fastSearchLoading = false;
+    tableRenderLoading = false;
 
     fastSearchEnabled = false;
     fastSearchActive = false;
@@ -66,6 +91,7 @@ export class AppTableManagerService {
     fastSearchActionName = '';
     private fastSearchQueryFields: Record<string, unknown>[] = [];
     private isRefreshingFastSearchDependentSelects = false;
+    private readonly fastSearchStoragePrefix = 'ozon.fs.';
 
     sessionLocale = 'it';
     sessionTimezone = '';
@@ -98,6 +124,30 @@ export class AppTableManagerService {
     get showTableRowRemoveAction(): boolean { return this.tableCalledInsideForm && this.tableRemoveEnabled; }
     get tableActionColumnCount(): number { return Number(this.showTableRowCopyAction) + Number(this.showTableRowRemoveAction); }
     get tableExtraColumnCount(): number { return 2 + this.tableActionColumnCount; }
+    get sortDirection(): TableSortDirection { return this.primeSortOrder === -1 ? 'desc' : 'asc'; }
+    get listSearchSessionContext(): ListSearchSessionContext | null {
+        const searchModel = this.readFirstString(this.listSearchModel, this.listExportConfig.searchModel, this.selectedModel);
+        if (!searchModel) return null;
+        const baseQuery = this.listQuerySeed ? this.cloneSchema(this.listQuerySeed) : {};
+        const currentQuery = this.parseQueryInput((_message, _error) => undefined) ?? baseQuery;
+        const submissionData = this.fastSearchSubmission?.data && this.isRecord(this.fastSearchSubmission.data)
+            ? this.cloneSchema(this.fastSearchSubmission.data)
+            : {};
+        return {
+            searchModel,
+            dataModel: this.selectedModel,
+            actionName: this.listActionName,
+            baseQuery,
+            currentQuery: this.isRecord(currentQuery) ? this.cloneSchema(currentQuery) : baseQuery,
+            order: this.order,
+            totalCount: Math.max(0, Number(this.tableTotalRecords) || 0),
+            fastSearchActive: this.fastSearchActive,
+            fastSearchFormModel: this.fastSearchFormModel,
+            fastSearchDataModel: this.selectedModel,
+            fastSearchQueryFields: this.fastSearchActive ? this.buildFastSearchQueryFields() : [],
+            fastSearchFormData: submissionData
+        };
+    }
 
     trackRowBy(_index: number, row: TableRow): number { return row.__rowid; }
     trackColumnBy(_index: number, column: TableColumn): string { return column.field; }
@@ -135,34 +185,43 @@ export class AppTableManagerService {
     computeCurrentPageIndex(): number { return Math.floor((this.skip || 0) / this.getPageSize()); }
     getPageSize(): number { return Number(this.limit) || 20; }
 
-    onTableLazyLoad(event: TableLazyLoadEvent, loadRecordsFn: (preserve: boolean) => Promise<void>): void {
-        const previousSkip = this.skip;
-        const previousLimit = this.limit;
-        const previousOrder = this.order;
+    onTableLazyLoad(event: unknown, loadRecordsFn: (preserve: boolean) => Promise<void>): void {
+        const parsed = this.parseLazyLoadEvent(event);
+        if (!parsed) return;
+        this.applyViewportQueryChange(parsed, loadRecordsFn);
+    }
 
-        const first = Number(event.first ?? this.skip);
-        const rows = Number(event.rows ?? this.limit);
+    onListPageChange(change: ListPageChange, loadRecordsFn: (preserve: boolean) => Promise<void>): void {
+        const pageIndex = Number(change.pageIndex);
+        const pageSize = Number(change.pageSize);
+        if (!Number.isFinite(pageIndex) || pageIndex < 0 || !Number.isFinite(pageSize) || pageSize <= 0) return;
+        this.applyViewportQueryChange({
+            skip: pageIndex * pageSize,
+            limit: pageSize,
+            order: this.order
+        }, loadRecordsFn);
+    }
 
-        if (Number.isFinite(first) && first >= 0) this.skip = first;
-        if (Number.isFinite(rows) && rows > 0) this.limit = rows;
-
-        this.currentPageIndex = this.computeCurrentPageIndex();
-        this.syncOrderFromLazyEvent(event);
-
-        const hasQueryChange = this.skip !== previousSkip || this.limit !== previousLimit || this.order !== previousOrder;
-        if (!this.selectedModel || !hasQueryChange || this.isLoadingRecords) return;
-        void loadRecordsFn(true);
+    onListSortChange(change: ListSortChange, loadRecordsFn: (preserve: boolean) => Promise<void>): void {
+        const field = this.normalizeSortField(change.field);
+        if (!field) return;
+        const direction: TableSortDirection = change.direction === 'desc' ? 'desc' : 'asc';
+        this.applyViewportQueryChange({
+            skip: 0,
+            limit: this.limit,
+            order: this.buildOrderValue(field, direction)
+        }, loadRecordsFn);
     }
 
     onTableRowClick(row: TableRow, event: Event, rebuildMenusFn: () => void): void {
-        if ((event.target as HTMLElement | null)?.closest('button, .p-checkbox, .pi-bars')) return;
+        if (this.isIgnoredRowInteractionTarget(event)) return;
         this.selectedRecordName = String(row.__rec_name ?? '');
         this.selectedRows = [row];
         rebuildMenusFn();
     }
 
     async onTableRowDblClick(row: TableRow, event: Event, rebuildMenusFn: () => void, openRecordFn: () => Promise<void>): Promise<void> {
-        if ((event.target as HTMLElement | null)?.closest('button, .p-checkbox, .pi-bars')) return;
+        if (this.isIgnoredRowInteractionTarget(event)) return;
         this.selectedRecordName = String(row.__rec_name ?? '');
         this.selectedRows = [row];
         rebuildMenusFn();
@@ -180,13 +239,14 @@ export class AppTableManagerService {
         rebuildMenusFn();
     }
 
-    onRowReorder(event: TableRowReorderEvent, setStatusFn: (m: string, e: boolean) => void): void {
+    onRowReorder(event: unknown, setStatusFn: (m: string, e: boolean) => void): void {
         if (this.filterText.trim()) {
             setStatusFn('Disattiva il filtro prima di riordinare le righe', true);
             return;
         }
-        const from = Number(event.dragIndex);
-        const to = Number(event.dropIndex);
+        const indices = this.parseRowReorderIndices(event);
+        if (!indices) return;
+        const { previousIndex: from, currentIndex: to } = indices;
         if (!Number.isInteger(from) || !Number.isInteger(to) || from === to) return;
         const rows = [...this.allRows];
         const moved = rows.splice(from, 1)[0];
@@ -201,6 +261,8 @@ export class AppTableManagerService {
         this.clearFilterReloadTimer();
         this.pendingReloadRequested = false;
         this.pendingReloadPreservePaginatorState = false;
+        this.fastSearchLoading = false;
+        this.tableRenderLoading = false;
         this.skip = 0;
         this.currentPageIndex = 0;
         this.tableTotalRecords = 0;
@@ -211,6 +273,7 @@ export class AppTableManagerService {
         this.remoteSelectInflight.clear();
         this.resetQueryBuilderRules();
         this.resetTableRowActionsConfig();
+        this.resetListTransferConfig();
         this.resetSelectionAndTable();
     }
 
@@ -225,23 +288,22 @@ export class AppTableManagerService {
     }
 
     parseQueryInput(setStatusFn: (m: string, e: boolean) => void): Record<string, unknown> | null {
-        const searchQuery = this.buildSearchQuery(this.filterText);
         if (this.queryMode === 'builder') {
             try {
                 const query = this.queryBuilderToBackend(this.queryBuilderRules);
                 this.queryText = JSON.stringify(query, null, 2);
-                return this.mergeMongoQueries([this.listQuerySeed, query, searchQuery].filter((entry): entry is Record<string, unknown> => Boolean(entry && Object.keys(entry).length)));
+                return this.mergeMongoQueries([this.listQuerySeed, query].filter((entry): entry is Record<string, unknown> => Boolean(entry && Object.keys(entry).length)));
             } catch (e) {
                 setStatusFn(this.errorMessage(e), true);
                 return null;
             }
         }
         const raw = (this.queryText || '').trim();
-        if (!raw) return this.mergeMongoQueries([this.listQuerySeed, searchQuery].filter((entry): entry is Record<string, unknown> => Boolean(entry && Object.keys(entry).length)));
+        if (!raw) return this.mergeMongoQueries([this.listQuerySeed].filter((entry): entry is Record<string, unknown> => Boolean(entry && Object.keys(entry).length)));
         try {
             const p = JSON.parse(raw);
             if (!p || typeof p !== 'object' || Array.isArray(p)) throw new Error('Query JSON deve essere un oggetto');
-            return this.mergeMongoQueries([this.listQuerySeed, p as Record<string, unknown>, searchQuery].filter((entry): entry is Record<string, unknown> => Boolean(entry && Object.keys(entry).length)));
+            return this.mergeMongoQueries([this.listQuerySeed, p as Record<string, unknown>].filter((entry): entry is Record<string, unknown> => Boolean(entry && Object.keys(entry).length)));
         } catch (e) {
             setStatusFn(this.errorMessage(e), true);
             return null;
@@ -289,14 +351,71 @@ export class AppTableManagerService {
         this.currentPageIndex = 0;
     }
 
-    async setFastSearchConfig(actionName: string, schema: Record<string, unknown> | null): Promise<void> {
-        this.fastSearchActionName = actionName;
-        const normalizedSchema = this.normalizeFastSearchSchema(schema);
-        this.fastSearchSchema = normalizedSchema ? await this.hydrateRemoteSelectSchema(normalizedSchema, null) : null;
-        this.fastSearchEnabled = Boolean(actionName && this.fastSearchSchema);
+    beginFastSearchWarmup(expected: boolean): number {
+        const revision = ++this.fastSearchConfigRevision;
+        this.fastSearchLoading = expected;
+        this.fastSearchEnabled = false;
+        this.fastSearchSchema = null;
         this.fastSearchActive = false;
         this.fastSearchQueryFields = [];
         this.replaceFastSearchSubmission({});
+        if (!expected) {
+            this.fastSearchActionName = '';
+            this.fastSearchFormModel = '';
+        }
+        return revision;
+    }
+
+    async setFastSearchConfig(actionName: string, schema: Record<string, unknown> | null, formModel = '', revision?: number): Promise<boolean> {
+        const effectiveRevision = revision ?? ++this.fastSearchConfigRevision;
+        const normalizedActionName = String(actionName ?? '').trim();
+        const normalizedFormModel = String(formModel ?? '').trim();
+        const normalizedSchema = this.normalizeFastSearchSchema(schema);
+        const hydratedSchema = normalizedSchema
+            ? await this.hydrateRemoteSelectSchema(normalizedSchema, null, normalizedFormModel)
+            : null;
+        if (effectiveRevision !== this.fastSearchConfigRevision) return false;
+        this.fastSearchActionName = normalizedActionName;
+        this.fastSearchFormModel = normalizedFormModel;
+        this.fastSearchSchema = hydratedSchema;
+        this.fastSearchEnabled = Boolean(normalizedActionName && this.fastSearchSchema);
+        this.fastSearchLoading = false;
+        this.fastSearchActive = false;
+        this.fastSearchQueryFields = [];
+        this.replaceFastSearchSubmission({});
+
+        // Restore saved fast-search state (written before opening a form record).
+        const savedData = this.consumeFastSearchStateFromStorage(normalizedActionName);
+        if (savedData && this.fastSearchEnabled) {
+            this.mergeFastSearchSubmissionData(savedData);
+            this.fastSearchQueryFields = this.buildFastSearchQueryFields();
+            this.fastSearchActive = true;
+            return true;
+        }
+        return false;
+    }
+
+    saveFastSearchStateToStorage(): void {
+        if (!this.fastSearchActionName || !this.fastSearchActive) return;
+        try {
+            const key = this.fastSearchStoragePrefix + this.fastSearchActionName;
+            const data = this.fastSearchSubmission?.data && this.isRecord(this.fastSearchSubmission.data)
+                ? this.cloneSchema(this.fastSearchSubmission.data)
+                : {};
+            localStorage.setItem(key, JSON.stringify(data));
+        } catch { /* ignore storage errors */ }
+    }
+
+    private consumeFastSearchStateFromStorage(actionName: string): Record<string, unknown> | null {
+        if (!actionName) return null;
+        try {
+            const key = this.fastSearchStoragePrefix + actionName;
+            const raw = localStorage.getItem(key);
+            if (!raw) return null;
+            localStorage.removeItem(key);
+            const parsed = JSON.parse(raw);
+            return this.isRecord(parsed) ? parsed as Record<string, unknown> : null;
+        } catch { return null; }
     }
 
     private mergeFastSearchSubmissionData(nextData: Record<string, unknown>): void {
@@ -328,7 +447,8 @@ export class AppTableManagerService {
             if (Array.isArray(value) && !value.length) continue;
             const comp = compMap.get(key);
             const compType = String(comp?.['type'] ?? '').toLowerCase();
-            const qf = this.buildFastSearchQueryField(key, value, compType);
+            const logicQf = comp ? this.evaluateFastSearchLogicQuery(comp, data) : null;
+            const qf = logicQf ?? this.buildFastSearchQueryField(key, value, compType);
             if (qf) queryFields.push(qf);
         }
         return queryFields;
@@ -356,7 +476,7 @@ export class AppTableManagerService {
         const schema = this.fastSearchSchema;
         const dependents = this.findDependentSelectComponents(schema, changedKey);
         if (!dependents.length) return;
-        const formKey = String(schema['key'] || schema['name'] || schema['path'] || this.selectedModel || '').trim();
+        const formKey = this.resolveSchemaFormKey(schema, this.fastSearchFormModel);
         const submissionData = this.fastSearchSubmission?.data && this.isRecord(this.fastSearchSubmission.data)
             ? this.fastSearchSubmission.data
             : null;
@@ -630,6 +750,26 @@ export class AppTableManagerService {
         this.tableRemoveActionPath = '';
     }
 
+    resetListTransferConfig(): void {
+        this.listActionName = '';
+        this.listSearchModel = '';
+        this.listExportConfig = {
+            visible: false,
+            model: '',
+            searchModel: '',
+            parent: '',
+            hideAll: true,
+            xlsFilteredLabel: 'XLS',
+            csvFilteredLabel: 'CSV',
+            jsonFilteredLabel: 'JSON'
+        };
+        this.listImportConfig = {
+            visible: false,
+            model: '',
+            title: 'Import Data'
+        };
+    }
+
     syncTableRowActionsConfig(response: Record<string, unknown>): void {
         const fields = this.isRecord(response['fields']) ? response['fields'] : {};
         const data = this.isRecord(response['data']) ? response['data'] : {};
@@ -705,19 +845,47 @@ export class AppTableManagerService {
     }
 
     async refreshTableCellRenderers(rows: Array<Record<string, unknown>> = []): Promise<void> {
-        const canReuseCachedSchema =
-            Boolean(this.rawFormSchema)
-            && (!this.selectedModel || !this.rawFormSchemaModel || this.rawFormSchemaModel === this.selectedModel);
-        const schema = canReuseCachedSchema ? this.rawFormSchema : null;
-        await this.configureTableCellRenderers(schema, rows);
+        const revision = ++this.tableCellRendererRevision;
+        this.tableRenderLoading = Boolean(this.resolveTableCellRendererSchema() && rows.length);
+        await this.configureTableCellRenderers(this.resolveTableCellRendererSchema(), rows, revision);
+    }
+
+    prepareTableCellRenderers(rows: Array<Record<string, unknown>> = []): number {
+        const revision = ++this.tableCellRendererRevision;
+        const schema = this.resolveTableCellRendererSchema();
+        this.tableRenderLoading = Boolean(schema && rows.length);
+        if (!schema) {
+            this.applyTableCellRendererSchema(null, revision, false);
+            return revision;
+        }
+        this.applyTableCellRendererSchema(this.cloneSchema(schema), revision, false);
+        return revision;
+    }
+
+    async warmTableCellRenderers(rows: Array<Record<string, unknown>> = [], revision = this.tableCellRendererRevision): Promise<void> {
+        const schema = this.resolveTableCellRendererSchema();
+        if (!schema) {
+            this.applyTableCellRendererSchema(null, revision, true);
+            return;
+        }
+        const sampleSubmission = this.buildTableRenderSubmission(rows);
+        if (!sampleSubmission) return;
+        let renderSchema = this.cloneSchema(schema);
+        try {
+            renderSchema = await this.hydrateRemoteSelectSchema(renderSchema, sampleSubmission);
+        } catch {
+            // Fallback: keep raw schema if remote select hydration fails.
+        }
+        this.applyTableCellRendererSchema(renderSchema, revision, true);
     }
 
     async configureTableCellRenderers(
         schema: Record<string, unknown> | null,
-        rows: Array<Record<string, unknown>> = []
+        rows: Array<Record<string, unknown>> = [],
+        revision = this.tableCellRendererRevision
     ): Promise<void> {
         if (!schema) {
-            this.clearTableCellRenderers();
+            this.applyTableCellRendererSchema(null, revision, false);
             return;
         }
         let renderSchema = this.cloneSchema(schema);
@@ -729,8 +897,7 @@ export class AppTableManagerService {
                 // Fallback: keep raw schema if remote select hydration fails.
             }
         }
-        this.tableRenderSchema = renderSchema;
-        this.rebuildTableCellRenderers(renderSchema);
+        this.applyTableCellRendererSchema(renderSchema, revision, false);
     }
 
     clearTableCellRenderers(): void {
@@ -764,6 +931,30 @@ export class AppTableManagerService {
     private hasStableTableColumns(): boolean {
         if (this.serverColumns?.length) return true;
         return this.tableColumns.some(column => String(column.field ?? '').trim() !== '__rec_name');
+    }
+
+    private resolveTableCellRendererSchema(): Record<string, unknown> | null {
+        const canReuseCachedSchema =
+            Boolean(this.rawFormSchema)
+            && (!this.selectedModel || !this.rawFormSchemaModel || this.rawFormSchemaModel === this.selectedModel);
+        return canReuseCachedSchema ? this.rawFormSchema : null;
+    }
+
+    private applyTableCellRendererSchema(
+        schema: Record<string, unknown> | null,
+        revision: number,
+        refreshRows: boolean
+    ): void {
+        if (revision !== this.tableCellRendererRevision) return;
+        this.tableRenderLoading = false;
+        if (!schema) {
+            this.clearTableCellRenderers();
+            if (refreshRows) this.refreshTableRows();
+            return;
+        }
+        this.tableRenderSchema = schema;
+        this.rebuildTableCellRenderers(schema);
+        if (refreshRows) this.refreshTableRows();
     }
 
     refreshTableRows(): void {
@@ -817,6 +1008,59 @@ export class AppTableManagerService {
         this.listQuerySeed = this.findWellQuerySeed(listSchema);
     }
 
+    syncListTransferConfig(
+        response: Record<string, unknown>,
+        responseData: Record<string, unknown>,
+        listSchema: Record<string, unknown> | null,
+        actionName = ''
+    ): void {
+        const responseModel = this.readFirstString(response['model'], responseData['model'], this.selectedModel);
+        const relatedName = this.readFirstString(
+            responseData['related_name'],
+            response['related_name'],
+            responseData['parent'],
+            response['parent']
+        );
+        const transferComponents = this.findTransferComponents(listSchema);
+        const searchArea = transferComponents.find(component => this.readTransferComponentKind(component) === 'search_area') ?? null;
+        const exportArea = transferComponents.find(component => this.readTransferComponentKind(component) === 'export_area') ?? null;
+        const importArea = transferComponents.find(component => this.readTransferComponentKind(component) === 'import_component') ?? null;
+
+        const searchProps = searchArea ? this.readComponentProperties(searchArea) : {};
+        const exportProps = exportArea ? this.readComponentProperties(exportArea) : {};
+        const importProps = importArea ? this.readComponentProperties(importArea) : {};
+
+        const searchModel = this.readFirstString(
+            searchProps['model'],
+            exportProps['search_model'],
+            responseModel,
+            this.selectedModel
+        );
+        const exportModel = this.readFirstString(exportProps['model'], responseModel, this.selectedModel);
+        const importModel = this.readFirstString(importProps['model'], searchProps['model'], responseModel, this.selectedModel);
+        const hideAll = this.toOptionalBooleanFlag(exportProps['hide_all']) === true;
+        const allowImplicitImport = this.shouldShowImplicitListImport(response, responseData);
+
+        this.listActionName = this.readFirstString(actionName);
+        this.listSearchModel = searchModel || importModel || responseModel;
+        this.listExportConfig = {
+            visible: Boolean(exportArea || exportModel),
+            model: exportModel,
+            searchModel: searchModel || importModel || exportModel,
+            parent: relatedName,
+            hideAll,
+            xlsFilteredLabel: this.readFirstString(exportProps['xls_f'], 'XLS'),
+            csvFilteredLabel: this.readFirstString(exportProps['csv_f'], 'CSV'),
+            jsonFilteredLabel: this.readFirstString(exportProps['json_f'], 'JSON')
+        };
+
+        this.listImportConfig = {
+            visible: Boolean((importArea && importModel) || (!importArea && importModel && allowImplicitImport)),
+            model: importModel,
+            title: this.readFirstString(importProps['title'], 'Import Data')
+        };
+    }
+
     normalizeActionListData(payload: unknown): Array<Record<string, unknown>> {
         if (Array.isArray(payload)) {
             return payload.filter((entry): entry is Record<string, unknown> => this.isRecord(entry));
@@ -850,9 +1094,13 @@ export class AppTableManagerService {
         return { payload: fallback, explicit: false };
     }
 
-    async hydrateRemoteSelectSchema(schema: Record<string, unknown>, sub: Record<string, unknown> | null): Promise<Record<string, unknown>> {
+    async hydrateRemoteSelectSchema(
+        schema: Record<string, unknown>,
+        sub: Record<string, unknown> | null,
+        formModel = ''
+    ): Promise<Record<string, unknown>> {
         const hydrated = this.cloneSchema(schema);
-        const formKey = String(hydrated['key'] || hydrated['name'] || hydrated['path'] || this.selectedModel || '').trim();
+        const formKey = this.resolveSchemaFormKey(hydrated, formModel);
         this.normalizeFormTableComponents(hydrated);
         this.normalizeFormWysiwygComponents(hydrated);
 
@@ -884,6 +1132,10 @@ export class AppTableManagerService {
             this.ensureSelectTemplate(comp);
         }
         return hydrated;
+    }
+
+    private resolveSchemaFormKey(schema: Record<string, unknown>, formModel = ''): string {
+        return String(formModel || schema['key'] || schema['name'] || schema['path'] || this.selectedModel || '').trim();
     }
 
     parseNonNegativeInt(value: unknown, fallback = 0): number {
@@ -1141,13 +1393,60 @@ export class AppTableManagerService {
 
     private escapeRegex(value: string): string { return String(value ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
-    private syncOrderFromLazyEvent(event: TableLazyLoadEvent): void {
-        const field = String(Array.isArray(event.sortField) ? event.sortField[0] : event.sortField ?? '').trim();
-        if (!field) return;
-        const dir = Number(event.sortOrder) === -1 ? 'desc' : 'asc';
-        this.order = `${field} ${dir}`;
-        this.primeSortField = field;
-        this.primeSortOrder = dir === 'asc' ? 1 : -1;
+    private applyViewportQueryChange(
+        next: { skip: number; limit: number; order: string },
+        loadRecordsFn: (preserve: boolean) => Promise<void>
+    ): void {
+        const previousSkip = this.skip;
+        const previousLimit = this.limit;
+        const previousOrder = this.order;
+
+        if (Number.isFinite(next.skip) && next.skip >= 0) this.skip = next.skip;
+        if (Number.isFinite(next.limit) && next.limit > 0) this.limit = next.limit;
+        this.order = String(next.order || this.order).trim() || this.order;
+        this.currentPageIndex = this.computeCurrentPageIndex();
+        this.syncPrimeSortFromOrder(this.order);
+
+        const hasQueryChange = this.skip !== previousSkip || this.limit !== previousLimit || this.order !== previousOrder;
+        if (!this.selectedModel || !hasQueryChange || this.isLoadingRecords) return;
+        void loadRecordsFn(true);
+    }
+
+    private parseLazyLoadEvent(event: unknown): { skip: number; limit: number; order: string } | null {
+        if (!this.isRecord(event)) return null;
+        const first = Number(event['first'] ?? this.skip);
+        const rows = Number(event['rows'] ?? this.limit);
+        const field = this.normalizeSortField(Array.isArray(event['sortField']) ? event['sortField'][0] : event['sortField']);
+        const dir: TableSortDirection = Number(event['sortOrder']) === -1 ? 'desc' : 'asc';
+        const order = field ? this.buildOrderValue(field, dir) : this.order;
+        return {
+            skip: Number.isFinite(first) && first >= 0 ? first : this.skip,
+            limit: Number.isFinite(rows) && rows > 0 ? rows : this.limit,
+            order
+        };
+    }
+
+    private parseRowReorderIndices(event: unknown): ListRowReorderChange | null {
+        if (!this.isRecord(event)) return null;
+        const previousIndex = Number(event['previousIndex'] ?? event['dragIndex']);
+        const currentIndex = Number(event['currentIndex'] ?? event['dropIndex']);
+        if (!Number.isInteger(previousIndex) || !Number.isInteger(currentIndex)) return null;
+        return { previousIndex, currentIndex };
+    }
+
+    private buildOrderValue(field: string, direction: TableSortDirection): string {
+        return `${this.normalizeSortField(field)} ${direction === 'desc' ? 'desc' : 'asc'}`;
+    }
+
+    private normalizeSortField(field: unknown): string {
+        const normalized = String(field ?? '').trim();
+        if (!normalized) return '';
+        return normalized === '__rec_name' ? 'rec_name' : normalized;
+    }
+
+    private isIgnoredRowInteractionTarget(event: Event): boolean {
+        const target = event.target as HTMLElement | null;
+        return Boolean(target?.closest('button, input, label, select, textarea, a, [data-row-action], [data-row-select], [data-row-handle]'));
     }
 
     private syncPrimeSortFromOrder(orderValue: unknown): void {
@@ -1244,6 +1543,63 @@ export class AppTableManagerService {
         if (typeof normalized === 'string') return normalized.split(',').map(e => e.trim()).filter(Boolean);
         if (this.isRecord(normalized) && Object.prototype.hasOwnProperty.call(normalized, 'columns')) return normalized['columns'];
         return normalized;
+    }
+
+    private evaluateFastSearchLogicQuery(comp: Record<string, unknown>, data: Record<string, unknown>): Record<string, unknown> | null {
+        const logicArray = Array.isArray(comp['logic']) ? (comp['logic'] as unknown[]) : [];
+        if (!logicArray.length) return null;
+        const context = { data };
+        for (const logicItem of logicArray) {
+            if (!this.isRecord(logicItem)) continue;
+            const trigger = this.asRecord(logicItem['trigger']);
+            if (trigger && !this.evaluateFormioLogicTrigger(trigger, context)) continue;
+            const actions = Array.isArray(logicItem['actions']) ? (logicItem['actions'] as unknown[]) : [];
+            for (const action of actions) {
+                if (!this.isRecord(action)) continue;
+                const result = this.evaluateFormioQueryAction(action, context);
+                if (result !== null) return result;
+            }
+        }
+        return null;
+    }
+
+    private evaluateFormioLogicTrigger(trigger: Record<string, unknown>, context: unknown): boolean {
+        const type = String(trigger['type'] ?? '').trim().toLowerCase();
+        if (type === 'json') {
+            const json = trigger['json'];
+            if (json == null) return true;
+            try { return Boolean(jsonLogic.apply(json, context)); } catch { return false; }
+        }
+        return false;
+    }
+
+    private evaluateFormioQueryAction(action: Record<string, unknown>, context: unknown): Record<string, unknown> | null {
+        if (String(action['type'] ?? '').trim().toLowerCase() !== 'value') return null;
+        const value = action['value'];
+        if (typeof value !== 'string') return null;
+        const eqIdx = value.indexOf('=');
+        if (eqIdx < 1) return null;
+        if (value.slice(0, eqIdx).trim() !== 'query') return null;
+        const logicStr = value.slice(eqIdx + 1).trim();
+        let logicExpr: unknown;
+        try { logicExpr = JSON.parse(logicStr); } catch { return null; }
+        let evaluated: unknown;
+        try { evaluated = jsonLogic.apply(logicExpr, context); } catch { return null; }
+        if (typeof evaluated === 'string') return this.parsePythonStyleQuery(evaluated.trim());
+        return this.isRecord(evaluated) && Object.keys(evaluated).length ? this.cloneSchema(evaluated) : null;
+    }
+
+    private parsePythonStyleQuery(queryStr: string): Record<string, unknown> | null {
+        if (!queryStr.trim()) return null;
+        try {
+            const jsonStr = queryStr
+                .replace(/'/g, '"')
+                .replace(/\bTrue\b/g, 'true')
+                .replace(/\bFalse\b/g, 'false')
+                .replace(/\bNone\b/g, 'null');
+            const parsed = JSON.parse(jsonStr);
+            return this.isRecord(parsed) && Object.keys(parsed).length ? this.cloneSchema(parsed) : null;
+        } catch { return null; }
     }
 
     private buildTableColumnsFromRow(row: TableRow): TableColumn[] {
@@ -1414,7 +1770,7 @@ export class AppTableManagerService {
         if (typeof value === 'string') {
             const normalized = value.trim().toLowerCase();
             if (!normalized) return null;
-            if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+            if (['1', 'true', 'yes', 'on', 'si', 'sì'].includes(normalized)) return true;
             if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
             return null;
         }
@@ -1493,11 +1849,7 @@ export class AppTableManagerService {
     }
 
     private optionPrimitiveValue(value: unknown): unknown {
-        if (!this.isRecord(value)) return value;
-        const nested = this.isRecord(value['data']) ? value['data'] : null;
-        const primitive = value['value'] ?? value['id'] ?? value['_id'] ?? value['code'] ?? value['key'] ?? value['k'] ?? value['name']
-            ?? nested?.['value'] ?? nested?.['id'] ?? nested?.['_id'] ?? nested?.['code'] ?? nested?.['key'] ?? nested?.['k'] ?? nested?.['name'];
-        return primitive !== undefined ? primitive : value;
+        return selectOptionPrimitiveValue(value);
     }
 
     private resolveTableCellRenderer(field: string): ((value: unknown) => string) | null {
@@ -1733,14 +2085,7 @@ export class AppTableManagerService {
     }
 
     private toSelectValueOption(e: unknown): SelectValueOption | null {
-        if (e == null) return null;
-        if (!this.isRecord(e)) return { label: this.toDisplayValue(e), value: e };
-        const nested = this.isRecord(e['data']) ? e['data'] : null;
-        const v = e['value'] ?? e['id'] ?? e['_id'] ?? e['code'] ?? e['key'] ?? e['k'] ?? e['name'] ?? e['rec_name']
-            ?? nested?.['value'] ?? nested?.['id'] ?? nested?.['_id'] ?? nested?.['code'] ?? nested?.['key'] ?? nested?.['k'] ?? nested?.['name'];
-        const l = e['label'] ?? e['title'] ?? e['name'] ?? e['description'] ?? e['v']
-            ?? nested?.['label'] ?? nested?.['title'] ?? nested?.['name'] ?? nested?.['description'] ?? nested?.['v'] ?? v;
-        return v !== undefined ? { label: this.toDisplayValue(l), value: v } : null;
+        return mapSelectValueOption(e);
     }
 
     private extractRecord(payload: unknown): Record<string, unknown> | null {
@@ -1810,6 +2155,18 @@ export class AppTableManagerService {
         return '';
     }
 
+    private shouldShowImplicitListImport(
+        response: Record<string, unknown>,
+        responseData: Record<string, unknown>
+    ): boolean {
+        const candidates = [response, responseData];
+        const canCreate = this.readFirstBooleanFromCandidates(candidates, ['can_create', 'canCreate']);
+        const editable = this.readFirstBooleanFromCandidates(candidates, ['editable', 'write_access', 'writeAccess']);
+        if (canCreate === true || editable === true) return true;
+        if (canCreate === false && editable === false) return false;
+        return true;
+    }
+
     private shouldAppendRowRecNameToActionPath(path: string, recName: string, encodedRecName: string): boolean {
         if (!recName || !path.startsWith('/action/')) return false;
         const [basePath] = path.split('?', 2);
@@ -1842,10 +2199,10 @@ export class AppTableManagerService {
 
     private findWellQuerySeed(schema: Record<string, unknown> | null): Record<string, unknown> | null {
         if (!schema) return null;
-        const wells = this.findWellComponents(schema);
+        const wells = this.findTransferComponents(schema);
         const preferredTypes = new Set(['search_area', 'export_area']);
         for (const well of wells) {
-            const kind = this.readWellComponentKind(well);
+            const kind = this.readTransferComponentKind(well);
             if (!preferredTypes.has(kind)) continue;
             const properties = this.readComponentProperties(well);
             const normalized = this.normalizeQuerySeed(properties['query']);
@@ -1857,20 +2214,33 @@ export class AppTableManagerService {
         return null;
     }
 
-    private findWellComponents(src: unknown): Record<string, unknown>[] {
-        const wells: Record<string, unknown>[] = [];
+    private findTransferComponents(src: unknown): Record<string, unknown>[] {
+        const components: Record<string, unknown>[] = [];
         const visit = (node: unknown): void => {
             if (Array.isArray(node)) { node.forEach(visit); return; }
             if (!this.isRecord(node)) return;
-            const type = String(node['type'] ?? '').trim().toLowerCase();
-            if (type === 'well') wells.push(node);
+            const kind = this.readTransferComponentKind(node);
+            const looksLikeComponent =
+                Object.prototype.hasOwnProperty.call(node, 'key')
+                || Object.prototype.hasOwnProperty.call(node, 'label')
+                || Object.prototype.hasOwnProperty.call(node, 'input')
+                || Array.isArray(node['components'])
+                || Array.isArray(node['columns'])
+                || Array.isArray(node['rows']);
+            if (looksLikeComponent && (kind === 'search_area' || kind === 'export_area' || kind === 'import_component')) {
+                components.push(node);
+            }
             Object.values(node).forEach(visit);
         };
         visit(src);
-        return wells;
+        return components;
     }
 
-    private readWellComponentKind(component: Record<string, unknown>): string {
+    private readTransferComponentKind(component: Record<string, unknown>): string {
+        const directType = String(component['type'] ?? '').trim().toLowerCase();
+        if (directType === 'search_area' || directType === 'export_area' || directType === 'import_component') {
+            return directType;
+        }
         const properties = this.readComponentProperties(component);
         return this.readFirstString(properties['type'], component['well_type'], component['wellType']).toLowerCase();
     }
