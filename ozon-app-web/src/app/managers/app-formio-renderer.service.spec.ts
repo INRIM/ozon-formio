@@ -63,4 +63,33 @@ describe('AppFormioRendererService', () => {
 
     expect(String(button['customClass'] ?? '')).toContain('ozon-btn-custom-outline');
   });
+
+  it('should coerce blank multiple fields to arrays using the Formio schema', () => {
+    service.rawFormSchema = {
+      components: [
+        {
+          type: 'select',
+          key: 'delete_cascade',
+          input: true,
+          multiple: true
+        }
+      ]
+    };
+
+    expect(service.normalizeFormSubmissionData({
+      rec_name: 'ACT-1',
+      delete_cascade: ''
+    })).toEqual(jasmine.objectContaining({
+      rec_name: 'ACT-1',
+      delete_cascade: []
+    }));
+
+    expect(service.normalizeFormSubmissionData({
+      rec_name: 'ACT-1',
+      delete_cascade: '["action_a","action_b"]'
+    })).toEqual(jasmine.objectContaining({
+      rec_name: 'ACT-1',
+      delete_cascade: ['action_a', 'action_b']
+    }));
+  });
 });

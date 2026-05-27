@@ -370,19 +370,17 @@ export class AppFormioBuilderService {
 
     private isBuilderEligibleResponse(response: Record<string, unknown>, data: Record<string, unknown> | null): boolean {
         const fields = this.isRecord(response['fields']) ? response['fields'] : {};
-        const actionComponentType = this.readFirstString(fields['component_type']).toLowerCase();
         const actionName = this.readFirstString(fields['action_name']).toLowerCase();
         const responseModel = this.readFirstString(response['model'], data?.['model'], this.renderer.selectedModel).toLowerCase();
-        if (actionComponentType === 'form' || actionComponentType === 'resource') return true;
+        // component_type=form/resource only tells the client how to render the payload.
+        // It must not implicitly switch the page into builder/edit-form behavior.
         if (responseModel === 'component') return true;
         return actionName === 'form_form' || actionName.startsWith('form_form_') || actionName === 'form' || actionName.startsWith('form_') || actionName.includes('design') || actionName.includes('resource');
     }
 
     private isDesignContextResponse(response: Record<string, unknown>, data: Record<string, unknown> | null): boolean {
         const fields = this.isRecord(response['fields']) ? response['fields'] : {};
-        const actionComponentType = this.readFirstString(fields['component_type']).toLowerCase();
         const actionName = this.readFirstString(fields['action_name']).toLowerCase();
-        if (actionComponentType === 'form' || actionComponentType === 'resource') return true;
         return actionName === 'form_form' || actionName.includes('design');
     }
 

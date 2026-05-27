@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { Subject } from 'rxjs';
 import { Formio } from '@formio/js';
-import { ImportSubmissionPayload } from '../models/app.types';
+import { ImportRecordPayload } from '../models/app.types';
 import {
     ApiErrorPayload,
     FastSearchPayload,
@@ -124,7 +124,7 @@ export class OzonApiService {
     }
 
     getSchemaModel(model: string): Promise<unknown> {
-        return this.fetchJson(`/schema_model/${encodeURIComponent(String(model).trim())}`);
+        return this.fetchJson(`/record/${encodeURIComponent(String(model).trim())}`);
     }
 
     storeSearchQuery(model: string, query: Record<string, unknown>): Promise<unknown> {
@@ -135,8 +135,12 @@ export class OzonApiService {
         return this.fetchJson('/data/fast_search_eval', { method: 'POST', body: payload });
     }
 
-    importData(model: string, payload: ImportSubmissionPayload): Promise<unknown> {
+    importData(model: string, payload: ImportRecordPayload): Promise<unknown> {
         return this.fetchJson(`/import/${encodeURIComponent(String(model).trim())}`, { method: 'POST', body: payload });
+    }
+
+    importClean(model: string): Promise<unknown> {
+        return this.fetchJson(`/import/clean/${encodeURIComponent(String(model).trim())}`, { method: 'POST', body: {} });
     }
 
     getExportData(model: string, payload: Record<string, unknown>, parent = ''): Promise<unknown> {
@@ -746,9 +750,14 @@ export class OzonApiService {
             return cfg.useProxy ? '/api' : cfg.backendUrl.replace(/\/+$/, '');
         }
         if (/^https?:\/\//i.test(rawPath)) return rawPath.replace(/\/+$/, '');
-        if (rawPath === '/api' || rawPath.startsWith('/api/')) return rawPath;
+        const isProxyPath = rawPath === '/api' || rawPath.startsWith('/api/');
         const base = cfg.useProxy ? '/api' : cfg.backendUrl.replace(/\/+$/, '');
-        return `${base}${rawPath}`;
+        let url = isProxyPath ? rawPath : `${base}${rawPath}`;
+        const appCode = cfg.appCode?.trim();
+        if (appCode) {
+            url += (url.includes('?') ? '&' : '?') + 'app_code=' + encodeURIComponent(appCode);
+        }
+        return url;
     }
 
     private withParent(path: string, parent: string): string {

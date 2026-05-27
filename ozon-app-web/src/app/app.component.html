@@ -96,6 +96,19 @@
     </div>
   </nav>
 
+  <section class="ozon-client-error-banner" *ngIf="fatalClientErrorVisible" aria-live="assertive">
+    <div class="ozon-client-error-banner__copy">
+      <strong>Errore client.</strong>
+      <span>{{ fatalClientErrorMessage }}</span>
+      <pre *ngIf="fatalClientErrorDetails" class="ozon-client-error-banner__details">{{ fatalClientErrorDetails }}</pre>
+    </div>
+    <div class="ozon-client-error-banner__actions">
+      <button type="button" class="btn btn-sm btn-outline-secondary" (click)="dismissFatalClientError()">Chiudi</button>
+      <button type="button" class="btn btn-sm btn-outline-primary" (click)="recoverFromFatalClientError()">Dashboard</button>
+      <button type="button" class="btn btn-sm btn-primary" (click)="reloadAfterFatalClientError()">Ricarica</button>
+    </div>
+  </section>
+
   <section class="ozon-dashboard-grid" *ngIf="isDashboardPage && nonAdminDashboardCards.length">
     <article class="ozon-dashboard-card" *ngFor="let card of nonAdminDashboardCards">
       <div class="ozon-card-actions">
@@ -141,6 +154,7 @@
     [showTableRowRemoveAction]="showTableRowRemoveAction"
     [canOpenRecord]="canOpenRecord"
     [canOpenNewRecord]="canOpenNewRecord"
+    [showStaticActionButtons]="showListActionButtonsFallback"
     [contextActions]="listContextActions"
     [isLoadingRecords]="isLoadingRecords"
     [fastSearchEnabled]="fastSearchEnabled"
@@ -172,6 +186,8 @@
     (rowReorder)="onRowReorder($event)"
     (copyRow)="onCopyRow($event.row, $event.event)"
     (removeRow)="onRemoveRow($event.row, $event.event)"
+    (importBusyChange)="onImportBusyChange($event)"
+    (importFinished)="onImportFinished()"
   ></app-record-list>
 
   <!-- ═══════════ FORM EDITOR PAGE (Design → Form → name) ═══════════ -->
@@ -492,6 +508,24 @@
         <button *ngIf="formSchema && formEditorDesignContext && builderEligibleCurrentForm && builderEnabled && isAdminUser" class="btn btn-sm btn-outline-warning" type="button" (click)="openFormEditorInline()">
           Edit Form
         </button>
+      </div>
+    </div>
+    <div *ngIf="formNotifications.length" class="ozon-form-notifications">
+      <div *ngFor="let n of formNotifications"
+           class="alert mb-0 d-flex align-items-start gap-2 rounded-0"
+           [class.alert-danger]="n.type === 'error'"
+           [class.alert-warning]="n.type === 'warning'"
+           [class.alert-success]="n.type === 'success'"
+           [class.alert-info]="n.type === 'info'"
+           role="alert">
+        <div class="flex-grow-1">
+          <strong>{{ n.title }}</strong>
+          <ul *ngIf="n.messages.length > 1" class="mb-0 mt-1 ps-3">
+            <li *ngFor="let msg of n.messages">{{ msg }}</li>
+          </ul>
+          <span *ngIf="n.messages.length === 1" class="d-block mt-1">{{ n.messages[0] }}</span>
+        </div>
+        <button type="button" class="btn-close flex-shrink-0" aria-label="Chiudi" (click)="dismissFormNotifications()"></button>
       </div>
     </div>
     <div class="card-body ozon-form-viewer-card-body" [class.is-loading]="formViewerLoading" [attr.aria-busy]="formViewerLoading ? 'true' : null">

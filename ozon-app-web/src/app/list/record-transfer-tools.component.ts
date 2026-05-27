@@ -1,6 +1,8 @@
-import { ChangeDetectionStrategy, Component, Input } from '@angular/core';
+import { ChangeDetectionStrategy, Component, EventEmitter, Input, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { Formio } from '@formio/js';
+import { eachComponent as formioEachComponent } from '@formio/js/utils';
 import { OzonApiService } from '../core/ozon-api.service';
 import {
     ExportFileType,
@@ -50,6 +52,210 @@ declare global {
     }
 }
 
+class PythonLiteralParser {
+    private index = 0;
+
+    constructor(private readonly input: string) {}
+
+    parse(): unknown {
+        const value = this.parseValue();
+        this.skipWhitespace();
+        if (this.index !== this.input.length) {
+            throw new Error(`Unexpected token at ${this.index}`);
+        }
+        return value;
+    }
+
+    private parseValue(): unknown {
+        this.skipWhitespace();
+        const current = this.input[this.index];
+        if (!current) throw new Error('Unexpected end of input');
+
+        if (current === '{') return this.parseObject();
+        if (current === '[') return this.parseArray();
+        if (current === '\'' || current === '"') return this.parseString(current);
+        if (current === '-' || this.isDigit(current)) return this.parseNumber();
+        if (this.input.startsWith('True', this.index)) {
+            this.index += 4;
+            return true;
+        }
+        if (this.input.startsWith('False', this.index)) {
+            this.index += 5;
+            return false;
+        }
+        if (this.input.startsWith('None', this.index)) {
+            this.index += 4;
+            return null;
+        }
+
+        return this.parseIdentifier();
+    }
+
+    private parseObject(): Record<string, unknown> {
+        const result: Record<string, unknown> = {};
+        this.index += 1;
+        this.skipWhitespace();
+        if (this.input[this.index] === '}') {
+            this.index += 1;
+            return result;
+        }
+
+        while (this.index < this.input.length) {
+            const key = String(this.parseObjectKey());
+            this.skipWhitespace();
+            this.expect(':');
+            result[key] = this.parseValue();
+            this.skipWhitespace();
+
+            const current = this.input[this.index];
+            if (current === '}') {
+                this.index += 1;
+                return result;
+            }
+            this.expect(',');
+            this.skipWhitespace();
+            if (this.input[this.index] === '}') {
+                this.index += 1;
+                return result;
+            }
+        }
+
+        throw new Error('Unterminated object literal');
+    }
+
+    private parseArray(): unknown[] {
+        const result: unknown[] = [];
+        this.index += 1;
+        this.skipWhitespace();
+        if (this.input[this.index] === ']') {
+            this.index += 1;
+            return result;
+        }
+
+        while (this.index < this.input.length) {
+            result.push(this.parseValue());
+            this.skipWhitespace();
+
+            const current = this.input[this.index];
+            if (current === ']') {
+                this.index += 1;
+                return result;
+            }
+            this.expect(',');
+            this.skipWhitespace();
+            if (this.input[this.index] === ']') {
+                this.index += 1;
+                return result;
+            }
+        }
+
+        throw new Error('Unterminated array literal');
+    }
+
+    private parseObjectKey(): unknown {
+        this.skipWhitespace();
+        const current = this.input[this.index];
+        if (current === '\'' || current === '"') return this.parseString(current);
+        return this.parseIdentifier();
+    }
+
+    private parseIdentifier(): string {
+        const start = this.index;
+        while (this.index < this.input.length) {
+            const current = this.input[this.index];
+            if (!current || !/[A-Za-z0-9_\-$]/.test(current)) break;
+            this.index += 1;
+        }
+        if (start === this.index) {
+            throw new Error(`Unexpected token at ${this.index}`);
+        }
+        return this.input.slice(start, this.index);
+    }
+
+    private parseString(quote: string): string {
+        let result = '';
+        this.index += 1;
+        while (this.index < this.input.length) {
+            const current = this.input[this.index];
+            if (current === quote) {
+                this.index += 1;
+                return result;
+            }
+            if (current !== '\\') {
+                result += current;
+                this.index += 1;
+                continue;
+            }
+
+            const next = this.input[this.index + 1];
+            if (!next) throw new Error('Invalid string escape');
+
+            switch (next) {
+                case '\\': result += '\\'; break;
+                case '\'': result += '\''; break;
+                case '"': result += '"'; break;
+                case 'n': result += '\n'; break;
+                case 'r': result += '\r'; break;
+                case 't': result += '\t'; break;
+                case 'b': result += '\b'; break;
+                case 'f': result += '\f'; break;
+                case '/': result += '/'; break;
+                case 'u': {
+                    const hex = this.input.slice(this.index + 2, this.index + 6);
+                    if (!/^[0-9A-Fa-f]{4}$/.test(hex)) throw new Error('Invalid unicode escape');
+                    result += String.fromCharCode(parseInt(hex, 16));
+                    this.index += 4;
+                    break;
+                }
+                default:
+                    result += next;
+                    break;
+            }
+
+            this.index += 2;
+        }
+
+        throw new Error('Unterminated string literal');
+    }
+
+    private parseNumber(): number {
+        const start = this.index;
+        if (this.input[this.index] === '-') this.index += 1;
+        while (this.isDigit(this.input[this.index])) this.index += 1;
+        if (this.input[this.index] === '.') {
+            this.index += 1;
+            while (this.isDigit(this.input[this.index])) this.index += 1;
+        }
+        if (this.input[this.index] === 'e' || this.input[this.index] === 'E') {
+            this.index += 1;
+            if (this.input[this.index] === '+' || this.input[this.index] === '-') this.index += 1;
+            while (this.isDigit(this.input[this.index])) this.index += 1;
+        }
+
+        const raw = this.input.slice(start, this.index);
+        const parsed = Number(raw);
+        if (!Number.isFinite(parsed)) throw new Error(`Invalid number ${raw}`);
+        return parsed;
+    }
+
+    private expect(char: string): void {
+        if (this.input[this.index] !== char) {
+            throw new Error(`Expected "${char}" at ${this.index}`);
+        }
+        this.index += 1;
+    }
+
+    private skipWhitespace(): void {
+        while (this.index < this.input.length && /\s/.test(this.input[this.index])) {
+            this.index += 1;
+        }
+    }
+
+    private isDigit(value: string | undefined): boolean {
+        return !!value && value >= '0' && value <= '9';
+    }
+}
+
 @Component({
     selector: 'app-record-transfer-tools',
     standalone: true,
@@ -62,12 +268,21 @@ export class RecordTransferToolsComponent {
     @Input() exportConfig: ListExportConfig | null = null;
     @Input() importConfig: ListImportConfig | null = null;
     @Input() searchContext: ListSearchSessionContext | null = null;
+    @Output() importBusyChange = new EventEmitter<boolean>();
+    @Output() importFinished = new EventEmitter<void>();
 
     private readonly importMetadataKeys = new Set([
-        'id', 'owner_uid', 'owner_name', 'owner_sector', 'owner_sector_id',
+        '_id', 'id', 'owner_uid', 'owner_name', 'owner_sector', 'owner_sector_id',
         'owner_function', 'update_datetime', 'create_datetime', 'owner_mail',
         'update_uid', 'owner_function_type', 'demo', 'deleted', 'list_order',
-        'owner_personal_type', 'owner_job_title', 'childs'
+        'owner_personal_type', 'owner_job_title', 'childs', '__sourceRow',
+        'status', 'message', 'msg', 'detail', 'tz', 'data_value'
+    ]);
+    private readonly componentObjectKeys = new Set(['properties', 'settings', 'links']);
+    private readonly componentArrayKeys = new Set(['components', 'tags']);
+    private readonly componentScalarStringKeys = new Set(['app_code']);
+    private readonly componentBooleanKeys = new Set([
+        'make_virtual_model', 'authenticate', 'active', 'default', 'sys', 'demo'
     ]);
 
     importPanelOpen = false;
@@ -82,11 +297,11 @@ export class RecordTransferToolsComponent {
     panelMessage = '';
     panelError = false;
     importResultLines: string[] = [];
+    importRowStatuses: Array<{ rowReference: string; recName: string; ok: boolean; message: string }> = [];
 
     private xlsxLoader: Promise<XlsxRuntime> | null = null;
+    private readonly modelPayloadCache = new Map<string, Promise<unknown>>();
     private readonly modelFieldCache = new Map<string, Promise<ModelFieldDefinition[]>>();
-    private readonly sampledFieldCache = new Map<string, Promise<ModelFieldDefinition[]>>();
-    private readonly modelsWithoutBackendSchema = new Set<string>();
 
     constructor(private readonly api: OzonApiService) {}
 
@@ -142,55 +357,126 @@ export class RecordTransferToolsComponent {
         if (!this.importConfig?.model || !this.canSubmitImport) return;
         this.clearPanelMessage();
         this.importBusy = true;
+        this.importBusyChange.emit(true);
         try {
-            const fieldDefinitions = await this.enrichFieldDefinitionsFromExistingRows(
-                this.importConfig.model,
-                await this.loadModelFieldDefinitions(this.importConfig.model),
-                this.previewColumns
-            );
+            const importModel = this.importConfig.model;
+            const [fieldDefinitions, formSchema] = await Promise.all([
+                this.loadModelFieldDefinitions(importModel),
+                this.loadFormSchemaForModel(importModel)
+            ]);
             const fieldMap = new Map(fieldDefinitions.map((entry) => [entry.key, entry]));
 
-            // Pre-pass: coerce all rows, collect warnings and missing rec_name (hard errors).
-            const hardErrors: string[] = [];
+            const isComponentModel = this.isComponentImportModel(importModel);
+            const rowsWithMeta: Array<{ row: ImportPreviewRow; componentError?: string }> = isComponentModel
+                ? await Promise.all(this.previewRows.map((row) => this.preNormalizeComponentRow(row)))
+                : this.previewRows.map((row) => ({ row }));
+
+            const formHandle = formSchema ? await this.createFormInstanceForImport(formSchema) : null;
             const allWarnings: string[] = [];
-            const preparedRows: Array<{ prepared: Record<string, unknown>; recName: string }> = [];
-            for (let index = 0; index < this.previewRows.length; index += 1) {
-                const { prepared, warnings } = this.prepareImportRow(this.previewRows[index], fieldMap);
-                warnings.forEach((w) => allWarnings.push(`Riga ${index + 1}: ${w}`));
-                const recName = String(prepared['rec_name'] ?? '').trim();
-                if (!recName) hardErrors.push(`Riga ${index + 1}: rec_name mancante.`);
-                preparedRows.push({ prepared, recName });
+            const preparedRows: Array<{
+                rowReference: string;
+                recName: string;
+                prepared: Record<string, unknown>;
+                componentError?: string;
+            }> = [];
+            try {
+                for (let index = 0; index < rowsWithMeta.length; index += 1) {
+                    const { row, componentError } = rowsWithMeta[index];
+                    if (componentError) {
+                        const recName = String(row['rec_name'] ?? '').trim();
+                        const rowReference = this.describeImportRow(row, index, recName);
+                        preparedRows.push({ rowReference, recName, prepared: {}, componentError });
+                        continue;
+                    }
+                    const { prepared, warnings } = this.prepareImportRow(row, fieldMap, importModel);
+                    // Formio submission normalization: override manually-coerced values with
+                    // formio-typed values for fields the form schema knows about.
+                    if (formHandle) {
+                        const formioData = this.extractFormioSubmissionData(formHandle.form, prepared);
+                        this.mergePreparedWithFormioData(prepared, formioData, fieldMap);
+                        // Re-serialize any dict/array that formio parsed but the backend field expects as string.
+                        for (const [key, value] of Object.entries(prepared)) {
+                            const def = fieldMap.get(key);
+                            if (this.isComponentImportModel(importModel)
+                                && (this.componentObjectKeys.has(key) || this.componentArrayKeys.has(key))) {
+                                continue;
+                            }
+                            if (def && this.isScalarStringField(def) && (this.isRecord(value) || Array.isArray(value))) {
+                                prepared[key] = JSON.stringify(value);
+                            }
+                        }
+                    }
+                    const recName = String(prepared['rec_name'] ?? '').trim();
+                    const rowReference = this.describeImportRow(row, index, recName);
+                    warnings.forEach((w) => allWarnings.push(`${rowReference}: ${w}`));
+                    preparedRows.push({ rowReference, recName, prepared, componentError });
+                }
+            } finally {
+                if (formHandle) this.destroyFormInstance(formHandle);
             }
-            if (hardErrors.length) {
-                this.importResultLines = hardErrors;
-                this.setPanelMessage('Validazione fallita. Correggere i dati prima di importare.', true);
-                return;
+            if (!preparedRows.length) {
+                throw new Error('Il file non contiene righe importabili.');
             }
 
-            const errors: string[] = [];
-            if (this.deleteBefore) {
-                const deleteErrors = await this.deleteExistingRecords(this.importConfig.model);
-                errors.push(...deleteErrors);
-            }
-
+            const errorLines: string[] = [];
+            const rowStatuses: Array<{ rowReference: string; recName: string; ok: boolean; message: string }> = [];
             let ok = 0;
-            for (let index = 0; index < preparedRows.length; index += 1) {
-                const { prepared, recName } = preparedRows[index];
-                try {
-                    await this.api.updateRecord(this.importConfig.model, recName, prepared);
-                    ok += 1;
-                } catch (error) {
-                    errors.push(`Riga ${index + 1} (${recName}): ${this.errorMessage(error)}`);
+            if (this.deleteBefore) {
+                const cleanResponse = await this.api.importClean(importModel);
+                const cleanResult = this.normalizeImportResponse(cleanResponse);
+                if (!cleanResult.success) {
+                    const cleanMessage = cleanResult.errorLines[0] || cleanResult.message || 'Pulizia record fallita.';
+                    throw new Error(cleanMessage);
                 }
             }
 
-            this.importResultLines = [...allWarnings, ...errors];
-            this.setPanelMessage(`Import completato: ${ok} record importati.`, errors.length > 0);
+            for (const row of preparedRows) {
+                if (row.componentError) {
+                    const message = row.componentError;
+                    errorLines.push(`${row.rowReference}: ${message}`);
+                    rowStatuses.push({ rowReference: row.rowReference, recName: row.recName, ok: false, message });
+                    continue;
+                }
+                if (!row.recName) {
+                    const message = 'rec_name mancante';
+                    errorLines.push(`${row.rowReference}: ${message}`);
+                    rowStatuses.push({ rowReference: row.rowReference, recName: '', ok: false, message });
+                    continue;
+                }
+
+                try {
+                    const response = await this.api.importData(importModel, row.prepared);
+                    const importResult = this.normalizeImportResponse(response);
+                    const rowError = importResult.failed
+                        ? (importResult.message || importResult.errorLines[0] || 'Import fallito.')
+                        : importResult.errorLines.join(' | ').trim();
+                    if (!importResult.success) {
+                        const message = rowError || importResult.message || 'Import fallito.';
+                        errorLines.push(`${this.describeImportFailure(row.rowReference, row.recName)}: ${message}`);
+                        rowStatuses.push({ rowReference: row.rowReference, recName: row.recName, ok: false, message });
+                        continue;
+                    }
+
+                    ok += 1;
+                    rowStatuses.push({ rowReference: row.rowReference, recName: row.recName, ok: true, message: '' });
+                } catch (error) {
+                    const message = this.errorMessage(error);
+                    errorLines.push(`${this.describeImportFailure(row.rowReference, row.recName)}: ${message}`);
+                    rowStatuses.push({ rowReference: row.rowReference, recName: row.recName, ok: false, message });
+                }
+            }
+
+            this.importRowStatuses = rowStatuses;
+            this.importResultLines = [...allWarnings, ...errorLines];
+            this.setPanelMessage(`Import completato: ${ok} record importati.`, errorLines.length > 0);
         } catch (error) {
+            this.importRowStatuses = [];
             this.importResultLines = [];
             this.setPanelMessage(this.errorMessage(error), true);
         } finally {
             this.importBusy = false;
+            this.importBusyChange.emit(false);
+            this.importFinished.emit();
         }
     }
 
@@ -229,6 +515,7 @@ export class RecordTransferToolsComponent {
         this.previewRows = [];
         this.deleteBefore = false;
         this.importResultLines = [];
+        this.importRowStatuses = [];
         this.clearPanelMessage();
     }
 
@@ -291,7 +578,7 @@ export class RecordTransferToolsComponent {
             return xlsx.utils.sheet_to_json(workbook.Sheets[firstSheetName], {
                 header: 0,
                 defval: ''
-            }).map((row) => this.flattenPreviewRow(row));
+            }).map((row, index) => this.attachSourceRow(this.flattenPreviewRow(row), index + 2));
         }
         throw new Error('Formato non supportato. Usa .xlsx, .xls, .csv oppure .json.');
     }
@@ -309,7 +596,7 @@ export class RecordTransferToolsComponent {
         if (!Array.isArray(rows)) return [];
         return rows
             .filter((row): row is Record<string, unknown> => this.isRecord(row))
-            .map((row) => this.flattenPreviewRow(row));
+            .map((row, index) => this.attachSourceRow(this.flattenPreviewRow(row), index + 1));
     }
 
     private async buildExportFile(fileType: ExportFileType, model: string, rows: Array<Record<string, unknown>>): Promise<GeneratedFile> {
@@ -349,17 +636,18 @@ export class RecordTransferToolsComponent {
         const fields = fieldDefinitions.map((field) => field.key);
         if (!fields.length) throw new Error(`Campi schema non trovati per "${model}".`);
 
-        const rows = withData
-            ? (await this.fetchSourceRows(model, true)).map((row) => this.flattenPreviewRow(row))
+        const sourceRows = withData
+            ? await this.fetchSourceRows(model, true)
             : [];
 
         if (format === 'json') {
             return {
-                blob: new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json;charset=utf-8' }),
+                blob: new Blob([JSON.stringify(sourceRows, null, 2)], { type: 'application/json;charset=utf-8' }),
                 fileName: `${model}_${this.buildTimestamp()}.json`
             };
         }
 
+        const rows = sourceRows.map((row) => this.flattenPreviewRow(row));
         const normalizedRows = rows.map((row) => this.normalizePreviewRow(row, fields));
         const xlsx = await this.ensureXlsxRuntime();
         const sheet = normalizedRows.length
@@ -413,6 +701,21 @@ export class RecordTransferToolsComponent {
         return rows;
     }
 
+    private loadRecordSchemaPayload(model: string): Promise<unknown> {
+        const cached = this.modelPayloadCache.get(model);
+        if (cached) return cached;
+        const loader = this.api.getRecordSchema(model).catch(() => null as unknown);
+        this.modelPayloadCache.set(model, loader);
+        return loader;
+    }
+
+    private async loadFormSchemaForModel(model: string): Promise<Record<string, unknown> | null> {
+        const normalizedModel = String(model ?? '').trim();
+        if (!normalizedModel) return null;
+        const payload = await this.loadRecordSchemaPayload(normalizedModel);
+        return this.extractFormSchema(payload);
+    }
+
     private async loadModelFieldDefinitions(model: string): Promise<ModelFieldDefinition[]> {
         const normalizedModel = String(model ?? '').trim();
         if (!normalizedModel) return [];
@@ -420,14 +723,9 @@ export class RecordTransferToolsComponent {
         if (cached) return cached;
 
         const loader = (async () => {
-            const [recordSchemaPayload, modelSchemaPayload] = await Promise.allSettled([
-                this.api.getRecordSchema(normalizedModel),
-                this.api.getSchemaModel(normalizedModel)
-            ]);
+            const recordSchemaPayload = await this.loadRecordSchemaPayload(normalizedModel);
 
-            const schema = recordSchemaPayload.status === 'fulfilled'
-                ? this.extractFormSchema(recordSchemaPayload.value)
-                : null;
+            const schema = this.extractFormSchema(recordSchemaPayload);
             const definitions: ModelFieldDefinition[] = [];
             if (schema) {
                 this.collectFieldDefinitions(
@@ -435,19 +733,6 @@ export class RecordTransferToolsComponent {
                     definitions,
                     new Set<string>()
                 );
-            }
-
-            // Merge Pydantic/backend field types — overrides Form.io textfield when backend knows better.
-            if (modelSchemaPayload.status === 'fulfilled') {
-                const backendProperties = this.extractBackendProperties(modelSchemaPayload.value);
-                if (backendProperties) {
-                    this.modelsWithoutBackendSchema.delete(normalizedModel);
-                    this.mergeBackendFieldDefinitions(modelSchemaPayload.value, definitions);
-                } else {
-                    this.modelsWithoutBackendSchema.add(normalizedModel);
-                }
-            } else {
-                this.modelsWithoutBackendSchema.add(normalizedModel);
             }
 
             this.ensureFieldDefinition(definitions, 'rec_name');
@@ -459,87 +744,14 @@ export class RecordTransferToolsComponent {
         return loader;
     }
 
-    private async enrichFieldDefinitionsFromExistingRows(
-        model: string,
-        baseDefinitions: ModelFieldDefinition[],
-        previewColumns: string[]
-    ): Promise<ModelFieldDefinition[]> {
-        const normalizedModel = String(model ?? '').trim();
-        if (!normalizedModel || !previewColumns.length) return baseDefinitions;
-        // Run sample-row inference regardless of whether backend schema was found:
-        // backend schema may be incomplete (missing list fields, wrong type, $ref etc.).
-        // needsExistingRowInference prevents unnecessary fetches when all fields are well-typed.
-        if (!this.needsExistingRowInference(baseDefinitions, previewColumns)) return baseDefinitions;
-
-        const cached = this.sampledFieldCache.get(normalizedModel);
-        if (cached) return cached;
-
-        const loader = (async () => {
-            const sampledRows = await this.fetchSourceRows(normalizedModel, true);
-            if (!sampledRows.length) return baseDefinitions;
-
-            const merged = baseDefinitions.map((entry) => ({ ...entry }));
-            this.mergeDefinitionsFromSampleRows(sampledRows, merged, previewColumns);
-            return merged;
-        })();
-
-        this.sampledFieldCache.set(normalizedModel, loader);
-        return loader;
-    }
-
-    private needsExistingRowInference(definitions: ModelFieldDefinition[], previewColumns: string[]): boolean {
-        const previewSet = new Set(previewColumns.map((column) => String(column ?? '').trim()).filter(Boolean));
-        if (!previewSet.size) return false;
-
-        const definitionMap = new Map(definitions.map((entry) => [entry.key, entry]));
-        for (const column of previewSet) {
-            const definition = definitionMap.get(column);
-            if (!definition) return true;
-            if (definition.type === 'textfield' && !definition.multiple) return true;
-        }
-        return false;
-    }
-
-    private mergeDefinitionsFromSampleRows(
-        rows: Array<Record<string, unknown>>,
-        definitions: ModelFieldDefinition[],
-        previewColumns: string[]
-    ): void {
-        const previewSet = new Set(previewColumns.map((column) => String(column ?? '').trim()).filter(Boolean));
-        const defMap = new Map(definitions.map((entry) => [entry.key, entry]));
-
-        for (const row of rows) {
-            for (const [key, value] of Object.entries(row)) {
-                if (!previewSet.has(key)) continue;
-                const sampledDefinition = this.definitionFromSampleValue(key, value);
-                if (!sampledDefinition) continue;
-
-                const existing = defMap.get(key);
-                if (existing) {
-                    if (sampledDefinition.multiple) existing.multiple = true;
-                    if ((existing.type === 'textfield' || existing.type === '') && sampledDefinition.type !== 'textfield') {
-                        existing.type = sampledDefinition.type;
-                    }
-                    continue;
-                }
-
-                definitions.push(sampledDefinition);
-                defMap.set(key, sampledDefinition);
-            }
-        }
-    }
-
-    private definitionFromSampleValue(key: string, value: unknown): ModelFieldDefinition | null {
-        if (Array.isArray(value)) return { key, type: 'textfield', multiple: true };
-        if (typeof value === 'boolean') return { key, type: 'checkbox', multiple: false };
-        if (typeof value === 'number' && Number.isFinite(value)) return { key, type: 'number', multiple: false };
-        return null;
-    }
-
     private extractFormSchema(payload: unknown): Record<string, unknown> | null {
         if (!this.isRecord(payload)) return null;
         const content = this.isRecord(payload['content']) ? payload['content'] : null;
         if (content) {
+            const contentData = this.isRecord(content['data']) ? content['data'] as Record<string, unknown> : null;
+            if (contentData && Array.isArray(contentData['components'])) {
+                return { display: 'form', components: contentData['components'] };
+            }
             const schema = content['schema'];
             if (Array.isArray(schema)) return { display: 'form', components: schema };
             if (this.isRecord(schema) && Array.isArray(schema['components'])) return schema;
@@ -553,8 +765,8 @@ export class RecordTransferToolsComponent {
         definitions: ModelFieldDefinition[],
         seen: Set<string>
     ): void {
-        for (const node of nodes) {
-            if (!this.isRecord(node)) continue;
+        formioEachComponent(nodes as any[], (node: Record<string, unknown>) => {
+            if (!this.isRecord(node)) return false;
             const key = String(node['key'] ?? '').trim();
             const type = String(node['type'] ?? '').trim().toLowerCase();
             const input = node['input'] !== false;
@@ -566,149 +778,8 @@ export class RecordTransferToolsComponent {
                 });
                 seen.add(key);
             }
-
-            const nestedComponents = Array.isArray(node['components']) ? node['components'] as unknown[] : [];
-            if (nestedComponents.length) this.collectFieldDefinitions(nestedComponents, definitions, seen);
-
-            const columns = Array.isArray(node['columns']) ? node['columns'] as unknown[] : [];
-            columns.forEach((column) => {
-                const columnComponents = this.isRecord(column) && Array.isArray(column['components'])
-                    ? column['components'] as unknown[]
-                    : [];
-                if (columnComponents.length) this.collectFieldDefinitions(columnComponents, definitions, seen);
-            });
-
-            const rows = Array.isArray(node['rows']) ? node['rows'] as unknown[] : [];
-            rows.forEach((row) => {
-                if (!Array.isArray(row)) return;
-                row.forEach((cell) => {
-                    const cellComponents = this.isRecord(cell) && Array.isArray(cell['components'])
-                        ? cell['components'] as unknown[]
-                        : [];
-                    if (cellComponents.length) this.collectFieldDefinitions(cellComponents, definitions, seen);
-                });
-            });
-        }
-    }
-
-    /**
-     * Parses the /schema_model response (Pydantic JSON Schema or custom format) and
-     * upserts field definitions so backend types take precedence over Form.io types.
-     */
-    private mergeBackendFieldDefinitions(payload: unknown, definitions: ModelFieldDefinition[]): void {
-        const props = this.extractBackendProperties(payload);
-        if (!props) return;
-
-        const defMap = new Map(definitions.map((d) => [d.key, d]));
-
-        for (const [key, meta] of Object.entries(props)) {
-            if (!key || key === '__rowid') continue;
-            const fieldMeta = this.isRecord(meta) ? meta : {};
-            const rawType = this.extractBackendFieldType(fieldMeta);
-            const formioType = this.backendTypeToFormio(rawType);
-            if (!formioType) continue;
-
-            const isMultiple = this.isBackendMultipleField(fieldMeta, rawType)
-                || this.toBooleanFlag(fieldMeta['multiple'])
-                || this.hasBackendItems(fieldMeta);
-
-            const existing = defMap.get(key);
-            if (existing) {
-                // Always propagate multiple flag from backend (e.g. tags component).
-                if (isMultiple && !existing.multiple) existing.multiple = true;
-                // Only upgrade textfield → richer type; never downgrade.
-                if (existing.type === 'textfield' || existing.type === '') {
-                    existing.type = formioType;
-                }
-            } else {
-                const def: ModelFieldDefinition = { key, type: formioType, multiple: isMultiple };
-                definitions.push(def);
-                defMap.set(key, def);
-            }
-        }
-    }
-
-    private extractBackendProperties(payload: unknown): Record<string, unknown> | null {
-        if (!this.isRecord(payload)) return null;
-
-        const directProperties = this.isRecord(payload['properties']) ? payload['properties'] : null;
-        if (directProperties) return directProperties;
-
-        const directFields = this.isRecord(payload['fields']) ? payload['fields'] : null;
-        if (directFields) return directFields;
-
-        const schema = this.isRecord(payload['schema']) ? payload['schema'] : null;
-        const schemaProperties = schema && this.isRecord(schema['properties']) ? schema['properties'] : null;
-        if (schemaProperties) return schemaProperties;
-
-        const content = this.isRecord(payload['content']) ? payload['content'] : null;
-        if (!content) return null;
-
-        const contentProperties = this.isRecord(content['properties']) ? content['properties'] : null;
-        if (contentProperties) return contentProperties;
-
-        const contentFields = this.isRecord(content['fields']) ? content['fields'] : null;
-        if (contentFields) return contentFields;
-
-        const contentSchema = this.isRecord(content['schema']) ? content['schema'] : null;
-        return contentSchema && this.isRecord(contentSchema['properties']) ? contentSchema['properties'] : null;
-    }
-
-    private extractBackendFieldType(fieldMeta: Record<string, unknown>): string {
-        const typeCandidates = this.collectBackendTypeCandidates(fieldMeta).filter((entry) => entry !== 'null');
-        return typeCandidates[0] ?? '';
-    }
-
-    private collectBackendTypeCandidates(fieldMeta: Record<string, unknown>): string[] {
-        const types: string[] = [];
-        const pushType = (value: unknown): void => {
-            if (typeof value === 'string') {
-                const normalized = value.trim().toLowerCase();
-                if (normalized) types.push(normalized);
-                return;
-            }
-            if (Array.isArray(value)) {
-                value.forEach((entry) => pushType(entry));
-            }
-        };
-        const pushCompositeTypes = (value: unknown): void => {
-            if (!Array.isArray(value)) return;
-            value.forEach((entry) => {
-                if (!this.isRecord(entry)) return;
-                pushType(entry['type']);
-                pushType(entry['python_type']);
-                if (this.hasBackendItems(entry)) types.push('array');
-            });
-        };
-
-        pushType(fieldMeta['type']);
-        pushType(fieldMeta['python_type']);
-        pushCompositeTypes(fieldMeta['anyOf']);
-        pushCompositeTypes(fieldMeta['oneOf']);
-        pushCompositeTypes(fieldMeta['allOf']);
-        if (this.hasBackendItems(fieldMeta)) types.push('array');
-
-        return Array.from(new Set(types));
-    }
-
-    private isBackendMultipleField(fieldMeta: Record<string, unknown>, rawType: string): boolean {
-        if (rawType === 'array' || rawType === 'list') return true;
-        return this.collectBackendTypeCandidates(fieldMeta).some((entry) => entry === 'array' || entry === 'list');
-    }
-
-    private hasBackendItems(fieldMeta: Record<string, unknown>): boolean {
-        return this.isRecord(fieldMeta['items']) || Array.isArray(fieldMeta['items']);
-    }
-
-    private backendTypeToFormio(rawType: string): string | null {
-        switch (rawType) {
-            case 'bool': case 'boolean':                    return 'checkbox';
-            case 'int': case 'float': case 'number':
-            case 'integer': case 'decimal':                 return 'number';
-            case 'str': case 'string':                      return 'textfield';
-            case 'list': case 'array':                      return 'textfield'; // multiple handled separately
-            default:                                         return null;
-        }
+            return false;
+        }, true);
     }
 
     private ensureFieldDefinition(definitions: ModelFieldDefinition[], key: string): void {
@@ -738,7 +809,8 @@ export class RecordTransferToolsComponent {
 
     private prepareImportRow(
         row: ImportPreviewRow,
-        fieldMap: Map<string, ModelFieldDefinition>
+        fieldMap: Map<string, ModelFieldDefinition>,
+        model: string
     ): { prepared: Record<string, unknown>; warnings: string[] } {
         const prepared: Record<string, unknown> = {};
         const warnings: string[] = [];
@@ -747,6 +819,12 @@ export class RecordTransferToolsComponent {
             const normalizedKey = String(key ?? '').trim();
             if (!normalizedKey || this.importMetadataKeys.has(normalizedKey)) return;
             const definition = fieldMap.get(normalizedKey);
+            const structured = this.coerceStructuredFieldValue(normalizedKey, value, model);
+            if (structured.handled) {
+                if (structured.parseWarning) warnings.push(structured.parseWarning);
+                prepared[normalizedKey] = structured.value;
+                return;
+            }
             const coerced = this.coerceFieldValue(value, definition);
             if (definition) {
                 const warn = this.coercionWarning(value, coerced, normalizedKey, definition);
@@ -755,46 +833,390 @@ export class RecordTransferToolsComponent {
             prepared[normalizedKey] = coerced;
         });
 
-        prepared['data_value'] = this.buildDataValueAlias(prepared);
+        if (this.isComponentImportModel(model)) {
+            return {
+                prepared: this.normalizeComponentImportRow(prepared),
+                warnings
+            };
+        }
+
         return { prepared, warnings };
     }
 
-    private buildDataValueAlias(record: Record<string, unknown>): Record<string, unknown> {
-        const explicit = this.isRecord(record['data_value']) ? this.cloneRecord(record['data_value']) : {};
-        const alias: Record<string, unknown> = { ...explicit };
-        const excludedKeys = new Set(['data', 'data_value', 'schema', 'formio', 'components']);
-        Object.entries(record).forEach(([key, value]) => {
-            if (excludedKeys.has(key) || value === undefined) return;
-            if (Object.prototype.hasOwnProperty.call(alias, key)) return;
-            alias[key] = value;
-        });
-        return alias;
-    }
+    private normalizeImportResponse(response: unknown): {
+        failed: boolean;
+        success: boolean;
+        message: string;
+        ok: number;
+        errorLines: string[];
+    } {
+        if (typeof response === 'string') {
+            const normalized = response.trim();
+            const failed = /^(error|failed?|internal server error)\b/i.test(normalized);
+            return {
+                failed,
+                success: !failed,
+                message: failed ? normalized : '',
+                ok: failed ? 0 : 1,
+                errorLines: failed && normalized ? [normalized] : []
+            };
+        }
+        if (!this.isRecord(response)) {
+            return {
+                failed: false,
+                success: true,
+                message: '',
+                ok: 1,
+                errorLines: []
+            };
+        }
 
-    private async deleteExistingRecords(model: string): Promise<string[]> {
-        const rows = await this.fetchSourceRows(model, false);
-        const errors: string[] = [];
-        const actionName = `delete_${model}`;
-        for (const row of rows) {
-            const recName = String(row['rec_name'] ?? '').trim();
-            if (!recName) continue;
-            try {
-                await this.api.deleteAction(actionName, recName, {});
-            } catch (error) {
-                errors.push(`Delete ${recName}: ${this.errorMessage(error)}`);
+        const status = String(response['status'] ?? '').trim().toLowerCase();
+        const failedFlag = response['fail'] ?? response['failed'];
+        const hasFailedFlag = typeof failedFlag === 'boolean';
+        const failedByFlag = hasFailedFlag ? failedFlag === true : false;
+        const failedByStatus = ['error', 'failed', 'fail', 'ko'].includes(status);
+        const failed = failedByFlag || failedByStatus;
+        const message = String(response['msg'] ?? response['message'] ?? '').trim();
+
+        const errorLines: string[] = [];
+        const errorList = response['error_list'];
+        if (Array.isArray(errorList)) {
+            errorList
+                .map((entry) => this.toImportResultLine(entry))
+                .filter(Boolean)
+                .forEach((entry) => errorLines.push(entry));
+        }
+        if (!errorLines.length) {
+            const errorText = String(response['error'] ?? '').trim();
+            if (errorText) {
+                errorText
+                    .split('<br/>')
+                    .map((entry) => entry.trim())
+                    .filter(Boolean)
+                    .forEach((entry) => errorLines.push(entry));
             }
         }
-        return errors;
+        if (!errorLines.length && failed && message) {
+            errorLines.push(message);
+        }
+
+        const rawOk = response['ok'];
+        const normalizedOk = typeof rawOk === 'boolean'
+            ? (rawOk ? 1 : 0)
+            : Number(rawOk);
+        const hasNumericOk = rawOk !== undefined && rawOk !== null && Number.isFinite(normalizedOk);
+        const successByStatus = ['ok', 'done', 'success', 'completed'].includes(status);
+        const successByFlag = hasFailedFlag && failedFlag === false;
+        const success = !failed
+            && !errorLines.length
+            && (successByFlag || successByStatus || !hasNumericOk || normalizedOk > 0);
+        const ok = hasNumericOk ? normalizedOk : (success ? 1 : 0);
+
+        return { failed, success, message, ok, errorLines };
+    }
+
+    private toImportResultLine(value: unknown): string {
+        if (typeof value === 'string') return value.trim();
+        if (this.isRecord(value)) {
+            const message = String(value['message'] ?? value['msg'] ?? '').trim();
+            if (message) return message;
+            try {
+                return JSON.stringify(value);
+            } catch {
+                return String(value);
+            }
+        }
+        return String(value ?? '').trim();
+    }
+
+    private isComponentImportModel(model: string): boolean {
+        return String(model ?? '').trim().toLowerCase() === 'component';
+    }
+
+    private normalizeComponentImportRow(record: Record<string, unknown>): Record<string, unknown> {
+        this.normalizeComponentStructuredFields(record);
+        this.normalizeComponentBooleanFields(record);
+        this.normalizeComponentScalarStringFields(record);
+        return record;
+    }
+
+    private normalizeComponentStructuredFields(record: Record<string, unknown>): void {
+        Object.keys(record).forEach((key) => {
+            const value = record[key];
+            if (this.componentObjectKeys.has(key)) {
+                const normalized = this.normalizeStructuredValue(value, 'object');
+                if (normalized.ok) {
+                    record[key] = normalized.value;
+                }
+                return;
+            }
+            if (this.componentArrayKeys.has(key)) {
+                const mode = key === 'components' ? 'array' : 'array_or_csv';
+                const normalized = this.normalizeStructuredValue(value, mode);
+                if (normalized.ok) {
+                    record[key] = normalized.value;
+                }
+            }
+        });
+    }
+
+    private normalizeComponentBooleanFields(record: Record<string, unknown>): void {
+        Object.keys(record).forEach((key) => {
+            if (!this.componentBooleanKeys.has(key)) return;
+            const value = record[key];
+            if (typeof value === 'boolean') return;
+            if (typeof value === 'number') {
+                record[key] = value !== 0;
+                return;
+            }
+            if (typeof value !== 'string') return;
+            if (!value.trim()) {
+                record[key] = false;
+                return;
+            }
+            const parsed = this.parseBooleanString(value);
+            if (parsed !== null) record[key] = parsed;
+        });
+    }
+
+    private normalizeComponentScalarStringFields(record: Record<string, unknown>): void {
+        Object.keys(record).forEach((key) => {
+            if (!this.componentScalarStringKeys.has(key)) return;
+            const value = record[key];
+            if (typeof value === 'string') return;
+            if (Array.isArray(value)) {
+                record[key] = value.map((entry) => String(entry ?? '').trim()).filter(Boolean).join(',');
+                return;
+            }
+            if (value == null) {
+                record[key] = '';
+                return;
+            }
+            record[key] = String(value);
+        });
+    }
+
+    private async normalizeFormioComponents(
+        raw: unknown
+    ): Promise<{ ok: boolean; value: unknown[]; warning?: string }> {
+        const parsed = this.normalizeStructuredValue(raw, 'array');
+        const baseArray: unknown[] = parsed.ok && Array.isArray(parsed.value)
+            ? (parsed.value as unknown[])
+            : [];
+
+        if (!baseArray.length && !parsed.ok) {
+            return { ok: false, value: [], warning: `campo "components": impossibile parsare come lista` };
+        }
+
+        try {
+            const container = document.createElement('div');
+            container.style.display = 'none';
+            document.body.appendChild(container);
+            let formInstance: any;
+            try {
+                formInstance = await (Formio as any).createForm(container, {
+                    display: 'form',
+                    components: baseArray,
+                });
+                const normalized: unknown[] = formInstance.schema?.components ?? baseArray;
+                return { ok: true, value: normalized };
+            } finally {
+                if (formInstance) {
+                    try { formInstance.destroy(true); } catch { /* ignore */ }
+                }
+                container.remove();
+            }
+        } catch {
+            return { ok: baseArray.length > 0, value: baseArray };
+        }
+    }
+
+    private async createFormInstanceForImport(
+        formSchema: Record<string, unknown>
+    ): Promise<{ form: any; container: HTMLElement } | null> {
+        const container = document.createElement('div');
+        container.style.display = 'none';
+        document.body.appendChild(container);
+        try {
+            const form = await (Formio as any).createForm(container, formSchema, { noAlerts: true });
+            return { form, container };
+        } catch {
+            container.remove();
+            return null;
+        }
+    }
+
+    private destroyFormInstance(handle: { form: any; container: HTMLElement }): void {
+        try { handle.form.destroy(true); } catch { /* ignore */ }
+        handle.container.remove();
+    }
+
+    private extractFormioSubmissionData(
+        form: any,
+        row: Record<string, unknown>
+    ): Record<string, unknown> {
+        try {
+            form.submission = { data: { ...row } };
+            const data = form.submission?.data;
+            return this.isRecord(data) ? { ...data as Record<string, unknown> } : {};
+        } catch {
+            return {};
+        }
+    }
+
+    private mergePreparedWithFormioData(
+        prepared: Record<string, unknown>,
+        formioData: Record<string, unknown>,
+        fieldMap: Map<string, ModelFieldDefinition>
+    ): void {
+        Object.entries(formioData).forEach(([key, value]) => {
+            const definition = fieldMap.get(key);
+            if (!definition) return;
+            if (this.isScalarStringField(definition)) return;
+            if (this.shouldKeepPreparedValue(prepared[key], value, definition)) return;
+            prepared[key] = value;
+        });
+    }
+
+    private shouldKeepPreparedValue(
+        currentValue: unknown,
+        nextValue: unknown,
+        definition: ModelFieldDefinition
+    ): boolean {
+        if (nextValue === undefined) return true;
+        if (this.isEmptyRecord(nextValue)) {
+            return currentValue !== undefined;
+        }
+        if (nextValue === null) {
+            return currentValue !== undefined && currentValue !== null && currentValue !== '';
+        }
+        if (typeof nextValue === 'string' && !nextValue.trim()) {
+            if (definition.multiple) return Array.isArray(currentValue);
+            return currentValue !== undefined
+                && currentValue !== null
+                && (typeof currentValue !== 'string' || currentValue.trim() !== '');
+        }
+        if (Array.isArray(nextValue) && !nextValue.length) {
+            if (definition.multiple) {
+                return Array.isArray(currentValue) && currentValue.length > 0;
+            }
+            return currentValue !== undefined && currentValue !== null;
+        }
+        return false;
+    }
+
+    private async preNormalizeComponentRow(
+        row: ImportPreviewRow
+    ): Promise<{ row: ImportPreviewRow; componentError?: string }> {
+        const raw = row['components'];
+        if (raw == null || (Array.isArray(raw) && (raw as unknown[]).length === 0)) {
+            return { row };
+        }
+        const result = await this.normalizeFormioComponents(raw);
+        if (!result.ok) {
+            const error = result.warning ?? 'campo "components": valore non parsabile come schema Formio — riga non importata';
+            return { row, componentError: error };
+        }
+        return { row: { ...row, components: result.value } };
+    }
+
+    private normalizeStructuredValue(
+        value: unknown,
+        expected: 'object' | 'array' | 'array_or_csv'
+    ): { ok: boolean; value?: unknown } {
+        if (expected === 'object' && this.isRecord(value)) return { ok: true, value };
+        if ((expected === 'array' || expected === 'array_or_csv') && Array.isArray(value)) return { ok: true, value };
+        if (typeof value !== 'string') return { ok: false };
+
+        const trimmed = value.trim();
+        if (!trimmed) {
+            if (expected === 'object') return { ok: true, value: {} };
+            return { ok: true, value: [] };
+        }
+
+        const structured = this.tryParseStructuredValue(trimmed);
+        if (structured.parsed) {
+            const normalizedStructured = this.normalizeStructuredDataTree(structured.value);
+            if (expected === 'object' && this.isRecord(normalizedStructured)) return { ok: true, value: normalizedStructured };
+            if ((expected === 'array' || expected === 'array_or_csv') && Array.isArray(normalizedStructured)) {
+                return { ok: true, value: normalizedStructured };
+            }
+        }
+
+        if (expected === 'array_or_csv') {
+            return {
+                ok: true,
+                value: trimmed.split(',').map((entry) => entry.trim()).filter(Boolean)
+            };
+        }
+        return { ok: false };
+    }
+
+    private normalizeStructuredDataTree(value: unknown): unknown {
+        const nested = this.parseNestedStructuredString(value);
+        if (nested !== value) return this.normalizeStructuredDataTree(nested);
+        if (Array.isArray(value)) {
+            return value.map((entry) => this.normalizeStructuredDataTree(this.parseNestedStructuredString(entry)));
+        }
+        if (!this.isRecord(value)) return value;
+
+        const normalized: Record<string, unknown> = {};
+        Object.entries(value).forEach(([key, entry]) => {
+            if (Array.isArray(entry) || this.isRecord(entry)) {
+                normalized[key] = this.normalizeStructuredDataTree(entry);
+                return;
+            }
+            normalized[key] = entry;
+        });
+        return normalized;
+    }
+
+    private parseNestedStructuredString(value: unknown): unknown {
+        if (typeof value !== 'string') return value;
+        const trimmed = value.trim();
+        if (!trimmed) return value;
+
+        const structured = this.tryParseStructuredValue(trimmed);
+        if (!structured.parsed) return value;
+        if (typeof structured.value === 'string' && structured.value.trim() === trimmed) return value;
+        return structured.value;
+    }
+
+    private coerceStructuredFieldValue(
+        key: string,
+        value: unknown,
+        model?: string
+    ): { handled: boolean; value?: unknown; parseWarning?: string } {
+        if (this.isComponentImportModel(model ?? '') && this.componentObjectKeys.has(key)) {
+            const normalized = this.normalizeStructuredValue(value, 'object');
+            if (!normalized.ok && typeof value === 'string' && value.trim()) {
+                return { handled: true, value, parseWarning: `campo "${key}": impossibile parsare come oggetto` };
+            }
+            return { handled: true, value: normalized.ok ? normalized.value : value };
+        }
+
+        if (this.isComponentImportModel(model ?? '') && this.componentArrayKeys.has(key)) {
+            const normalized = this.normalizeStructuredValue(value, key === 'components' ? 'array' : 'array_or_csv');
+            if (!normalized.ok && typeof value === 'string' && value.trim()) {
+                return { handled: true, value, parseWarning: `campo "${key}": impossibile parsare come lista` };
+            }
+            return { handled: true, value: normalized.ok ? normalized.value : value };
+        }
+        return { handled: false };
     }
 
     private coerceFieldValue(value: unknown, definition?: ModelFieldDefinition): unknown {
-        // Arrays → join only when field is explicitly a string type (e.g. app_code: str in Pydantic).
-        // For unknown or non-string fields keep the array as-is.
+        const scalarStringField = this.isScalarStringField(definition);
+
         if (Array.isArray(value)) {
             if (definition?.multiple) return value;
-            if (definition?.type === 'textfield') {
-                return value.map((v) => String(v ?? '')).filter(Boolean).join(',');
-            }
+            if (scalarStringField) return this.joinArrayValuesAsString(value);
+            return value;
+        }
+
+        if (this.isRecord(value)) {
+            if (scalarStringField) return JSON.stringify(value);
             return value;
         }
 
@@ -807,24 +1229,32 @@ export class RecordTransferToolsComponent {
             return value; // '' → '' for string fields (Pydantic str accepts empty string)
         }
 
-        if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
-            try {
-                const parsed = JSON.parse(trimmed);
-                // Re-apply array coercion after JSON.parse.
+        const structured = this.tryParseStructuredValue(trimmed);
+        if (structured.structured) {
+            if (structured.parsed) {
+                const parsed = structured.value;
                 if (Array.isArray(parsed)) {
                     if (definition?.multiple) return parsed;
-                    // Empty array → empty string regardless of definition (never a valid backend scalar).
                     if (!parsed.length) return '';
-                    // Non-empty + known string field → join.
-                    if (definition?.type === 'textfield') {
-                        return parsed.map((v) => String(v ?? '')).filter(Boolean).join(',');
-                    }
+                    if (scalarStringField) return this.joinArrayValuesAsString(parsed);
                     return parsed;
                 }
+                if (this.isRecord(parsed)) {
+                    if (scalarStringField) return JSON.stringify(parsed);
+                    return parsed;
+                }
+                if (parsed == null) {
+                    if (definition?.multiple) return [];
+                    if (definition?.type === 'number') return null;
+                    if (definition?.type === 'checkbox') return false;
+                    return scalarStringField ? '' : parsed;
+                }
+                if (definition?.type === 'number' && typeof parsed === 'number') return parsed;
+                if (definition?.type === 'checkbox' && typeof parsed === 'boolean') return parsed;
+                if (scalarStringField) return String(parsed);
                 return parsed;
-            } catch {
-                // keep raw string when the cell contains plain text that looks like JSON.
             }
+            return value;
         }
 
         if (definition?.multiple && trimmed.includes(',')) {
@@ -843,6 +1273,159 @@ export class RecordTransferToolsComponent {
             default:
                 return value;
         }
+    }
+
+    private isScalarStringField(definition?: ModelFieldDefinition): boolean {
+        return !!definition?.type
+            && !definition.multiple
+            && (definition.type === 'textfield' || definition.type === 'textarea');
+    }
+
+    private joinArrayValuesAsString(values: unknown[]): string {
+        return values
+            .map((entry) => String(entry ?? '').trim())
+            .filter(Boolean)
+            .join(',');
+    }
+
+    private tryParseStructuredValue(value: string): { structured: boolean; parsed: boolean; value?: unknown } {
+        const candidates = this.buildStructuredParseCandidates(value);
+        const pythonCandidates = this.buildPythonStructuredParseCandidates(value);
+        if (!candidates.length && !pythonCandidates.length) return { structured: false, parsed: false };
+        for (const candidate of candidates) {
+            try {
+                const parsed = JSON.parse(candidate);
+                if (typeof parsed === 'string') {
+                    const nested = this.tryParseStructuredValue(parsed.trim());
+                    if (nested.parsed) return nested;
+                }
+                return { structured: true, parsed: true, value: parsed };
+            } catch {
+                // Try the next normalization candidate.
+            }
+        }
+
+        for (const candidate of pythonCandidates) {
+            try {
+                return { structured: true, parsed: true, value: new PythonLiteralParser(candidate).parse() };
+            } catch {
+                // Try the next Python-literal candidate.
+            }
+        }
+
+        return { structured: true, parsed: false };
+    }
+
+    private buildStructuredParseCandidates(value: string): string[] {
+        const trimmed = value.trim();
+        if (!trimmed) return [];
+
+        const candidates = new Set<string>();
+        const pushCandidate = (candidate: string): void => {
+            const normalized = candidate.trim();
+            if (normalized && this.looksLikeStructuredValue(normalized)) {
+                candidates.add(normalized);
+            }
+        };
+
+        pushCandidate(trimmed);
+        pushCandidate(this.unescapeStructuredLiteral(trimmed));
+        pushCandidate(this.normalizeStructuredLiteral(trimmed));
+        pushCandidate(this.normalizeStructuredLiteral(this.unescapeStructuredLiteral(trimmed)));
+
+        const unwrapped = this.unwrapQuotedStructuredLiteral(trimmed);
+        if (unwrapped) {
+            pushCandidate(unwrapped);
+            pushCandidate(this.unescapeStructuredLiteral(unwrapped));
+            pushCandidate(this.normalizeStructuredLiteral(unwrapped));
+            pushCandidate(this.normalizeStructuredLiteral(this.unescapeStructuredLiteral(unwrapped)));
+        }
+
+        return [...candidates];
+    }
+
+    private buildPythonStructuredParseCandidates(value: string): string[] {
+        const trimmed = value.trim();
+        if (!trimmed) return [];
+
+        const candidates = new Set<string>();
+        const pushCandidate = (candidate: string | null): void => {
+            if (!candidate) return;
+            const normalized = candidate.trim();
+            if (normalized && this.looksLikeStructuredValue(normalized)) {
+                candidates.add(normalized);
+            }
+        };
+
+        pushCandidate(trimmed);
+        pushCandidate(this.unescapeStructuredLiteral(trimmed));
+        pushCandidate(this.unwrapQuotedStructuredLiteral(trimmed));
+        return [...candidates];
+    }
+
+    private looksLikeStructuredValue(value: string): boolean {
+        return (value.startsWith('{') && value.endsWith('}')) || (value.startsWith('[') && value.endsWith(']'));
+    }
+
+    private unwrapQuotedStructuredLiteral(value: string): string | null {
+        if (value.length < 2) return null;
+        const quote = value[0];
+        if ((quote !== '"' && quote !== '\'') || value[value.length - 1] !== quote) return null;
+
+        let inner = value.slice(1, -1).trim();
+        if (!inner) return null;
+        inner = inner.replace(/""/g, '"');
+        inner = inner.replace(/\\(["'])/g, '$1');
+        return this.looksLikeStructuredValue(inner) ? inner : null;
+    }
+
+    private unescapeStructuredLiteral(value: string): string {
+        return value.replace(/\\(['"])/g, '$1');
+    }
+
+    private normalizeStructuredLiteral(value: string): string {
+        let normalized = this.unescapeStructuredLiteral(value.trim());
+        normalized = normalized.replace(/\bNone\b/g, 'null');
+        normalized = normalized.replace(/\bTrue\b/g, 'true');
+        normalized = normalized.replace(/\bFalse\b/g, 'false');
+        normalized = normalized.replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, (_match, inner: string) => {
+            return `"${this.escapeJsonString(this.decodeSingleQuotedLiteralInner(inner))}"`;
+        });
+        normalized = normalized.replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_\-]*)(\s*:)/g, '$1"$2"$3');
+        normalized = normalized.replace(/,\s*([}\]])/g, '$1');
+        return normalized;
+    }
+
+    private decodeSingleQuotedLiteralInner(value: string): string {
+        let decoded = '';
+        for (let index = 0; index < value.length; index += 1) {
+            const current = value[index];
+            const next = value[index + 1];
+            if (current !== '\\' || !next) {
+                decoded += current;
+                continue;
+            }
+
+            switch (next) {
+                case '\\': decoded += '\\'; break;
+                case '\'': decoded += '\''; break;
+                case '"': decoded += '"'; break;
+                case 'n': decoded += '\n'; break;
+                case 'r': decoded += '\r'; break;
+                case 't': decoded += '\t'; break;
+                case 'b': decoded += '\b'; break;
+                case 'f': decoded += '\f'; break;
+                default:
+                    decoded += next;
+                    break;
+            }
+            index += 1;
+        }
+        return decoded;
+    }
+
+    private escapeJsonString(value: string): string {
+        return JSON.stringify(value).slice(1, -1);
     }
 
     /** Returns a warning string when coercion had to fall back to a default, null otherwise. */
@@ -900,6 +1483,7 @@ export class RecordTransferToolsComponent {
         rows.forEach((row) => {
             Object.keys(row).forEach((key) => {
                 const normalized = String(key ?? '').trim();
+                if (normalized.startsWith('__')) return;
                 if (normalized) columns.add(normalized);
             });
         });
@@ -911,7 +1495,29 @@ export class RecordTransferToolsComponent {
         columns.forEach((column) => {
             normalized[column] = row[column] ?? '';
         });
+        if (typeof row['__sourceRow'] === 'number' && Number.isFinite(row['__sourceRow'])) {
+            normalized['__sourceRow'] = row['__sourceRow'];
+        }
         return normalized;
+    }
+
+    private attachSourceRow(row: ImportPreviewRow, sourceRow: number): ImportPreviewRow {
+        return {
+            ...row,
+            __sourceRow: sourceRow
+        };
+    }
+
+    private describeImportRow(row: ImportPreviewRow, index: number, recName = ''): string {
+        if (recName) return recName;
+        return `Riga ${index + 1}`;
+    }
+
+    private describeImportFailure(rowReference: string, recName: string): string {
+        if (rowReference && recName && rowReference !== recName) {
+            return `${rowReference} (${recName})`;
+        }
+        return rowReference || recName || 'Record';
     }
 
     private toCsv(columns: string[], rows: ImportPreviewRow[]): string {
@@ -966,6 +1572,10 @@ export class RecordTransferToolsComponent {
 
     private isRecord(value: unknown): value is Record<string, unknown> {
         return !!value && typeof value === 'object' && !Array.isArray(value);
+    }
+
+    private isEmptyRecord(value: unknown): value is Record<string, unknown> {
+        return this.isRecord(value) && Object.keys(value).length === 0;
     }
 
     private cloneRecord(value: Record<string, unknown>): Record<string, unknown> {

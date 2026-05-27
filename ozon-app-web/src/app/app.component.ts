@@ -1,4 +1,4 @@
-import { Component, Inject, OnDestroy, OnInit, Optional, ViewChild } from '@angular/core';
+import { Component, Inject, OnDestroy, OnInit, Optional, ViewChild, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { FormioComponent, FormioModule } from '@formio/angular';
@@ -14,6 +14,7 @@ import { AppFormioRendererService } from './managers/app-formio-renderer.service
 import { AppFormioBuilderService } from './managers/app-formio-builder.service';
 import { AppActionManagerService } from './managers/app-action-manager.service';
 import { ContextAction, ListPageChange, ListSortChange, TableColumn, TableRow, MenuButton, MenuCard, MenuDrillDownGroup } from './models/app.types';
+import { GlobalErrorStateService } from './core/global-error-state.service';
 
 @Component({
     selector: 'app-root',
@@ -27,6 +28,7 @@ export class AppComponent implements OnInit, OnDestroy {
     @ViewChild(OzonFormBuilderHostComponent) activeBuilderHost?: OzonFormBuilderHostComponent;
     @ViewChild('formioViewer') formioViewer?: FormioComponent;
     readonly formPlaceholderRows = [0, 1, 2, 3, 4];
+    private readonly globalErrorState = inject(GlobalErrorStateService);
 
     constructor(
         readonly theme: AppThemeService,
@@ -61,7 +63,12 @@ export class AppComponent implements OnInit, OnDestroy {
 
     get statusText(): string { return this.appManager.statusText; }
     get statusError(): boolean { return this.appManager.statusError; }
+    get formNotifications() { return this.appManager.formNotifications; }
+    dismissFormNotifications(): void { this.appManager.clearFormNotifications(); }
     get serverErrorRetryVisible(): boolean { return this.appManager.serverErrorRetryVisible; }
+    get fatalClientErrorVisible(): boolean { return this.globalErrorState.visible; }
+    get fatalClientErrorMessage(): string { return this.globalErrorState.message; }
+    get fatalClientErrorDetails(): string { return this.globalErrorState.details; }
     get models(): string[] { return this.appManager.models; }
     get selectedModel(): string { return this.appManager.selectedModel; }
     set selectedModel(v: string) { this.appManager.selectedModel = v; }
@@ -121,6 +128,7 @@ export class AppComponent implements OnInit, OnDestroy {
     get canOpenRecord(): boolean { return this.actionManager.canOpenRecord; }
     get canOpenNewRecord(): boolean { return this.actionManager.canOpenNewRecord; }
     get listContextActions() { return this.actionManager.listContextActions; }
+    get showListActionButtonsFallback(): boolean { return this.actionManager.showListActionButtonsFallback; }
     get isLoadingRecords(): boolean { return this.tableManager.isLoadingRecords; }
 
     login(): void { this.actionManager.login(); }
@@ -139,6 +147,18 @@ export class AppComponent implements OnInit, OnDestroy {
         return this.actionManager.runTopMenuAction(btn);
     }
     async retryServerError(): Promise<void> { return this.actionManager.retryServerError(); }
+    dismissFatalClientError(): void { this.globalErrorState.clear(); }
+    async recoverFromFatalClientError(): Promise<void> {
+        this.globalErrorState.clear();
+        await this.resetNavigation();
+    }
+    reloadAfterFatalClientError(): void {
+        this.globalErrorState.clear();
+        this.reloadWindow();
+    }
+    reloadWindow(): void {
+        if (typeof window !== 'undefined') window.location.reload();
+    }
     async saveCurrentRecord(): Promise<void> { return this.actionManager.saveCurrentRecord(this.activeBuilderHost, this.formioViewer); }
     menuDrilldownGroups(card: MenuCard): MenuDrillDownGroup[] { return this.actionManager.menuDrilldownGroups(card); }
 
@@ -196,6 +216,14 @@ export class AppComponent implements OnInit, OnDestroy {
     }
     async onCopyRow(row: TableRow, event: Event): Promise<void> { return this.actionManager.onCopyRow(row, event); }
     async onRemoveRow(row: TableRow, event: Event): Promise<void> { return this.actionManager.onRemoveRow(row, event); }
+    onImportBusyChange(isBusy: boolean): void {
+        if (isBusy) this.actionManager.beginExternalTransition();
+        else this.actionManager.endExternalTransition();
+    }
+    onImportFinished(): void {
+        if (!this.isListPage) return;
+        void this.actionManager.loadRecords(true);
+    }
 
     // --- Fast Search ---
 

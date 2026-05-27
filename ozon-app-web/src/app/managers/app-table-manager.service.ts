@@ -1,7 +1,11 @@
 import { Injectable } from '@angular/core';
 import jsonLogic from 'json-logic-js';
 import { OzonApiService } from '../core/ozon-api.service';
-import { selectOptionPrimitiveValue, toSelectValueOption as mapSelectValueOption } from '../core/select-option.util';
+import {
+    SelectOptionMappingConfig,
+    selectOptionPrimitiveValue,
+    toSelectValueOption as mapSelectValueOption
+} from '../core/select-option.util';
 import {
     ListPageChange, ListSortChange, ListRowReorderChange,
     TableColumn, TableRow, SelectValueOption, TableSortDirection,
@@ -9,6 +13,11 @@ import {
     ListExportConfig, ListImportConfig, ListSearchSessionContext
 } from '../models/app.types';
 import { FastSearchPayload, ListRequestPayload, RemoteSelectRequestPayload } from '../models/ozon.types';
+
+interface FastSearchStorageEntry {
+    savedAt: number;
+    data: Record<string, unknown>;
+}
 
 @Injectable()
 export class AppTableManagerService {
@@ -92,14 +101,12 @@ export class AppTableManagerService {
     private fastSearchQueryFields: Record<string, unknown>[] = [];
     private isRefreshingFastSearchDependentSelects = false;
     private readonly fastSearchStoragePrefix = 'ozon.fs.';
+    private readonly fastSearchStorageTtlMs = 8 * 60 * 60 * 1000;
 
     sessionLocale = 'it';
     sessionTimezone = '';
 
     private readonly defaultPageSizeOptions = [10, 20, 30, 50];
-    private readonly responseWrappers: Array<'content' | 'payload' | 'response' | 'result' | 'action'> = [
-        'content', 'payload', 'response', 'result', 'action'
-    ];
 
     private remoteSelectCache = new Map<string, SelectValueOption[]>();
     private remoteSelectInflight = new Map<string, Promise<SelectValueOption[]>>();
@@ -335,6 +342,7 @@ export class AppTableManagerService {
         if (data) this.mergeFastSearchSubmissionData(data);
         const changedKey = this.extractChangedComponentKey(eventRecord);
         if (changedKey) await this.refreshFastSearchDependentSelectComponents(changedKey);
+        this.saveFastSearchStateToStorage();
         return this.shouldAutoSubmitFastSearchChange(changedKey);
     }
 
@@ -342,6 +350,7 @@ export class AppTableManagerService {
         this.fastSearchActive = false;
         this.fastSearchQueryFields = [];
         this.replaceFastSearchSubmission({});
+        this.clearFastSearchStateFromStorage();
     }
 
     activateFastSearch(): void {
@@ -349,6 +358,7 @@ export class AppTableManagerService {
         this.fastSearchActive = true;
         this.skip = 0;
         this.currentPageIndex = 0;
+        this.saveFastSearchStateToStorage();
     }
 
     beginFastSearchWarmup(expected: boolean): number {
@@ -371,8 +381,9 @@ export class AppTableManagerService {
         const normalizedActionName = String(actionName ?? '').trim();
         const normalizedFormModel = String(formModel ?? '').trim();
         const normalizedSchema = this.normalizeFastSearchSchema(schema);
+        const savedData = this.readFastSearchStateFromStorage(normalizedActionName);
         const hydratedSchema = normalizedSchema
-            ? await this.hydrateRemoteSelectSchema(normalizedSchema, null, normalizedFormModel)
+            ? await this.hydrateRemoteSelectSchema(normalizedSchema, savedData, normalizedFormModel)
             : null;
         if (effectiveRevision !== this.fastSearchConfigRevision) return false;
         this.fastSearchActionName = normalizedActionName;
@@ -384,38 +395,67 @@ export class AppTableManagerService {
         this.fastSearchQueryFields = [];
         this.replaceFastSearchSubmission({});
 
-        // Restore saved fast-search state (written before opening a form record).
-        const savedData = this.consumeFastSearchStateFromStorage(normalizedActionName);
+        // Restore temporary fast-search cache when returning to the list.
         if (savedData && this.fastSearchEnabled) {
             this.mergeFastSearchSubmissionData(savedData);
             this.fastSearchQueryFields = this.buildFastSearchQueryFields();
             this.fastSearchActive = true;
+            this.saveFastSearchStateToStorage();
             return true;
         }
         return false;
     }
 
-    saveFastSearchStateToStorage(): void {
-        if (!this.fastSearchActionName || !this.fastSearchActive) return;
+    saveFastSearchStateToStorage(actionName = this.fastSearchActionName): void {
+        const normalizedActionName = String(actionName ?? '').trim();
+        if (!normalizedActionName) return;
         try {
-            const key = this.fastSearchStoragePrefix + this.fastSearchActionName;
+            const key = this.buildFastSearchStorageKey(normalizedActionName);
             const data = this.fastSearchSubmission?.data && this.isRecord(this.fastSearchSubmission.data)
                 ? this.cloneSchema(this.fastSearchSubmission.data)
                 : {};
-            localStorage.setItem(key, JSON.stringify(data));
+            if (!this.hasPersistableFastSearchData(data)) {
+                localStorage.removeItem(key);
+                return;
+            }
+            const entry: FastSearchStorageEntry = {
+                savedAt: Date.now(),
+                data
+            };
+            localStorage.setItem(key, JSON.stringify(entry));
         } catch { /* ignore storage errors */ }
     }
 
-    private consumeFastSearchStateFromStorage(actionName: string): Record<string, unknown> | null {
-        if (!actionName) return null;
+    clearFastSearchStateFromStorage(actionName = this.fastSearchActionName): void {
+        const normalizedActionName = String(actionName ?? '').trim();
+        if (!normalizedActionName) return;
         try {
-            const key = this.fastSearchStoragePrefix + actionName;
+            localStorage.removeItem(this.buildFastSearchStorageKey(normalizedActionName));
+        } catch { /* ignore storage errors */ }
+    }
+
+    private readFastSearchStateFromStorage(actionName: string): Record<string, unknown> | null {
+        const normalizedActionName = String(actionName ?? '').trim();
+        if (!normalizedActionName) return null;
+        try {
+            const key = this.buildFastSearchStorageKey(normalizedActionName);
             const raw = localStorage.getItem(key);
             if (!raw) return null;
-            localStorage.removeItem(key);
             const parsed = JSON.parse(raw);
-            return this.isRecord(parsed) ? parsed as Record<string, unknown> : null;
-        } catch { return null; }
+            const entry = this.normalizeFastSearchStorageEntry(parsed);
+            if (!entry) {
+                localStorage.removeItem(key);
+                return null;
+            }
+            if ((Date.now() - entry.savedAt) > this.fastSearchStorageTtlMs || !this.hasPersistableFastSearchData(entry.data)) {
+                localStorage.removeItem(key);
+                return null;
+            }
+            return this.cloneSchema(entry.data);
+        } catch {
+            this.clearFastSearchStateFromStorage(normalizedActionName);
+            return null;
+        }
     }
 
     private mergeFastSearchSubmissionData(nextData: Record<string, unknown>): void {
@@ -441,7 +481,7 @@ export class AppTableManagerService {
         const compMap = this.getFastSearchComponentMap();
         const queryFields: Record<string, unknown>[] = [];
         for (const [key, value] of Object.entries(data)) {
-            if (key.startsWith('__') || key === 'submit' || key === 'data_value') continue;
+            if (key.startsWith('__') || key === 'submit') continue;
             if (value === undefined || value === null || value === '') continue;
             if (typeof value === 'string' && !value.trim()) continue;
             if (Array.isArray(value) && !value.length) continue;
@@ -452,6 +492,48 @@ export class AppTableManagerService {
             if (qf) queryFields.push(qf);
         }
         return queryFields;
+    }
+
+    private buildFastSearchStorageKey(actionName: string): string {
+        return `${this.fastSearchStoragePrefix}${actionName}`;
+    }
+
+    private normalizeFastSearchStorageEntry(value: unknown): FastSearchStorageEntry | null {
+        if (!this.isRecord(value)) return null;
+        const hasEnvelope = Object.prototype.hasOwnProperty.call(value, 'savedAt')
+            || Object.prototype.hasOwnProperty.call(value, 'data');
+        if (!hasEnvelope) {
+            return {
+                savedAt: Date.now(),
+                data: value as Record<string, unknown>
+            };
+        }
+        const savedAt = Number(value['savedAt']);
+        const data = this.asRecord(value['data']);
+        if (!Number.isFinite(savedAt) || savedAt <= 0 || !data) return null;
+        return {
+            savedAt: Math.floor(savedAt),
+            data
+        };
+    }
+
+    private hasPersistableFastSearchData(data: Record<string, unknown>): boolean {
+        return Object.entries(data).some(([key, value]) => this.isPersistableFastSearchField(key, value));
+    }
+
+    private isPersistableFastSearchField(key: string, value: unknown): boolean {
+        if (!key || key.startsWith('__') || key === 'submit') return false;
+        return this.hasMeaningfulFastSearchValue(value);
+    }
+
+    private hasMeaningfulFastSearchValue(value: unknown): boolean {
+        if (value === undefined || value === null) return false;
+        if (typeof value === 'string') return Boolean(value.trim());
+        if (Array.isArray(value)) return value.some(entry => this.hasMeaningfulFastSearchValue(entry));
+        if (this.isRecord(value)) {
+            return Object.entries(value).some(([key, entry]) => this.isPersistableFastSearchField(key, entry));
+        }
+        return true;
     }
 
     private getFastSearchComponentMap(): Map<string, Record<string, unknown>> {
@@ -488,7 +570,7 @@ export class AppTableManagerService {
                 const payload = this.extractRemoteSelectPayload(comp, formKey);
                 if (payload) {
                     try {
-                        const remoteOptions = await this.fetchRemoteSelectOptions(payload);
+                        const remoteOptions = await this.fetchRemoteSelectOptions(comp, payload);
                         this.applyRemoteSelectValues(comp, remoteOptions);
                         schemaChanged = true;
                     } catch (error) {
@@ -501,9 +583,9 @@ export class AppTableManagerService {
                 if (String(comp['dataSrc'] ?? '').trim() === 'custom' && submissionData) {
                     const data = this.isRecord(comp['data']) ? comp['data'] : {};
                     const customKey = String(data['custom'] ?? '').trim();
-                    const customValue = customKey ? (submissionData[customKey] ?? (this.isRecord(submissionData['data_value']) ? submissionData['data_value'][customKey] : null)) : null;
+                    const customValue = customKey ? (submissionData[customKey] ?? null) : null;
                     if (Array.isArray(customValue)) {
-                        const options = customValue.map(entry => this.toSelectValueOption(entry)).filter((entry): entry is SelectValueOption => Boolean(entry));
+                        const options = customValue.map(entry => this.toSelectValueOption(entry, comp)).filter((entry): entry is SelectValueOption => Boolean(entry));
                         this.applyRemoteSelectValues(comp, options);
                         schemaChanged = true;
                         submissionChanged = this.pruneSelectSubmissionValue(comp, submissionData) || submissionChanged;
@@ -620,13 +702,13 @@ export class AppTableManagerService {
         const allowedValues = new Set(options.map(option => this.optionLookupKey(option.value)).filter(Boolean));
         const current = submissionData[key];
         if (Array.isArray(current)) {
-            const filtered = current.filter(entry => allowedValues.has(this.optionLookupKey(entry)));
+            const filtered = current.filter(entry => allowedValues.has(this.optionLookupKey(entry, component)));
             if (filtered.length === current.length) return false;
             submissionData[key] = filtered;
             return true;
         }
         if (current == null || current === '') return false;
-        if (allowedValues.has(this.optionLookupKey(current))) return false;
+        if (allowedValues.has(this.optionLookupKey(current, component))) return false;
         submissionData[key] = null;
         return true;
     }
@@ -708,14 +790,13 @@ export class AppTableManagerService {
         return JSON.stringify(value ?? null);
     }
 
-    appendRecordRow(payload: unknown): void {
-        const rec = this.extractRecord(payload);
-        if (!rec) return;
+    appendRecordRow(item: unknown): void {
+        if (!this.isRecord(item)) return;
         this.rowCounter += 1;
-        const recName = this.computeRecordName(rec, this.rowCounter);
+        const recName = this.computeRecordName(item as Record<string, unknown>, this.rowCounter);
         const row: TableRow = {
-            ...rec,
-            rec_name: this.readFirstString(rec['rec_name'], recName) || recName,
+            ...(item as Record<string, unknown>),
+            rec_name: this.readFirstString((item as Record<string, unknown>)['rec_name'], recName) || recName,
             __rowid: this.rowCounter,
             __rec_name: recName
         };
@@ -770,18 +851,12 @@ export class AppTableManagerService {
         };
     }
 
-    syncTableRowActionsConfig(response: Record<string, unknown>): void {
-        const fields = this.isRecord(response['fields']) ? response['fields'] : {};
-        const data = this.isRecord(response['data']) ? response['data'] : {};
+    syncTableRowActionsConfig(fields: Record<string, unknown>): void {
         const candidates: Array<Record<string, unknown>> = [
-            fields, data,
+            fields,
             this.isRecord(fields['table']) ? fields['table'] : {},
             this.isRecord(fields['table_action']) ? fields['table_action'] : {},
-            this.isRecord(fields['table_actions']) ? fields['table_actions'] : {},
-            this.isRecord(data['table']) ? data['table'] : {},
-            this.isRecord(data['table_action']) ? data['table_action'] : {},
-            this.isRecord(data['table_actions']) ? data['table_actions'] : {},
-            this.isRecord(data['settings']) ? data['settings'] : {}
+            this.isRecord(fields['table_actions']) ? fields['table_actions'] : {}
         ];
 
         const inForm = this.readFirstBooleanFromCandidates(candidates, ['table_in_form', 'in_form', 'inside_form', 'is_form_context', 'form_context', 'called_in_form', 'from_form']);
@@ -991,16 +1066,11 @@ export class AppTableManagerService {
     }
 
     syncListQuerySeed(
-        response: Record<string, unknown>,
-        responseData: Record<string, unknown>,
+        fields: Record<string, unknown>,
         listSchema: Record<string, unknown> | null
     ): void {
-        const fields = this.isRecord(response['fields']) ? response['fields'] : {};
-        const data = this.isRecord(response['data']) ? response['data'] : {};
         const tableField = this.isRecord(fields['table']) ? fields['table'] : {};
-        const tableData = this.isRecord(data['table']) ? data['table'] : {};
-        const settingsData = this.isRecord(data['settings']) ? data['settings'] : {};
-        const directCandidates: unknown[] = [fields['query'], data['query'], tableField['query'], tableData['query'], settingsData['query']];
+        const directCandidates: unknown[] = [fields['query'], tableField['query']];
         for (const candidate of directCandidates) {
             const normalized = this.normalizeQuerySeed(candidate);
             if (normalized) { this.listQuerySeed = normalized; return; }
@@ -1009,17 +1079,14 @@ export class AppTableManagerService {
     }
 
     syncListTransferConfig(
-        response: Record<string, unknown>,
-        responseData: Record<string, unknown>,
+        fields: Record<string, unknown>,
         listSchema: Record<string, unknown> | null,
         actionName = ''
     ): void {
-        const responseModel = this.readFirstString(response['model'], responseData['model'], this.selectedModel);
+        const responseModel = this.readFirstString(fields['model'], this.selectedModel);
         const relatedName = this.readFirstString(
-            responseData['related_name'],
-            response['related_name'],
-            responseData['parent'],
-            response['parent']
+            fields['related_name'],
+            fields['parent']
         );
         const transferComponents = this.findTransferComponents(listSchema);
         const searchArea = transferComponents.find(component => this.readTransferComponentKind(component) === 'search_area') ?? null;
@@ -1039,7 +1106,7 @@ export class AppTableManagerService {
         const exportModel = this.readFirstString(exportProps['model'], responseModel, this.selectedModel);
         const importModel = this.readFirstString(importProps['model'], searchProps['model'], responseModel, this.selectedModel);
         const hideAll = this.toOptionalBooleanFlag(exportProps['hide_all']) === true;
-        const allowImplicitImport = this.shouldShowImplicitListImport(response, responseData);
+        const allowImplicitImport = this.shouldShowImplicitListImport(fields);
 
         this.listActionName = this.readFirstString(actionName);
         this.listSearchModel = searchModel || importModel || responseModel;
@@ -1108,7 +1175,7 @@ export class AppTableManagerService {
             const payload = this.extractRemoteSelectPayload(comp, formKey);
             if (payload) {
                 try {
-                    const remoteOptions = await this.fetchRemoteSelectOptions(payload);
+                    const remoteOptions = await this.fetchRemoteSelectOptions(comp, payload);
                     const selectedOptions = this.extractSubmissionSelectOptions(comp, sub);
                     this.applyRemoteSelectValues(comp, this.mergeSelectValues(remoteOptions, selectedOptions));
                 } catch (error) {
@@ -1123,9 +1190,9 @@ export class AppTableManagerService {
             if (String(comp['dataSrc'] ?? '').trim() === 'custom' && sub) {
                 const data = this.isRecord(comp['data']) ? comp['data'] : {};
                 const customKey = String(data['custom'] ?? '').trim();
-                const customValue = customKey ? (sub[customKey] ?? (this.isRecord(sub['data_value']) ? sub['data_value'][customKey] : null)) : null;
+                const customValue = customKey ? (sub[customKey] ?? null) : null;
                 if (Array.isArray(customValue)) {
-                    const options = customValue.map(entry => this.toSelectValueOption(entry)).filter((entry): entry is SelectValueOption => Boolean(entry));
+                    const options = customValue.map(entry => this.toSelectValueOption(entry, comp)).filter((entry): entry is SelectValueOption => Boolean(entry));
                     this.applyRemoteSelectValues(comp, options);
                 }
             }
@@ -1492,9 +1559,7 @@ export class AppTableManagerService {
     private resolveRowValueContexts(row: TableRow): Array<Record<string, unknown>> {
         const contexts: Array<Record<string, unknown>> = [row];
         const nestedData = this.asRecord(row['data']);
-        const nestedDataValue = this.asRecord(row['data_value']);
         if (nestedData && !contexts.includes(nestedData)) contexts.push(nestedData);
-        if (nestedDataValue && !contexts.includes(nestedDataValue)) contexts.push(nestedDataValue);
         return contexts;
     }
 
@@ -1784,13 +1849,13 @@ export class AppTableManagerService {
         options.forEach(e => { const k = this.optionLookupKey(e.value); if (!k || labelsByValue.has(k)) return; labelsByValue.set(k, e.label); });
         const renderSingle = (entry: unknown): string => {
             if (entry == null) return '';
-            const parsed = this.toSelectValueOption(entry);
+            const parsed = this.toSelectValueOption(entry, component);
             if (parsed) {
-                const mappedFromParsed = labelsByValue.get(this.optionLookupKey(parsed.value));
+                const mappedFromParsed = labelsByValue.get(this.optionLookupKey(parsed.value, component));
                 if (mappedFromParsed) return mappedFromParsed;
                 if (this.isRecord(entry) && parsed.label) return parsed.label;
             }
-            const mapped = labelsByValue.get(this.optionLookupKey(entry));
+            const mapped = labelsByValue.get(this.optionLookupKey(entry, component));
             if (mapped) return mapped;
             return this.toDisplayValue(entry);
         };
@@ -1808,13 +1873,13 @@ export class AppTableManagerService {
         const labelsByValue = new Map<string, string>();
         lookup.forEach(e => { if (e.valueKey && !labelsByValue.has(e.valueKey)) labelsByValue.set(e.valueKey, e.label); });
         return (value: unknown): string => {
-            if (Array.isArray(value)) return value.map(e => labelsByValue.get(this.optionLookupKey(e)) || this.toDisplayValue(e)).filter(Boolean).join(', ');
+            if (Array.isArray(value)) return value.map(e => labelsByValue.get(this.optionLookupKey(e, component)) || this.toDisplayValue(e)).filter(Boolean).join(', ');
             if (this.isRecord(value)) {
                 const labels: string[] = [];
                 lookup.forEach(e => { if (!e.field) return; if (this.toOptionalBooleanFlag(value[e.field]) === true) labels.push(e.label); });
                 if (labels.length) return labels.join(', ');
             }
-            const mapped = labelsByValue.get(this.optionLookupKey(value));
+            const mapped = labelsByValue.get(this.optionLookupKey(value, component));
             if (mapped) return mapped;
             return this.toDisplayValue(value);
         };
@@ -1825,31 +1890,31 @@ export class AppTableManagerService {
         const candidates: unknown[] = [data['values'], component['values'], data['items'], component['items']];
         for (const candidate of candidates) {
             if (!Array.isArray(candidate)) continue;
-            const parsed = candidate.map(e => this.toSelectValueOption(e)).filter((e): e is SelectValueOption => Boolean(e));
+            const parsed = candidate.map(e => this.toSelectValueOption(e, component)).filter((e): e is SelectValueOption => Boolean(e));
             if (parsed.length) return parsed;
         }
         return [];
     }
 
-    private optionLookupKey(value: unknown): string {
-        const primitive = this.optionPrimitiveValue(value);
+    private optionLookupKey(value: unknown, component?: Record<string, unknown>): string {
+        const primitive = this.optionPrimitiveValue(value, component);
         if (primitive == null) return '';
         if (typeof primitive === 'string') return `s:${primitive}`;
         if (typeof primitive === 'number') return `n:${primitive}`;
         if (typeof primitive === 'boolean') return `b:${primitive}`;
-        if (Array.isArray(primitive)) return `a:${primitive.map(e => this.optionLookupKey(e)).join('|')}`;
+        if (Array.isArray(primitive)) return `a:${primitive.map(e => this.optionLookupKey(e, component)).join('|')}`;
         if (this.isRecord(primitive)) return `j:${this.stableStringify(primitive)}`;
         return `x:${String(primitive)}`;
     }
 
-    private optionFieldKey(value: unknown): string {
-        const primitive = this.optionPrimitiveValue(value);
+    private optionFieldKey(value: unknown, component?: Record<string, unknown>): string {
+        const primitive = this.optionPrimitiveValue(value, component);
         if (typeof primitive === 'string' || typeof primitive === 'number') return String(primitive);
         return '';
     }
 
-    private optionPrimitiveValue(value: unknown): unknown {
-        return selectOptionPrimitiveValue(value);
+    private optionPrimitiveValue(value: unknown, component?: Record<string, unknown>): unknown {
+        return selectOptionPrimitiveValue(value, this.buildSelectOptionMappingConfig(component));
     }
 
     private resolveTableCellRenderer(field: string): ((value: unknown) => string) | null {
@@ -1969,7 +2034,7 @@ export class AppTableManagerService {
             const sourceDomain = this.normalizeRemoteDomain(props['domain'] ?? data['domain']);
             const sourceComputeLabel = this.readFirstString(props['compute_label'], props['computeLabel'], data['compute_label'], data['computeLabel']);
             const labelKey = this.readFirstString(props['label'], comp['label'], key, 'label');
-            const idKey = this.readFirstString(props['id'], comp['valueProperty'], 'id');
+            const idKey = this.resolveSelectIdentifierPath(comp);
             if (src) payloadProperties['src'] = src;
             if (sourceModel) payloadProperties['model'] = sourceModel;
             if (sourceDomain) payloadProperties['domain'] = sourceDomain;
@@ -2003,21 +2068,21 @@ export class AppTableManagerService {
         try { const parsed = JSON.parse(text); return this.isRecord(parsed) ? parsed : null; } catch { return null; }
     }
 
-    private async fetchRemoteSelectOptions(payload: RemoteSelectRequestPayload): Promise<SelectValueOption[]> {
+    private async fetchRemoteSelectOptions(comp: Record<string, unknown>, payload: RemoteSelectRequestPayload): Promise<SelectValueOption[]> {
         const cacheKey = this.stableStringify(payload);
         const cached = this.remoteSelectCache.get(cacheKey);
         if (cached) return cached;
         const inflight = this.remoteSelectInflight.get(cacheKey);
         if (inflight) return inflight;
         const request = this.api.getRemoteSelect(payload)
-            .then((response: unknown) => this.normalizeRemoteSelectResponse(response))
+            .then((response: unknown) => this.normalizeRemoteSelectResponse(response, comp))
             .then((options: SelectValueOption[]) => { this.remoteSelectCache.set(cacheKey, options); return options; })
             .finally(() => { this.remoteSelectInflight.delete(cacheKey); });
         this.remoteSelectInflight.set(cacheKey, request);
         return request;
     }
 
-    private normalizeRemoteSelectResponse(payload: unknown): SelectValueOption[] {
+    private normalizeRemoteSelectResponse(payload: unknown, comp: Record<string, unknown>): SelectValueOption[] {
         let target: unknown = payload;
         for (let i = 0; i < 4; i++) {
             if (this.isRecord(target) && this.isRecord(target['content'])) { target = target['content']['data'] ?? target['content']; continue; }
@@ -2028,7 +2093,7 @@ export class AppTableManagerService {
             break;
         }
         if (!Array.isArray(target)) return [];
-        return target.map(e => this.toSelectValueOption(e)).filter((e): e is SelectValueOption => Boolean(e));
+        return target.map(e => this.toSelectValueOption(e, comp)).filter((e): e is SelectValueOption => Boolean(e));
     }
 
     private extractSubmissionSelectOptions(comp: Record<string, unknown>, sub: Record<string, unknown> | null): SelectValueOption[] {
@@ -2038,7 +2103,7 @@ export class AppTableManagerService {
         const current = sub[key];
         if (current == null) return [];
         const values = Array.isArray(current) ? current : [current];
-        return values.map(e => this.toSelectValueOption(e)).filter((e): e is SelectValueOption => Boolean(e));
+        return values.map(e => this.toSelectValueOption(e, comp)).filter((e): e is SelectValueOption => Boolean(e));
     }
 
     private mergeSelectValues(primary: SelectValueOption[], secondary: SelectValueOption[]): SelectValueOption[] {
@@ -2073,6 +2138,36 @@ export class AppTableManagerService {
         if (!c['valueProperty']) c['valueProperty'] = 'value';
     }
 
+    private buildSelectOptionMappingConfig(component?: Record<string, unknown>): SelectOptionMappingConfig {
+        if (!component) return {};
+        const valuePath = this.resolveSelectIdentifierPath(component);
+        const props = this.readComponentProperties(component);
+        const labelPath = this.readFirstString(
+            props['label'],
+            props['compute_label'],
+            props['computeLabel'],
+            props['labelPath'],
+            props['label_path']
+        );
+        return {
+            valuePaths: valuePath ? [valuePath] : [],
+            labelPaths: labelPath ? [labelPath] : [],
+            aliasValuePaths: valuePath ? [valuePath] : []
+        };
+    }
+
+    private resolveSelectIdentifierPath(component: Record<string, unknown>): string {
+        const props = this.readComponentProperties(component);
+        return this.readFirstString(
+            component['idPath'],
+            props['idPath'],
+            props['id_path'],
+            props['id'],
+            component['valueProperty'],
+            'rec_name'
+        );
+    }
+
     private readComponentProperties(c: Record<string, unknown>): Record<string, unknown> {
         if (this.isRecord(c['properties'])) return c['properties'];
         if (this.isRecord(c['property'])) return c['property'];
@@ -2084,51 +2179,8 @@ export class AppTableManagerService {
         return '';
     }
 
-    private toSelectValueOption(e: unknown): SelectValueOption | null {
-        return mapSelectValueOption(e);
-    }
-
-    private extractRecord(payload: unknown): Record<string, unknown> | null {
-        const nodes = this.collectResponseNodes(payload);
-        for (const target of nodes) {
-            const record = this.asRecord(target['record']);
-            if (record) return record;
-            const item = this.asRecord(target['item']);
-            if (item) return item;
-            const data = this.asRecord(target['data']);
-            if (data && !this.isEnvelopeNode(target)) return data;
-            if (!this.isEnvelopeNode(target)) return target;
-        }
-        return null;
-    }
-
-    private collectResponseNodes(payload: unknown, maxDepth = 8): Record<string, unknown>[] {
-        if (!this.isRecord(payload)) return [];
-        const queue: Array<{ node: Record<string, unknown>; depth: number }> = [{ node: payload, depth: 0 }];
-        const visited = new Set<Record<string, unknown>>();
-        const nodes: Record<string, unknown>[] = [];
-        while (queue.length) {
-            const current = queue.shift();
-            if (!current) break;
-            const { node, depth } = current;
-            if (visited.has(node)) continue;
-            visited.add(node);
-            nodes.push(node);
-            if (depth >= maxDepth) continue;
-            const nestedData = this.asRecord(node['data']);
-            if (nestedData) queue.push({ node: nestedData, depth: depth + 1 });
-            for (const wrapper of this.responseWrappers) {
-                const nested = this.asRecord(node[wrapper]);
-                if (!nested) continue;
-                queue.push({ node: nested, depth: depth + 1 });
-            }
-        }
-        return nodes;
-    }
-
-    private isEnvelopeNode(node: Record<string, unknown>): boolean {
-        if (!this.asRecord(node['content'])) return false;
-        return Object.prototype.hasOwnProperty.call(node, 'fail') || Object.prototype.hasOwnProperty.call(node, 'message') || !Object.prototype.hasOwnProperty.call(node, 'mode');
+    private toSelectValueOption(e: unknown, component?: Record<string, unknown>): SelectValueOption | null {
+        return mapSelectValueOption(e, this.buildSelectOptionMappingConfig(component));
     }
 
     private computeRecordName(rec: Record<string, unknown>, idx: number): string {
@@ -2155,11 +2207,8 @@ export class AppTableManagerService {
         return '';
     }
 
-    private shouldShowImplicitListImport(
-        response: Record<string, unknown>,
-        responseData: Record<string, unknown>
-    ): boolean {
-        const candidates = [response, responseData];
+    private shouldShowImplicitListImport(fields: Record<string, unknown>): boolean {
+        const candidates = [fields];
         const canCreate = this.readFirstBooleanFromCandidates(candidates, ['can_create', 'canCreate']);
         const editable = this.readFirstBooleanFromCandidates(candidates, ['editable', 'write_access', 'writeAccess']);
         if (canCreate === true || editable === true) return true;

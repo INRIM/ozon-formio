@@ -47,7 +47,8 @@ export class RuntimeConfigService {
       authRefreshPath: this.normalizeEndpointPath(
         patch.authRefreshPath ?? this.config.authRefreshPath,
         '/refresh'
-      )
+      ),
+      appCode: String(patch.appCode ?? this.config.appCode ?? '').trim()
     };
     this.persist(this.config);
     return this.getConfig();
@@ -168,6 +169,14 @@ export class RuntimeConfigService {
           '/refresh'
         ),
         '/refresh'
+      ),
+      appCode: this.pickFirstString(
+        query['app_code'],
+        query['APP_CODE'],
+        runtime['app_code'],
+        runtime['APP_CODE'],
+        stored?.appCode,
+        environment.appCode
       )
     };
 
@@ -286,7 +295,8 @@ export class RuntimeConfigService {
         authMode: this.normalizeAuthMode(String(parsed.authMode ?? 'keycloak')),
         authLoginPath: this.normalizeEndpointPath(String(parsed.authLoginPath ?? '/api/login'), '/api/login'),
         authLogoutPath: this.normalizeEndpointPath(String(parsed.authLogoutPath ?? '/api/logout'), '/api/logout'),
-        authRefreshPath: this.normalizeEndpointPath(String(parsed.authRefreshPath ?? '/api/auth/refresh'), '/api/auth/refresh')
+        authRefreshPath: this.normalizeEndpointPath(String(parsed.authRefreshPath ?? '/api/auth/refresh'), '/api/auth/refresh'),
+        appCode: String(parsed.appCode ?? '').trim()
       };
       if (typeof parsed.useProxy === 'boolean') {
         out.useProxy = parsed.useProxy;

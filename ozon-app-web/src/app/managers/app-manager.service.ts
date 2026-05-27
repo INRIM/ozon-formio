@@ -1,9 +1,9 @@
 import { Injectable } from '@angular/core';
-import { RuntimeAuthMode } from '../models/ozon.types';
+import { RuntimeAuthMode, ResponseObjectData } from '../models/ozon.types';
 import { OzonApiService } from '../core/ozon-api.service';
 import { BackendAuthService } from '../core/backend-auth.service';
 import { MainManagerService } from '../core/main-manager.service';
-import { AppViewMode, MenuButton, MenuCard } from '../models/app.types';
+import { AppViewMode, FormNotification, MenuButton, MenuCard } from '../models/app.types';
 
 @Injectable()
 export class AppManagerService {
@@ -49,6 +49,9 @@ export class AppManagerService {
     initialBuilderPreference = false;
 
     private readonly BUILDER_STORAGE_KEY = 'ozon-app-web.builder';
+    private readonly NOTIFICATIONS_STORAGE_KEY = 'ozon-app-web.form-notifications';
+
+    formNotifications: FormNotification[] = [];
 
     constructor(
         private readonly api: OzonApiService,
@@ -57,6 +60,26 @@ export class AppManagerService {
     ) {}
 
     setStatus(m: string, e: boolean): void { this.statusText = m; this.statusError = e; }
+
+    setFormNotifications(notifications: FormNotification[]): void {
+        this.formNotifications = notifications;
+        if (typeof window === 'undefined') return;
+        if (notifications.length) {
+            window.localStorage.setItem(this.NOTIFICATIONS_STORAGE_KEY, JSON.stringify(notifications));
+        } else {
+            window.localStorage.removeItem(this.NOTIFICATIONS_STORAGE_KEY);
+        }
+    }
+
+    clearFormNotifications(): void { this.setFormNotifications([]); }
+
+    restoreFormNotifications(): void {
+        if (typeof window === 'undefined') return;
+        try {
+            const raw = window.localStorage.getItem(this.NOTIFICATIONS_STORAGE_KEY);
+            this.formNotifications = raw ? (JSON.parse(raw) as FormNotification[]) : [];
+        } catch { this.formNotifications = []; }
+    }
     errorMessage(e: unknown): string { return e instanceof Error ? e.message : String(e); }
     isRecord(v: unknown): v is Record<string, unknown> { return !!v && typeof v === 'object' && !Array.isArray(v); }
 
@@ -189,6 +212,7 @@ export class AppManagerService {
         this.userMenuOpen = false;
         this.backendSessionReady = false;
         this.openedNavMenuGroup = '';
+        this.clearFormNotifications();
         this.setStatus(statusMessage, false);
     }
 
@@ -221,18 +245,16 @@ export class AppManagerService {
     }
 
     applyLayoutResponse(
-        payload: unknown,
-        extractActionResponse: (p: unknown) => (Record<string, unknown> & { mode?: string; data?: unknown }) | null,
+        content: ResponseObjectData,
         normalizeActionMenuCards: (d: unknown) => MenuCard[],
         cloneSchema: (s: Record<string, unknown>) => Record<string, unknown>,
         topMenuCards: MenuCard[]
     ): void {
-        const response = extractActionResponse(payload);
-        if (!response || String(response['mode'] ?? '').trim() !== 'layout') {
+        if (!content || content.mode !== 'layout') {
             throw new Error('Risposta layout non valida');
         }
         this.actionRouterActive = true;
-        const data = this.isRecord(response['data']) ? response['data'] : {};
+        const data = this.isRecord(content.data) ? content.data : {};
         const schema = this.isRecord(data['schema']) ? data['schema'] : null;
         this.layoutName = this.readFirstString(data['layout'], schema?.['rec_name'], this.layoutName || 'default') || 'default';
         this.layoutSchema = schema ? cloneSchema(schema) : null;
@@ -263,32 +285,28 @@ export class AppManagerService {
     }
 
     applyMenuResponse(
-        payload: unknown,
-        extractActionResponse: (p: unknown) => (Record<string, unknown> & { mode?: string; data?: unknown }) | null,
+        content: ResponseObjectData,
         normalizeActionMenuCards: (d: unknown) => MenuCard[],
         topMenuCards: MenuCard[]
     ): void {
-        const response = extractActionResponse(payload);
-        if (!response || String(response['mode'] ?? '').trim() !== 'menu') {
+        if (!content || content.mode !== 'menu') {
             throw new Error('Risposta menu non valida');
         }
         this.actionRouterActive = true;
-        this.dashboardMenu = normalizeActionMenuCards(response['data']);
+        this.dashboardMenu = normalizeActionMenuCards(content.data);
         this.syncActiveDashboardGroup(topMenuCards);
         this.actionMenuIntegrated = this.dashboardMenu.length > 0;
     }
 
     applyDashboardResponse(
-        payload: unknown,
-        extractActionResponse: (p: unknown) => (Record<string, unknown> & { mode?: string; data?: unknown }) | null,
+        content: ResponseObjectData,
         normalizeActionCards: (d: unknown) => MenuCard[]
     ): void {
-        const response = extractActionResponse(payload);
-        if (!response || String(response['mode'] ?? '').trim() !== 'card') {
+        if (!content || content.mode !== 'card') {
             throw new Error('Risposta dashboard non valida');
         }
         this.actionRouterActive = true;
-        this.dashboardCards = normalizeActionCards(response['data']);
+        this.dashboardCards = normalizeActionCards(content.data);
     }
 
     applySessionSettings(settings: Record<string, unknown>): void {

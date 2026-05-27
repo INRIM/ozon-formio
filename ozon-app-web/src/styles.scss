@@ -33,8 +33,13 @@ body {
   min-height: 100%;
 }
 
+html {
+  font-size: 16px;
+}
+
 body {
   margin: 0;
+  font-size: 1rem;
   background: var(--ozon-bg);
   color: var(--ozon-text);
   transition:
@@ -435,6 +440,19 @@ body {
   top: 0;
   z-index: 100;
   background-color: var(--bs-body-bg, #fff);
+}
+
+.ozon-form-notifications {
+  position: sticky;
+  top: 47px;
+  z-index: 99;
+
+  .alert {
+    border-left: none;
+    border-right: none;
+    border-radius: 0;
+    font-size: 0.875rem;
+  }
 }
 
 :root[data-theme='dark'] .card-header.ozon-form-viewer-header {

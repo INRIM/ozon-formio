@@ -7,9 +7,9 @@ import { AppManagerService } from './app-manager.service';
 import { AppTableManagerService } from './app-table-manager.service';
 import { AppFormioRendererService } from './app-formio-renderer.service';
 import { AppFormioBuilderService } from './app-formio-builder.service';
-import { ActionRouterResponse } from '../models/ozon.types';
+import { requireResponseObject, ResponseObject, ResponseObjectData } from '../models/ozon.types';
 import {
-    ContextAction, MenuActionDescriptor, MenuButton, MenuCard, MenuDrillDownGroup
+    ContextAction, FormNotification, MenuActionDescriptor, MenuButton, MenuCard, MenuDrillDownGroup
 } from '../models/app.types';
 import { OzonFormBuilderHostComponent } from '../formio/ozon-form-builder-host.component';
 
@@ -19,11 +19,10 @@ export class AppActionManagerService {
     isTransitionLoading = false;
     formResponseActionButtons: MenuButton[] = [];
     contextActions: ContextAction[] = [];
+    hasContextActionsPayload = false;
     currentFormSubmitActionPath = '';
     currentFormPageTitle = '';
-    private currentFormNoCancel = false;
-    private currentFormAbandonLabel = '';
-    private currentFormAbandonIcon = '';
+    private currentFormOriginPath = '';
     currentFormSubmitNextActionPath = '';
     currentFormAbandonActionPath = '';
 
@@ -38,9 +37,6 @@ export class AppActionManagerService {
     private readonly btnActionParser: Record<string, 'post' | false> = {
         save: 'post', post: 'post', copy: 'post', delete: 'post', window: false
     };
-    private readonly responseWrappers: Array<'content' | 'payload' | 'response' | 'result' | 'action'> = [
-        'content', 'payload', 'response', 'result', 'action'
-    ];
     private readonly uiReqId = `req_${Math.random().toString(36).slice(2)}`;
 
     constructor(
@@ -60,8 +56,17 @@ export class AppActionManagerService {
         return '';
     }
 
+    private resetContextActionState(): void {
+        this.formResponseActionButtons = [];
+        this.contextActions = [];
+        this.hasContextActionsPayload = false;
+        this.currentFormPageTitle = '';
+        this.currentFormOriginPath = '';
+    }
+
     private beginPageContext(): number {
         this.pageContextId += 1;
+        this.appManager.clearFormNotifications();
         return this.pageContextId;
     }
 
@@ -185,9 +190,10 @@ export class AppActionManagerService {
         this.setStatus('Caricamento layout...', false);
         try {
             const response = await this.api.getActionLayout(name);
+            const obj = requireResponseObject(response);
+            if (obj.fail) throw new Error(obj.message || 'Errore dal server');
             this.appManager.applyLayoutResponse(
-                response,
-                p => this.extractActionResponse(p) as (Record<string, unknown> & { mode?: string; data?: unknown }) | null,
+                obj.content,
                 d => this.normalizeActionMenuCards(d),
                 s => this.cloneSchema(s),
                 this.topMenuCards
@@ -206,9 +212,10 @@ export class AppActionManagerService {
         this.setStatus('Caricamento menu...', false);
         try {
             const response = await this.api.getActionMenu(parent);
+            const obj = requireResponseObject(response);
+            if (obj.fail) throw new Error(obj.message || 'Errore dal server');
             this.appManager.applyMenuResponse(
-                response,
-                p => this.extractActionResponse(p) as (Record<string, unknown> & { mode?: string; data?: unknown }) | null,
+                obj.content,
                 d => this.normalizeActionMenuCards(d),
                 this.topMenuCards
             );
@@ -223,9 +230,10 @@ export class AppActionManagerService {
         this.setStatus('Caricamento dashboard...', false);
         try {
             const response = await this.api.getActionDashboard(parent);
+            const obj = requireResponseObject(response);
+            if (obj.fail) throw new Error(obj.message || 'Errore dal server');
             this.appManager.applyDashboardResponse(
-                response,
-                p => this.extractActionResponse(p) as (Record<string, unknown> & { mode?: string; data?: unknown }) | null,
+                obj.content,
                 d => this.normalizeActionCards(d)
             );
             this.currentActionName = '';
@@ -260,7 +268,8 @@ export class AppActionManagerService {
         this.setStatus('Caricamento schema...', false);
         try {
             const payload = await this.api.getRecordSchema(selectedModel);
-            const schema = this.renderer.extractFormSchema(payload);
+            const obj = requireResponseObject(payload);
+            const schema = this.renderer.extractFormSchema(obj.content.schema);
             if (!schema) throw new Error(`Schema Formio non trovato per model "${selectedModel}"`);
             this.renderer.rawFormSchema = this.cloneSchema(schema);
             this.renderer.rawFormSchemaModel = selectedModel;
@@ -268,10 +277,9 @@ export class AppActionManagerService {
             this.tableManager.rawFormSchemaModel = selectedModel;
             this.renderer.formSchema = null;
             this.renderer.formSubmission = null;
-            this.formResponseActionButtons = []; this.contextActions = []; this.currentFormNoCancel = false; this.currentFormAbandonLabel = ""; this.currentFormAbandonIcon = ""; this.currentFormPageTitle = "";
+            this.resetContextActionState();
             this.currentFormSubmitActionPath = '';
             this.currentFormSubmitNextActionPath = '';
-            this.currentFormAbandonActionPath = '';
             this.renderer.beginFormViewerLoad();
             this.renderer.formSchema = this.renderer.prepareSchemaForRender(schema, null);
             await this.tableManager.refreshTableCellRenderers(this.tableManager.allRows);
@@ -340,6 +348,16 @@ export class AppActionManagerService {
         }
     }
 
+    beginExternalTransition(): void {
+        this.transitionLoadingCount += 1;
+        this.isTransitionLoading = true;
+    }
+
+    endExternalTransition(): void {
+        this.transitionLoadingCount = Math.max(0, this.transitionLoadingCount - 1);
+        this.isTransitionLoading = this.transitionLoadingCount > 0;
+    }
+
     private async reloadCurrentActionList(preservePaginatorState: boolean): Promise<boolean> {
         const actionName = this.readFirstString(this.currentActionName);
         if (!actionName || this.appManager.viewMode !== 'list') return false;
@@ -356,14 +374,14 @@ export class AppActionManagerService {
                 limit: this.tableManager.limit
             });
             if (!this.isCurrentPageContext(pageContextId)) return true;
-            const response = this.extractActionResponse(payload);
-            if (!response) throw new Error('Risposta action non valida');
-            const mode = String(response.mode ?? '').trim().toLowerCase();
+            const obj = requireResponseObject(payload);
+            if (obj.fail) throw new Error(obj.message || 'Errore dal server');
+            const mode = obj.content.mode.trim().toLowerCase();
             if (mode !== 'list') {
                 await this.applyActionResponse(payload, pageContextId);
                 return true;
             }
-            await this.applyActionListResponse(response, pageContextId, { preserveTableStructure: true });
+            await this.applyActionListResponse(obj.content, pageContextId, { preserveTableStructure: true });
             if (!this.isCurrentPageContext(pageContextId)) return true;
             this.tableManager.finishLoadRecords(querySignature, {
                 count: this.tableManager.tableRows.length,
@@ -393,12 +411,14 @@ export class AppActionManagerService {
         try {
             const payload = await this.api.getRecord(selectedModel, selectedRecordName);
             if (!this.isCurrentPageContext(pageContextId)) return;
+            const recordObj = requireResponseObject(payload);
             const canReuseCachedSchema = Boolean(this.renderer.rawFormSchema) && (!this.renderer.rawFormSchemaModel || this.renderer.rawFormSchemaModel === selectedModel);
-            let schema = this.renderer.extractFormSchema(payload) || (canReuseCachedSchema && this.renderer.rawFormSchema ? this.cloneSchema(this.renderer.rawFormSchema) : null);
+            let schema = this.renderer.extractFormSchema(recordObj.content.schema) || (canReuseCachedSchema && this.renderer.rawFormSchema ? this.cloneSchema(this.renderer.rawFormSchema) : null);
             if (!schema) {
                 const schemaPayload = await this.api.getRecordSchema(selectedModel);
                 if (!this.isCurrentPageContext(pageContextId)) return;
-                schema = this.renderer.extractFormSchema(schemaPayload);
+                const schemaObj = requireResponseObject(schemaPayload);
+                schema = this.renderer.extractFormSchema(schemaObj.content.schema);
                 if (schema) { this.renderer.rawFormSchema = this.cloneSchema(schema); this.renderer.rawFormSchemaModel = selectedModel; }
             }
             if (!schema) throw new Error('Schema non trovato');
@@ -408,10 +428,9 @@ export class AppActionManagerService {
             if (!submission) throw new Error(`Record "${selectedRecordName}" non valido`);
             this.renderer.formSchema = null;
             this.renderer.formSubmission = null;
-            this.formResponseActionButtons = []; this.contextActions = []; this.currentFormNoCancel = false; this.currentFormAbandonLabel = ""; this.currentFormAbandonIcon = ""; this.currentFormPageTitle = "";
+            this.resetContextActionState();
             this.currentFormSubmitActionPath = '';
             this.currentFormSubmitNextActionPath = '';
-            this.currentFormAbandonActionPath = this.resolveFormAbandonActionPath([schema as Record<string, unknown>]);
             const submissionData = this.isRecord(submission.data) ? submission.data : null;
             this.renderer.beginFormViewerLoad();
             this.renderer.formSchema = this.renderer.prepareSchemaForRender(schema as Record<string, unknown>, submissionData);
@@ -452,10 +471,9 @@ export class AppActionManagerService {
         this.tableManager.onModelChanged();
         this.renderer.resetFormState();
         this.builder.resetBuilderState();
-        this.formResponseActionButtons = []; this.contextActions = []; this.currentFormNoCancel = false; this.currentFormAbandonLabel = ""; this.currentFormAbandonIcon = ""; this.currentFormPageTitle = "";
+        this.resetContextActionState();
         this.currentFormSubmitActionPath = '';
         this.currentFormSubmitNextActionPath = '';
-        this.currentFormAbandonActionPath = '';
     }
 
     async saveConnectionSettings(backendUrl: string): Promise<void> {
@@ -498,10 +516,9 @@ export class AppActionManagerService {
         this.tableManager.rawFormSchemaModel = '';
         this.renderer.selectedModel = '';
         this.renderer.selectedRecordName = '';
-        this.formResponseActionButtons = []; this.contextActions = []; this.currentFormNoCancel = false; this.currentFormAbandonLabel = ""; this.currentFormAbandonIcon = ""; this.currentFormPageTitle = "";
+        this.resetContextActionState();
         this.currentFormSubmitActionPath = '';
         this.currentFormSubmitNextActionPath = '';
-        this.currentFormAbandonActionPath = '';
         this.currentActionName = '';
         this.backendSessionReady = false;
         if (typeof window !== 'undefined') window.history.replaceState({}, '', '/dashboard');
@@ -542,7 +559,10 @@ export class AppActionManagerService {
         if (this.shouldLetBrowserHandle(event)) return;
         event.preventDefault();
         if (!this.canRunMenuAction(button)) return;
-        await this.withClickTransition(async () => { await this.runMenuAction(button); });
+        await this.withClickTransition(async () => {
+            this.clearFastSearchCacheForMenuAction(button);
+            await this.runMenuAction(button);
+        });
     }
 
     canRunMenuAction(button: MenuButton): boolean {
@@ -551,9 +571,9 @@ export class AppActionManagerService {
         if (button.is_admin && !this.builder.builderEnabled) return false;
         if (this.isBuilderAction(button) && !this.builder.builderEnabled) return false;
         const actionPath = this.getButtonActionPath(button);
-        if (this.isPostActionButton(button)) return Boolean(this.renderer.formSubmission?.data);
+        if (this.isPostActionButton(button)) return Boolean(this.renderer.formDataReady && this.renderer.formSubmission?.data);
         if (actionPath.startsWith('/action/')) return true;
-        if (button.action_type === 'save') return Boolean(this.appManager.selectedModel && this.renderer.formSubmission?.data);
+        if (button.action_type === 'save') return Boolean(this.renderer.formDataReady && this.appManager.selectedModel && this.renderer.formSubmission?.data);
         if (button.action_type === 'copy' || button.action_type === 'delete') return Boolean(this.getActiveRecName());
         if (button.action_type === 'window' && String(button.mode || '') === 'form') return Boolean(this.appManager.selectedModel);
         return true;
@@ -566,6 +586,7 @@ export class AppActionManagerService {
         this.builder.syncBuilderSchemaFromLiveInstance(this._activeBuilderHost);
         if (this.builder.builderSchemaDraft) this.builder.applyBuilderDraftToSubmission();
         const actionPath = this.getButtonActionPath(button);
+        if (this.isAbandonFormButton(button)) { await this.runAbandonAction(); return; }
         if (button.action_type === 'window') { await this.runWindowAction(button); return; }
         if (button.action_type === 'cancel_button') { await this.navigateToPath(actionPath || '/dashboard'); return; }
         if (this.isPostActionButton(button)) { await this.runPostActionButton(button); return; }
@@ -576,13 +597,26 @@ export class AppActionManagerService {
         this.setStatus(`Azione non supportata: ${button.action_type}`, true);
     }
 
+    private async runAbandonAction(): Promise<void> {
+        const originPath = this.readFirstString(this.currentFormOriginPath, this.readHistoryActionOriginPath());
+        if (originPath) {
+            await this.navigateToPath(originPath, true);
+            return;
+        }
+        if (typeof window !== 'undefined' && window.history.length > 1) {
+            window.history.back();
+            return;
+        }
+        await this.navigateToPath('/dashboard', true);
+    }
+
     async saveCurrentRecord(activeBuilderHost?: OzonFormBuilderHostComponent, formioViewer?: FormioComponent): Promise<void> {
         const pageContextId = this.pageContextId;
         this.builder.syncBuilderSchemaFromLiveInstance(activeBuilderHost ?? this._activeBuilderHost);
         if (this.builder.builderSchemaDraft) this.builder.applyBuilderDraftToSubmission();
         const selectedModel = this.appManager.selectedModel;
         if (!selectedModel) { this.setStatus('Seleziona un model prima di salvare', true); return; }
-        const payload = this.renderer.formSubmission?.data;
+        const payload = this.renderer.normalizeCurrentSubmissionData();
         if (!payload || !this.isRecord(payload)) { this.setStatus('Nessun dato form disponibile da salvare', true); return; }
         if (!this.validateFormioSubmissionForSave(formioViewer, payload)) return;
         const recName = this.getActiveRecName() || String(payload['rec_name'] ?? '').trim();
@@ -595,10 +629,13 @@ export class AppActionManagerService {
                 return;
             }
             const response = await this.api.updateRecord(selectedModel, recName, payload);
-            const submission = this.renderer.extractSubmission(response);
-            if (submission) this.renderer.formSubmission = submission;
+            try {
+                const submission = this.renderer.extractSubmission(response);
+                if (submission) this.renderer.formSubmission = submission;
+            } catch { /* schema may not be in update response, keep existing submission */ }
             this.tableManager.selectedRecordName = recName;
             this.rebuildMenus();
+            this.appManager.clearFormNotifications();
             this.setStatus(`Record salvato: ${recName}`, false);
             if (this.currentFormSubmitNextActionPath) { await this.navigateToPath(this.currentFormSubmitNextActionPath, true); return; }
             if (!this.builder.formEditorDesignContext) {
@@ -648,17 +685,80 @@ export class AppActionManagerService {
 
     private validateFormioSubmissionForSave(formioViewer: FormioComponent | undefined, payload: Record<string, unknown>): boolean {
         if (!formioViewer?.formio || this.builder.formEditorDesignContext) return true;
-        const validationErrors = typeof formioViewer.formio.validate === 'function'
-            ? formioViewer.formio.validate(payload, { dirty: true, silentCheck: false, process: 'submit' })
+        const formio = formioViewer.formio;
+        const validationErrors = typeof formio.validate === 'function'
+            ? formio.validate(payload, { dirty: true, silentCheck: false, process: 'submit' })
             : null;
         const isValid = Array.isArray(validationErrors)
             ? validationErrors.length === 0
-            : formioViewer.formio.checkValidity(payload, true, null);
+            : formio.checkValidity(payload, true, null);
         if (!isValid) {
+            const notification = this.buildFormValidationNotification(
+                Array.isArray(validationErrors) ? validationErrors : null,
+                formio
+            );
+            this.appManager.setFormNotifications([notification]);
             this.setStatus('Compila i campi obbligatori prima di salvare', true);
+            this.navigateToFirstInvalidTab(formio);
             return false;
         }
         return true;
+    }
+
+    private buildFormValidationNotification(rawErrors: unknown[] | null, formio: any): FormNotification {
+        const messages: string[] = [];
+        const seen = new Set<string>();
+
+        const addError = (err: unknown) => {
+            if (!err || typeof err !== 'object') return;
+            const e = err as Record<string, unknown>;
+            const ctx = e['context'] as Record<string, unknown> | undefined;
+            const comp = e['component'] as Record<string, unknown> | undefined;
+            const label = String(ctx?.['label'] ?? comp?.['label'] ?? e['label'] ?? '').trim();
+            const msg = String(e['message'] ?? '').trim();
+            if (!msg) return;
+            const line = label ? `${label}: ${msg}` : msg;
+            if (!seen.has(line)) { seen.add(line); messages.push(line); }
+        };
+
+        const errors: unknown[] = rawErrors ?? (formio?.errors ?? []);
+        errors.forEach(addError);
+
+        if (!messages.length) messages.push('Alcuni campi obbligatori non sono compilati correttamente');
+
+        return { type: 'error', title: 'Compila i campi obbligatori prima di salvare', messages };
+    }
+
+    private navigateToFirstInvalidTab(formio: any): void {
+        if (!formio) return;
+        // wizard: navigate to first page with errors
+        if (formio.display === 'wizard' && typeof formio.setPage === 'function') {
+            const pages: any[] = formio.components ?? [];
+            for (let i = 0; i < pages.length; i++) {
+                if (this.componentHasInvalidDescendant(pages[i])) { try { formio.setPage(i); } catch { /* ignore */ } return; }
+            }
+            return;
+        }
+        this.navigateTabsToFirstError(formio.components ?? []);
+    }
+
+    private navigateTabsToFirstError(components: any[]): boolean {
+        for (const comp of components ?? []) {
+            if (comp.type === 'tabs') {
+                const panels: any[] = comp.components ?? [];
+                for (let i = 0; i < panels.length; i++) {
+                    if (this.componentHasInvalidDescendant(panels[i])) { try { comp.setTab(i); } catch { /* ignore */ } return true; }
+                }
+            } else if (comp.components?.length && this.navigateTabsToFirstError(comp.components)) { return true; }
+        }
+        return false;
+    }
+
+    private componentHasInvalidDescendant(comp: any): boolean {
+        if (!comp) return false;
+        if (comp.error) return true;
+        for (const child of comp.components ?? []) { if (this.componentHasInvalidDescendant(child)) return true; }
+        return false;
     }
 
     get topMenuCards(): MenuCard[] {
@@ -692,6 +792,7 @@ export class AppActionManagerService {
 
     get canOpenRecord(): boolean { return Boolean(this.appManager.selectedModel && this.tableManager.selectedRecordName); }
     get canOpenNewRecord(): boolean { return Boolean(this.resolveCurrentActionName()); }
+    get showListActionButtonsFallback(): boolean { return !this.hasContextActionsPayload; }
 
     get showFormViewerActionButtons(): boolean {
         return this.appManager.viewMode === 'form' && !this.builder.isFormEditorPage && !this.builder.formEditorDesignContext;
@@ -704,7 +805,7 @@ export class AppActionManagerService {
     }
 
     get currentFormActionButtons(): MenuButton[] {
-        // Prefer context_actions for form mode when present.
+        // Prefer payload context buttons for form mode when present.
         const formCtx = this.formContextActions;
         if (formCtx.length) {
             return formCtx.map(a => this.contextActionToMenuButton(a));
@@ -716,34 +817,15 @@ export class AppActionManagerService {
     get listContextActions(): ContextAction[] {
         return this.contextActions.filter(a => {
             const modes = a.context_button_mode;
-            return !modes.length || modes.includes('list');
+            return modes.includes('list');
         });
     }
 
     get formContextActions(): ContextAction[] {
-        const base = this.contextActions.filter(a => {
+        return this.contextActions.filter(a => {
             const modes = a.context_button_mode;
-            return !modes.length || modes.includes('form');
+            return modes.includes('form');
         });
-        // Append abandon button when: abandon_action set, no_cancel == 0, not already in list.
-        // cancel_button is also a cancel/abandon equivalent — don't duplicate.
-        if (
-            this.currentFormAbandonActionPath &&
-            !this.currentFormNoCancel &&
-            !base.some(a => a.action_type === 'abandon' || a.action_type === 'cancel_button')
-        ) {
-            const abandonAction: ContextAction = {
-                rec_name: 'abandon',
-                action_type: 'abandon',
-                label: this.currentFormAbandonLabel || 'Abbandona',
-                button_icon: this.currentFormAbandonIcon || 'pi pi-times',
-                modal: false,
-                context_button_mode: ['form'],
-                url_action: this.currentFormAbandonActionPath
-            };
-            return [...base, abandonAction];
-        }
-        return base;
     }
 
     get formEditorActionButtons(): MenuButton[] { return this.sanitizeFormEditorActionButtons(this.currentFormActionButtons); }
@@ -1063,6 +1145,22 @@ export class AppActionManagerService {
         return normalized.endsWith('/') && normalized !== '/' ? normalized.slice(0, -1) : normalized;
     }
 
+    normalizeNextActionRedirectCandidate(candidate: unknown): string {
+        if (typeof candidate !== 'string') return '';
+        let raw = candidate.trim();
+        if (!raw) return '';
+        raw = raw.replace(/^https?:\/\/[^/]+/i, '').replace(/^\/+/, '');
+        if (!raw) return '';
+        if (raw.startsWith('api/')) raw = raw.slice('api/'.length);
+        if (raw.startsWith('actoin/')) raw = `action/${raw.slice('actoin/'.length)}`;
+        if (raw === 'next_action' || raw.startsWith('next_action/')) return '';
+        if (raw === 'action/next_action' || raw.startsWith('action/next_action/')) return '';
+        if (raw.startsWith('dashboard')) return '/dashboard';
+        if (raw.startsWith('action/')) return this.normalizeActionUrl(`/${raw}`);
+        if (raw.startsWith('list/') || raw.startsWith('record/')) return this.normalizeActionUrl(`/${raw}`);
+        return this.normalizeActionUrl(`/action/${raw}`);
+    }
+
     getButtonActionPath(button: MenuButton): string {
         const raw = this.readFirstString(button.url_action, button.content, '');
         return this.normalizeActionUrl(raw || '/');
@@ -1078,7 +1176,7 @@ export class AppActionManagerService {
 
     private async runPostActionButton(button: MenuButton): Promise<void> {
         const pageContextId = this.pageContextId;
-        const payload = this.renderer.formSubmission?.data;
+        const payload = this.renderer.normalizeCurrentSubmissionData();
         if (!payload || !this.isRecord(payload)) { this.setStatus('Nessun dato form disponibile per invocare l\'azione', true); return; }
         if (!this.validateFormioSubmissionForSave(this._formioViewerGetter?.(), payload)) return;
         const actionPath = this.getButtonActionPath(button);
@@ -1092,42 +1190,66 @@ export class AppActionManagerService {
 
     private async applyInvokedActionResponse(response: unknown, fallbackNextActionPath = '', pageContextId = this.pageContextId): Promise<void> {
         if (!this.isCurrentPageContext(pageContextId)) return;
-        const redirectStatus = this.extractNextActionRedirectStatus(response);
-        const redirectRaw = this.extractNextActionRedirectRaw(response);
-        const redirectPath = this.extractNextActionRedirectPath(response);
-        const responseMode = this.extractNextActionResponseMode(response);
-        if (responseMode === 'redirect' && (redirectPath || redirectRaw)) {
-            const reloadTarget = redirectPath || redirectRaw;
-            const reload = this.mainManager.hardReloadToUrl(reloadTarget);
-            if (reload.reloaded) return;
-            if (reload.blocked) { this.setStatus(`Redirect bloccato: origin non abilitata (${reloadTarget})`, true); return; }
+        const obj = requireResponseObject(response);
+        if (obj.fail) { this.setStatus(obj.message || 'Errore', true); return; }
+        const nextUrl = obj.content.next_action_url;
+        if (nextUrl) {
+            await this.navigateToPath(this.normalizeActionUrl(nextUrl), true); return;
         }
-        if (redirectStatus === 307 && (redirectPath || redirectRaw)) {
-            const reloadTarget = redirectPath || redirectRaw;
-            const reload = this.mainManager.hardReloadToUrl(reloadTarget);
-            if (reload.reloaded) return;
-            if (reload.blocked) { this.setStatus(`Redirect bloccato: origin non abilitata (${reloadTarget})`, true); return; }
-        }
-        if (redirectPath) { await this.navigateToPath(redirectPath, true); return; }
-        const responseRecord = this.asRecord(response);
-        const embeddedContent = responseRecord ? responseRecord['content'] : null;
-        const actionResponse = this.extractActionResponse(embeddedContent) ?? this.extractActionResponse(response);
-        if (actionResponse?.mode) {
-            const mode = String(actionResponse.mode ?? '').trim().toLowerCase();
-            await this.applyActionResponse(actionResponse, pageContextId);
-            if (!this.isCurrentPageContext(pageContextId)) return;
-            if (fallbackNextActionPath && mode === 'action') await this.navigateToPath(fallbackNextActionPath, true);
-            return;
+        const mode = obj.content.mode.trim().toLowerCase();
+        if (mode !== 'action') {
+            await this.applyActionResponse(response, pageContextId); return;
         }
         if (fallbackNextActionPath) {
-            if (!this.isCurrentPageContext(pageContextId)) return;
-            await this.navigateToPath(fallbackNextActionPath, true);
-            return;
+            await this.navigateToPath(fallbackNextActionPath, true); return;
         }
+        this.appManager.clearFormNotifications();
         this.setStatus('Azione completata', false);
     }
 
     private async runWindowAction(button: MenuButton): Promise<void> { await this.runWindowPath(this.getButtonActionPath(button)); }
+
+    private clearFastSearchCacheForMenuAction(button: MenuButton): void {
+        const actionName = this.resolveFastSearchActionNameFromPath(this.getButtonActionPath(button));
+        if (!actionName) return;
+        this.tableManager.clearFastSearchStateFromStorage(actionName);
+    }
+
+    private readCurrentBrowserPath(): string {
+        if (typeof window === 'undefined') return '/dashboard';
+        return this.normalizeActionUrl(`${window.location.pathname || '/'}${window.location.search || ''}`);
+    }
+
+    private readHistoryActionOriginPath(): string {
+        if (typeof window === 'undefined') return '';
+        const state = this.asRecord(window.history.state);
+        return this.normalizeActionUrl(this.readFirstString(state?.['ozon_action_origin_path']));
+    }
+
+    private buildHistoryStateForNavigation(targetPath: string, replace: boolean): Record<string, unknown> {
+        if (typeof window === 'undefined') return {};
+        const currentState = this.asRecord(window.history.state) ?? {};
+        const nextState: Record<string, unknown> = { ...currentState };
+        if (!targetPath.startsWith('/action/')) {
+            delete nextState['ozon_action_origin_path'];
+            return nextState;
+        }
+        const existingOriginPath = this.readFirstString(currentState['ozon_action_origin_path']);
+        const originPath = replace ? this.readFirstString(existingOriginPath, this.readCurrentBrowserPath()) : this.readCurrentBrowserPath();
+        const normalizedOriginPath = originPath ? this.normalizeActionUrl(originPath) : '';
+        if (normalizedOriginPath && normalizedOriginPath !== targetPath) nextState['ozon_action_origin_path'] = normalizedOriginPath;
+        else delete nextState['ozon_action_origin_path'];
+        return nextState;
+    }
+
+    private resolveFastSearchActionNameFromPath(path: string): string {
+        const normalizedPath = this.normalizeActionUrl(path);
+        if (!normalizedPath.startsWith('/action/')) return '';
+        const route = this.parseActionRoute(normalizedPath);
+        if (!route) return '';
+        if (route.name === 'next_action') return this.readFirstString(route.args[0]);
+        return route.name;
+    }
 
     private async runWindowPath(rawPath: string): Promise<void> {
         const segments = rawPath.split('/').map(e => e.trim()).filter(Boolean).map(e => decodeURIComponent(e));
@@ -1176,8 +1298,9 @@ export class AppActionManagerService {
         if (typeof window !== 'undefined') {
             const current = this.normalizeActionUrl(window.location.pathname || '/');
             if (replace || current !== normalized) {
-                if (replace) window.history.replaceState({}, '', normalized);
-                else window.history.pushState({}, '', normalized);
+                const state = this.buildHistoryStateForNavigation(normalized, replace);
+                if (replace) window.history.replaceState(state, '', normalized);
+                else window.history.pushState(state, '', normalized);
             }
         }
         if (normalized === '/dashboard' || normalized === '/') {
@@ -1204,16 +1327,15 @@ export class AppActionManagerService {
             const routeRequest = this.buildActionRouteRequest(route);
             const response = await this.api.getAction(route.name, routeRequest);
             if (!this.isCurrentPageContext(pageContextId)) return;
-            const redirectStatus = this.extractNextActionRedirectStatus(response);
-            const redirectRaw = this.extractNextActionRedirectRaw(response);
-            const redirectPath = this.extractNextActionRedirectPath(response);
-            if (redirectStatus === 307 && (redirectPath || redirectRaw)) {
-                const reloadTarget = redirectPath || redirectRaw;
-                const reload = this.mainManager.hardReloadToUrl(reloadTarget);
+            const obj = requireResponseObject(response);
+            if (obj.fail) { this.setStatus(obj.message || 'Errore dal server', true); return; }
+            const nextUrl = obj.content.next_action_url;
+            if (nextUrl && obj.content.mode === 'redirect') {
+                const reload = this.mainManager.hardReloadToUrl(nextUrl);
                 if (reload.reloaded) return;
-                if (reload.blocked) { this.setStatus(`Redirect bloccato: origin non abilitata (${reloadTarget})`, true); return; }
+                if (reload.blocked) { this.setStatus(`Redirect bloccato: origin non abilitata (${nextUrl})`, true); return; }
+                await this.navigateToPath(this.normalizeActionUrl(nextUrl), true); return;
             }
-            if (redirectPath) { await this.navigateToPath(redirectPath, true); return; }
             await this.applyActionResponse(response, pageContextId, { forceBootstrapListLoad: routeRequest.limit === 1 });
         } catch (error) { this.setStatus(this.errorMessage(error), true); }
     }
@@ -1222,34 +1344,21 @@ export class AppActionManagerService {
         const pageContextId = this.pageContextId;
         const currentAction = this.readFirstString(args[0], this.resolveCurrentActionName());
         const recName = this.readFirstString(args[1]);
+        const formOriginPath = this.readCurrentBrowserPath();
         if (!currentAction) { this.setStatus('next_action richiede current_action', true); return; }
         this.setStatus(`Caricamento next_action: ${currentAction}${recName ? `/${recName}` : ''}`, false);
         try {
             const response = await this.api.getNextAction(currentAction, recName);
             if (!this.isCurrentPageContext(pageContextId)) return;
-            const responseRecord = this.asRecord(response);
-            const embeddedContent = responseRecord ? responseRecord['content'] : null;
-            const embeddedActionResponse = this.extractActionResponse(embeddedContent);
-            const redirectStatus = this.extractNextActionRedirectStatus(response);
-            const redirectRaw = this.extractNextActionRedirectRaw(response);
-            const redirectPath = this.extractNextActionRedirectPath(response);
-            const responseMode = this.extractNextActionResponseMode(response);
-            if (responseMode === 'redirect' && (redirectPath || redirectRaw)) {
-                const reloadTarget = redirectPath || redirectRaw;
-                const reload = this.mainManager.hardReloadToUrl(reloadTarget);
+            const obj = requireResponseObject(response);
+            if (obj.fail) { this.setStatus(obj.message || 'Errore', true); return; }
+            const nextUrl = obj.content.next_action_url;
+            if (nextUrl) {
+                const reload = this.mainManager.hardReloadToUrl(nextUrl);
                 if (reload.reloaded) return;
-                if (reload.blocked) { this.setStatus(`Redirect bloccato: origin non abilitata (${reloadTarget})`, true); return; }
+                await this.navigateToPath(this.normalizeActionUrl(nextUrl), true); return;
             }
-            if (redirectStatus === 307 && (redirectPath || redirectRaw)) {
-                const reloadTarget = redirectPath || redirectRaw;
-                const reload = this.mainManager.hardReloadToUrl(reloadTarget);
-                if (reload.reloaded) return;
-                if (reload.blocked) { this.setStatus(`Redirect bloccato: origin non abilitata (${reloadTarget})`, true); return; }
-            }
-            if (redirectPath) { await this.navigateToPath(redirectPath, true); return; }
-            const actionResponse = embeddedActionResponse ?? this.extractActionResponse(response);
-            if (actionResponse?.mode) { await this.applyActionResponse(actionResponse, pageContextId); return; }
-            throw new Error('Risposta next_action senza path di redirect');
+            await this.applyActionResponse(response, pageContextId, { formOriginPath });
         } catch (error) { this.setStatus(this.errorMessage(error), true); }
     }
 
@@ -1287,43 +1396,45 @@ export class AppActionManagerService {
         };
     }
 
-    private async applyActionResponse(payload: unknown, pageContextId = this.pageContextId, opt: { forceBootstrapListLoad?: boolean } = {}): Promise<void> {
+    private async applyActionResponse(
+        payload: unknown,
+        pageContextId = this.pageContextId,
+        opt: { forceBootstrapListLoad?: boolean; formOriginPath?: string } = {}
+    ): Promise<void> {
         if (!this.isCurrentPageContext(pageContextId)) return;
-        const failedMessage = this.renderer.readEnvelopeFailureMessage(payload);
-        if (failedMessage) throw new Error(failedMessage);
-        const response = this.extractActionResponse(payload);
-        if (!response) throw new Error('Risposta action non valida');
-        const mode = String(response.mode ?? '').trim().toLowerCase();
-        const fields = this.isRecord(response.fields) ? response.fields : {};
-        const responseActionName = this.readFirstString(fields['action_name'], fields['current_action']);
+        const { content, fail, message } = requireResponseObject(payload);
+        if (fail) throw new Error(message || 'Errore dal server');
+        const mode = content.mode.trim().toLowerCase();
+        const actionName = this.readFirstString(
+            (content.fields['action_name'] as string),
+            (content.fields['current_action'] as string)
+        );
         if (mode !== 'list') { this.tableManager.resetTableRowActionsConfig(); this.tableManager.listQuerySeed = null; }
         if (mode === 'layout') {
-            this.appManager.applyLayoutResponse(response as Record<string, unknown> & { mode?: string; data?: unknown }, p => this.extractActionResponse(p) as (Record<string, unknown> & { mode?: string; data?: unknown }) | null, d => this.normalizeActionMenuCards(d), s => this.cloneSchema(s), this.topMenuCards);
+            this.appManager.applyLayoutResponse(content, d => this.normalizeActionMenuCards(d), s => this.cloneSchema(s), this.topMenuCards);
             this.setStatus(`Layout caricato: ${this.appManager.layoutName || 'default'}`, false); return;
         }
         if (mode === 'menu') {
-            this.appManager.applyMenuResponse(response as Record<string, unknown> & { mode?: string; data?: unknown }, p => this.extractActionResponse(p) as (Record<string, unknown> & { mode?: string; data?: unknown }) | null, d => this.normalizeActionMenuCards(d), this.topMenuCards);
+            this.appManager.applyMenuResponse(content, d => this.normalizeActionMenuCards(d), this.topMenuCards);
             this.setStatus(`Menu caricato: ${this.appManager.dashboardMenu.length} gruppi`, false); return;
         }
         if (mode === 'card') {
-            this.appManager.applyDashboardResponse(response as Record<string, unknown> & { mode?: string; data?: unknown }, p => this.extractActionResponse(p) as (Record<string, unknown> & { mode?: string; data?: unknown }) | null, d => this.normalizeActionCards(d));
+            this.appManager.applyDashboardResponse(content, d => this.normalizeActionCards(d));
             this.currentActionName = ''; this.appManager.viewMode = 'dashboard';
             this.setStatus(`Dashboard caricata: ${this.appManager.dashboardCards.length} card`, false); return;
         }
         if (mode === 'list') {
-            if (responseActionName) this.currentActionName = responseActionName;
-            await this.applyActionListResponse(response, pageContextId);
+            if (actionName) this.currentActionName = actionName;
+            await this.applyActionListResponse(content, pageContextId);
             if (!this.isCurrentPageContext(pageContextId)) return;
             this.appManager.viewMode = 'list';
-            if (opt.forceBootstrapListLoad || this.shouldBootstrapActionListLoad(response)) {
-                void this.loadRecords(true);
-            }
+            if (opt.forceBootstrapListLoad || !Array.isArray(content.data)) void this.loadRecords(true);
             this.setStatus(`Lista caricata: ${this.tableManager.tableRows.length} record`, false); return;
         }
         if (mode === 'form') {
-            if (responseActionName) this.currentActionName = responseActionName;
+            if (actionName) this.currentActionName = actionName;
             try {
-                await this.applyActionFormResponse(response, payload, pageContextId);
+                await this.applyActionFormResponse(content, pageContextId, opt.formOriginPath);
             } catch (error) {
                 this.renderer.cancelFormViewerLoad();
                 throw error;
@@ -1332,94 +1443,80 @@ export class AppActionManagerService {
             this.appManager.viewMode = 'form';
             this.setStatus(`Record caricato: ${this.tableManager.selectedRecordName || 'N/A'}`, false); return;
         }
+        if (mode === 'redirect') {
+            const url = content.next_action_url;
+            if (url) {
+                const reload = this.mainManager.hardReloadToUrl(url);
+                if (reload.reloaded) return;
+                if (reload.blocked) { this.setStatus(`Redirect bloccato: origin non abilitata (${url})`, true); return; }
+                await this.navigateToPath(this.normalizeActionUrl(url), true); return;
+            }
+        }
         if (mode === 'action') {
-            const data = this.isRecord(response.data) ? response.data : {};
-            const message = this.readFirstString(data['message'], data['status'], 'Azione completata');
-            this.setStatus(message || 'Azione completata', false); return;
+            const data = this.isRecord(content.data) ? content.data : {};
+            const msg = this.readFirstString(data['message'] as string, data['status'] as string, 'Azione completata');
+            this.setStatus(msg, false); return;
         }
         this.setStatus(`Modalita azione non supportata: ${mode || 'unknown'}`, true);
     }
 
-    private async applyActionListResponse(response: ActionRouterResponse, pageContextId = this.pageContextId, opt: { preserveTableStructure?: boolean } = {}): Promise<void> {
+    private async applyActionListResponse(content: ResponseObjectData, pageContextId = this.pageContextId, opt: { preserveTableStructure?: boolean } = {}): Promise<void> {
         if (!this.isCurrentPageContext(pageContextId)) return;
-        this.tableManager.syncTableRowActionsConfig(response as Record<string, unknown>);
-        const responseData = this.asRecord(response.data) ?? {};
-        const rows = this.tableManager.normalizeActionListData(response.data);
+        this.tableManager.syncTableRowActionsConfig(content.fields);
+        const rows = Array.isArray(content.data) ? content.data : [];
         this.tableManager.resetSelectionAndTable({
             preserveFilterText: true,
             preserveColumns: opt.preserveTableStructure
         });
-        const listColumnsPayload = this.tableManager.resolveActionListColumnsPayload(response as Record<string, unknown>, responseData);
-        this.tableManager.strictHeaderColumns = listColumnsPayload.explicit;
-        this.tableManager.tableTotalRecords = this.tableManager.parseNonNegativeInt(response.total_count, rows.length);
-        this.tableManager.applyTableColumnsFromHeader(listColumnsPayload.payload);
+        this.tableManager.strictHeaderColumns = Object.keys(content.columns).length > 0;
+        this.tableManager.tableTotalRecords = content.total_count || rows.length;
+        this.tableManager.applyTableColumnsFromHeader(content.columns);
         rows.forEach(row => this.tableManager.appendRecordRow(row));
         this.tableManager.flushRows();
-        const responseModel = this.readFirstString(response.model);
-        if (responseModel) { this.appManager.selectedModel = responseModel; this.tableManager.selectedModel = responseModel; this.renderer.selectedModel = responseModel; }
+        if (content.model) {
+            this.appManager.selectedModel = content.model;
+            this.tableManager.selectedModel = content.model;
+            this.renderer.selectedModel = content.model;
+        }
         this.renderer.formSubmission = null;
-        this.formResponseActionButtons = []; this.contextActions = []; this.currentFormNoCancel = false; this.currentFormAbandonLabel = ""; this.currentFormAbandonIcon = ""; this.currentFormPageTitle = "";
+        this.resetContextActionState();
         this.currentFormSubmitActionPath = '';
         this.currentFormSubmitNextActionPath = '';
-        const listFields = this.isRecord(response.fields) ? response.fields as Record<string, unknown> : {};
-        this.currentFormPageTitle = this.readFirstString(
-            responseData['page_title'], responseData['title'],
-            listFields['page_title'], listFields['title'],
-            (response as Record<string, unknown>)['page_title'], (response as Record<string, unknown>)['title']
-        );
-        let listSchema: Record<string, unknown> | null = this.extractSchema({ schema: response.schema, data: { schema: response.schema } });
-        if (!listSchema) listSchema = this.extractSchema(responseData);
-        if (!listSchema && this.isRecord(responseData['schema'])) listSchema = this.extractSchema({ schema: responseData['schema'], data: { schema: responseData['schema'] } });
-        this.tableManager.syncListQuerySeed(response as Record<string, unknown>, responseData, listSchema);
+        this.currentFormPageTitle = content.title;
+        const listSchema = this.renderer.extractFormSchema(content.schema);
+        this.tableManager.syncListQuerySeed(content.fields, listSchema);
         if (listSchema) {
             this.renderer.rawFormSchema = this.cloneSchema(listSchema);
             this.renderer.rawFormSchemaModel = this.appManager.selectedModel;
             this.tableManager.rawFormSchema = this.renderer.rawFormSchema;
             this.tableManager.rawFormSchemaModel = this.appManager.selectedModel;
         }
-        this.tableManager.syncListTransferConfig(
-            response as Record<string, unknown>,
-            responseData,
-            listSchema,
-            this.currentActionName
-        );
-        this.contextActions = this.extractContextActions(response as Record<string, unknown>, responseData);
-        const fields = this.isRecord(response.fields) ? response.fields : {};
+        this.tableManager.syncListTransferConfig(content.fields, listSchema, this.currentActionName);
+        this.contextActions = this.normalizeContextActions(content.context_actions);
+        this.hasContextActionsPayload = this.contextActions.length > 0;
         const rendererRevision = this.tableManager.prepareTableCellRenderers(rows);
         if (!this.isCurrentPageContext(pageContextId)) return;
-        this.builder.syncBuilderMode(response as Record<string, unknown>, null, null);
+        this.builder.syncBuilderMode(content.fields, null, null);
         this.rebuildMenus();
-        this.warmActionListView(response as Record<string, unknown>, fields, responseData, rows, rendererRevision, listSchema, pageContextId);
+        this.warmActionListView(content.fields, rows as Array<Record<string, unknown>>, rendererRevision, listSchema, pageContextId);
     }
 
-    private shouldBootstrapActionListLoad(response: ActionRouterResponse): boolean {
-        return !this.hasInlineActionListRowsPayload(response.data);
-    }
-
-    private hasInlineActionListRowsPayload(payload: unknown): boolean {
-        if (Array.isArray(payload)) return true;
-        const record = this.asRecord(payload);
-        if (!record) return false;
-        return Array.isArray(record['data']) || Array.isArray(record['items']) || Array.isArray(record['records']);
-    }
-
-    private async applyFastSearchConfig(response: Record<string, unknown>, fields: Record<string, unknown>, responseData: Record<string, unknown>): Promise<void> {
-        const rawConfig = response['fast_search'] ?? fields['fast_search'] ?? responseData['fast_search'];
+    private async applyFastSearchConfig(fields: Record<string, unknown>): Promise<void> {
+        const rawConfig = fields['fast_search'];
         if (!this.isRecord(rawConfig)) {
             this.tableManager.beginFastSearchWarmup(false);
             return;
         }
         const fastSearchRevision = this.tableManager.beginFastSearchWarmup(true);
         const rawSchema = rawConfig['schema'];
-        let schema: Record<string, unknown> | null = null;
-        if (Array.isArray(rawSchema)) schema = { display: 'form', components: rawSchema };
-        else if (this.isRecord(rawSchema) && Array.isArray(rawSchema['components'])) schema = rawSchema as Record<string, unknown>;
+        let schema: Record<string, unknown> | null = this.renderer.extractFormSchema(rawSchema);
         if (!schema) {
             const modelName = this.readFirstString(rawConfig['fast_serch_model'], rawConfig['fast_search_model']);
             if (modelName) {
                 try {
                     const payload = await this.api.getAction('form_form_fast_search_config', { recName: modelName });
-                    schema = this.renderer.extractActionFormSchema(payload) ?? this.renderer.extractFormSchema(payload);
+                    const cfgObj = requireResponseObject(payload);
+                    schema = this.renderer.extractFormSchema(cfgObj.content.schema);
                 } catch { /* leave schema null */ }
             }
         }
@@ -1430,9 +1527,7 @@ export class AppActionManagerService {
     }
 
     private warmActionListView(
-        response: Record<string, unknown>,
         fields: Record<string, unknown>,
-        responseData: Record<string, unknown>,
         rows: Array<Record<string, unknown>>,
         rendererRevision: number,
         listSchema: Record<string, unknown> | null,
@@ -1440,9 +1535,9 @@ export class AppActionManagerService {
     ): void {
         const tableWarmup = listSchema
             ? this.tableManager.warmTableCellRenderers(rows, rendererRevision)
-            : this.warmActionListFallbackSchema(response, responseData, rows, pageContextId);
+            : this.warmActionListFallbackSchema(rows, pageContextId);
         void Promise.allSettled([
-            this.applyFastSearchConfig(response, fields, responseData),
+            this.applyFastSearchConfig(fields),
             tableWarmup
         ]).then(() => {
             if (!this.isCurrentPageContext(pageContextId)) return;
@@ -1451,12 +1546,10 @@ export class AppActionManagerService {
     }
 
     private async warmActionListFallbackSchema(
-        response: Record<string, unknown>,
-        responseData: Record<string, unknown>,
         rows: Array<Record<string, unknown>>,
         pageContextId: number
     ): Promise<void> {
-        const schemaModel = this.readFirstString(response['model'], responseData['model'], this.appManager.selectedModel, this.tableManager.selectedModel);
+        const schemaModel = this.readFirstString(this.appManager.selectedModel, this.tableManager.selectedModel);
         if (!schemaModel) return;
         this.tableManager.tableRenderLoading = true;
         try {
@@ -1475,76 +1568,133 @@ export class AppActionManagerService {
         }
     }
 
-    private async applyActionFormResponse(response: ActionRouterResponse, sourcePayload: unknown = null, pageContextId = this.pageContextId): Promise<void> {
-        if (!this.isCurrentPageContext(pageContextId)) return;
-        const responseData = this.asRecord(response.data) ?? {};
-        const nestedResponseData = this.asRecord(responseData['data']);
-        let data = nestedResponseData ? nestedResponseData : responseData;
-        const sourceData = this.isRecord(sourcePayload) && this.isRecord(sourcePayload['data']) ? sourcePayload['data'] : null;
-        const envelopeCandidates: unknown[] = this.isRecord(sourcePayload) ? [sourcePayload, sourcePayload['content'], sourcePayload['payload'], sourcePayload['response'], sourcePayload['result'], sourcePayload['action'], sourceData, sourceData ? sourceData['content'] : null, sourceData ? sourceData['payload'] : null, sourceData ? sourceData['response'] : null, sourceData ? sourceData['result'] : null, sourceData ? sourceData['action'] : null] : [];
-        if (envelopeCandidates.length) data = this.renderer.resolveBestActionFormData(responseData, data, envelopeCandidates);
-        data = this.renderer.normalizeFormSubmissionData(data);
-        const inferredActionModel = this.inferModelFromActionName(this.currentActionName);
-        const responseModel = this.readFirstString(response.model, data['model'], responseData['model'], inferredActionModel);
-        if (responseModel) { this.appManager.selectedModel = responseModel; this.tableManager.selectedModel = responseModel; this.renderer.selectedModel = responseModel; }
-        const recName = this.readFirstString(response.rec_name, data['rec_name'], this.tableManager.selectedRecordName);
-        this.tableManager.selectedRecordName = recName; this.renderer.selectedRecordName = recName;
-
-        let schema: Record<string, unknown> | null = this.renderer.extractActionFormSchema(response) ?? this.renderer.extractFormSchema(response);
-        if (!schema && envelopeCandidates.length) {
-            for (const candidate of envelopeCandidates) {
-                schema = this.renderer.extractActionFormSchema(candidate) ?? this.renderer.extractFormSchema(candidate);
-                if (schema) break;
-            }
-        }
-        if (!schema) {
-            const schemaModel = this.readFirstString(responseModel, this.appManager.selectedModel, inferredActionModel);
-            if (schemaModel && !responseModel) { this.appManager.selectedModel = schemaModel; this.tableManager.selectedModel = schemaModel; this.renderer.selectedModel = schemaModel; }
-            if (schemaModel) schema = await this.loadModelSchemaForActionForm(schemaModel);
-        }
-        if (!this.isCurrentPageContext(pageContextId)) return;
-        if (schema) { this.renderer.rawFormSchema = this.cloneSchema(schema); this.renderer.rawFormSchemaModel = this.appManager.selectedModel; this.tableManager.rawFormSchema = this.renderer.rawFormSchema; this.tableManager.rawFormSchemaModel = this.appManager.selectedModel; }
-        const canReuseCachedSchema = Boolean(this.renderer.rawFormSchema) && (!this.appManager.selectedModel || !this.renderer.rawFormSchemaModel || this.renderer.rawFormSchemaModel === this.appManager.selectedModel);
-        const baseSchema = schema ? this.cloneSchema(schema) : (canReuseCachedSchema && this.renderer.rawFormSchema ? this.cloneSchema(this.renderer.rawFormSchema) : null);
-        this.renderer.formSchema = null; this.renderer.formSubmission = null;
+    private async applyActionFormResponse(
+        content: ResponseObjectData,
+        pageContextId = this.pageContextId,
+        formOriginPath = ''
+    ): Promise<void> {
         this.renderer.beginFormViewerLoad();
-        this.renderer.formSchema = baseSchema ? this.renderer.prepareSchemaForRender(baseSchema, data) : null;
-        if (!this.isCurrentPageContext(pageContextId)) return;
-        if (!this.renderer.formSchema) {
-            const actionName = this.currentActionName || 'unknown';
-            const modelName = this.appManager.selectedModel ? ` (model: ${this.appManager.selectedModel})` : '';
-            throw new Error(`Schema non trovato per action form "${actionName}"${modelName}`);
+        if (!this.isCurrentPageContext(pageContextId)) { this.renderer.cancelFormViewerLoad(); return; }
+        const data = this.isRecord(content.data) ? content.data : {};
+        const model = content.model || this.tableManager.selectedModel || this.appManager.selectedModel;
+        if (!model) { this.renderer.cancelFormViewerLoad(); throw new Error('Model non trovato nella risposta'); }
+        this.appManager.selectedModel = model;
+        this.tableManager.selectedModel = model;
+        this.renderer.selectedModel = model;
+        if (!this.renderer.extractFormSchema(content.schema)) {
+            await this.loadModelSchemaIfNeeded(model);
+            if (!this.isCurrentPageContext(pageContextId)) { this.renderer.cancelFormViewerLoad(); return; }
         }
-        this.renderer.seedSubmissionDefaultsIntoSchema(this.renderer.formSchema, data);
-        this.renderer.formSubmission = { data };
+        const schema = this.renderer.extractFormSchema(content.schema) ?? this.renderer.rawFormSchema;
+        if (!schema) {
+            this.renderer.cancelFormViewerLoad();
+            throw new Error(`Schema non trovato per action form "${model}"`);
+        }
+        if (this.renderer.extractFormSchema(content.schema)) {
+            this.renderer.rawFormSchema = this.cloneSchema(schema);
+            this.renderer.rawFormSchemaModel = model;
+            this.tableManager.rawFormSchema = this.renderer.rawFormSchema;
+            this.tableManager.rawFormSchemaModel = model;
+        }
+        this.renderer.formSchema = null; this.renderer.formSubmission = null;
+        const normalizedData = this.renderer.normalizeFormSubmissionData(data, schema);
+        const renderSchema = this.renderer.prepareSchemaForRender(this.cloneSchema(schema), normalizedData);
+        this.renderer.formSchema = renderSchema;
+        if (!this.isCurrentPageContext(pageContextId)) { this.renderer.cancelFormViewerLoad(); return; }
+        this.renderer.seedSubmissionDefaultsIntoSchema(renderSchema, normalizedData);
+        this.renderer.formSubmission = { data: normalizedData };
+        const recName = content.rec_name;
+        this.tableManager.selectedRecordName = recName;
+        this.renderer.selectedRecordName = recName;
         this.appManager.viewMode = 'form';
-        this.builder.syncBuilderMode(response as Record<string, unknown>, data, this.renderer.formSchema);
+        this.builder.syncBuilderMode(content.fields, normalizedData, renderSchema);
         if (!this.isCurrentPageContext(pageContextId)) return;
-        this.currentFormSubmitActionPath = this.resolveFormSubmitActionPathFromResponse(response, sourcePayload);
-        this.currentFormSubmitNextActionPath = this.resolveFormSubmitNextActionPathFromResponse(response, sourcePayload);
-        const fields = this.isRecord(response.fields) ? response.fields as Record<string, unknown> : {};
-        this.currentFormPageTitle = this.readFirstString(
-            responseData['page_title'], responseData['title'],
-            fields['page_title'], fields['title'],
-            (response as Record<string, unknown>)['page_title'], (response as Record<string, unknown>)['title']
-        );
-        // Persist fast-search state so cancel_button can restore it after returning to the list.
+        this.currentFormSubmitActionPath = this.resolveSubmitActionFromFields(content.fields);
+        this.currentFormSubmitNextActionPath = this.resolveSubmitNextActionFromFields(content.fields);
+        this.currentFormPageTitle = content.title;
         this.tableManager.saveFastSearchStateToStorage();
-        const formTargetNodes = this.collectFormActionTargetNodes(response, sourcePayload);
-        this.currentFormAbandonActionPath = this.resolveFormAbandonActionPath(formTargetNodes);
-        this.extractFormAbandonMeta(response as Record<string, unknown>, responseData, formTargetNodes, data);
-        this.formResponseActionButtons = this.resolveFormResponseActionButtons(response, sourcePayload);
-        this.contextActions = this.extractContextActions(response as Record<string, unknown>, responseData);
+        this.currentFormOriginPath = this.normalizeActionUrl(this.readFirstString(formOriginPath, this.readHistoryActionOriginPath()));
+        this.currentFormAbandonActionPath = this.resolveAbandonActionFromFields(content.fields);
+        this.formResponseActionButtons = this.resolveFormResponseActionButtonsFromContent(content);
+        this.contextActions = this.normalizeContextActions(content.context_actions);
+        this.hasContextActionsPayload = this.contextActions.length > 0;
         this.rebuildMenus();
-        this.renderer.scheduleRemoteSelectHydrationAfterRender(data);
+        this.renderer.scheduleRemoteSelectHydrationAfterRender(normalizedData);
         this.builder.warmFormBuilderConfig();
+    }
+
+    private async loadModelSchemaIfNeeded(model: string): Promise<void> {
+        if (this.renderer.rawFormSchema && this.renderer.rawFormSchemaModel === model) return;
+        const schema = await this.loadModelSchemaForActionForm(model);
+        if (schema) {
+            this.renderer.rawFormSchema = this.cloneSchema(schema);
+            this.renderer.rawFormSchemaModel = model;
+            this.tableManager.rawFormSchema = this.renderer.rawFormSchema;
+            this.tableManager.rawFormSchemaModel = model;
+        }
     }
 
     private async loadModelSchemaForActionForm(model: string): Promise<Record<string, unknown> | null> {
         try {
             const payload = await this.api.getRecordSchema(model);
-            return this.renderer.extractFormSchema(payload);
+            const obj = requireResponseObject(payload);
+            return this.renderer.extractFormSchema(obj.content.schema);
         } catch { return null; }
+    }
+
+    private resolveSubmitActionFromFields(fields: Record<string, unknown>): string {
+        const seq = this.asRecord(fields['action_sequence']);
+        const candidates = [
+            fields['submit_action'], fields['submit_action_name'],
+            seq?.['submit_action'], seq?.['submit_action_name'],
+            fields['next_action'], fields['next_action_name']
+        ];
+        for (const c of candidates) {
+            const s = typeof c === 'string' && c.trim() ? c.trim() : '';
+            if (s) return this.normalizeActionUrl(s.startsWith('/') ? s : `/action/${s}`);
+        }
+        return '';
+    }
+
+    private resolveSubmitNextActionFromFields(fields: Record<string, unknown>): string {
+        const seq = this.asRecord(fields['action_sequence']);
+        const candidates = [
+            fields['submit_next_action'], fields['submit_next_action_name'],
+            seq?.['submit_next_action'], seq?.['submit_next_action_name'],
+            fields['next_page'], fields['next_path']
+        ];
+        for (const c of candidates) {
+            const s = typeof c === 'string' && c.trim() ? c.trim() : '';
+            if (s) return this.normalizeActionUrl(s.startsWith('/') ? s : `/action/${s}`);
+        }
+        return '';
+    }
+
+    private resolveAbandonActionFromFields(fields: Record<string, unknown>): string {
+        const seq = this.asRecord(fields['action_sequence']);
+        const candidates = [
+            fields['abandon_action'], fields['abandon_action_name'],
+            seq?.['abandon_action'], seq?.['abandon_action_name']
+        ];
+        for (const c of candidates) {
+            const s = typeof c === 'string' && c.trim() ? c.trim() : '';
+            if (s) return this.normalizeActionUrl(s.startsWith('/') ? s : `/action/${s}`);
+        }
+        return '';
+    }
+
+    private resolveFormResponseActionButtonsFromContent(content: ResponseObjectData): MenuButton[] {
+        const buttons: MenuButton[] = [];
+        const fields = content.fields;
+        const candidates: unknown[] = [fields['buttons'], fields['actions'], fields['toolbar'], fields['toolbar_buttons'], fields['form_actions'], fields['action_buttons']];
+        for (const candidate of candidates) buttons.push(...this.normalizeFormResponseButtonsCandidate(candidate));
+        const deduped = this.dedupeMenuButtons(buttons).filter(button => !this.isMenuContainerButton(button));
+        if (deduped.length) return deduped;
+        const submitPath = this.resolveSubmitActionFromFields(fields);
+        if (!submitPath) return [];
+        const submitNextActionPath = this.resolveSubmitNextActionFromFields(fields);
+        const submitButton = this.buildFormSubmitActionButton(submitPath, submitNextActionPath);
+        return submitButton ? this.ensureCopyFormActionButton([submitButton]) : [];
     }
 
     private inferModelFromActionName(actionName: string): string {
@@ -1583,8 +1733,8 @@ export class AppActionManagerService {
         catch { this.setStatus(`Errore clipboard. Record: ${recName}`, true); }
     }
 
-    private beginClickTransition(): void { this.transitionLoadingCount += 1; this.isTransitionLoading = true; }
-    private endClickTransition(): void { this.transitionLoadingCount = Math.max(0, this.transitionLoadingCount - 1); this.isTransitionLoading = this.transitionLoadingCount > 0; }
+    private beginClickTransition(): void { this.beginExternalTransition(); }
+    private endClickTransition(): void { this.endExternalTransition(); }
 
     async withClickTransition<T>(task: () => Promise<T>): Promise<T> {
         this.beginClickTransition();
@@ -1610,230 +1760,22 @@ export class AppActionManagerService {
         return typeof structuredClone === 'function' ? structuredClone(s) : JSON.parse(JSON.stringify(s));
     }
 
-    private extractSchema(payload: unknown): Record<string, unknown> | null {
-        const nodes = this.renderer.collectResponseNodes(payload);
-        for (const target of nodes) {
-            const dataNode = this.asRecord(target['data']);
-            const candidates: unknown[] = [target['schema'], target['formio'], target['components'], dataNode ? dataNode['schema'] : null, dataNode ? dataNode['formio'] : null, dataNode ? dataNode['components'] : null];
-            for (const entry of candidates) {
-                const parsed = this.parseJsonMaybe(entry);
-                const normalized = parsed ?? entry;
-                if (Array.isArray(normalized)) return { display: 'form', components: normalized };
-                if (this.isRecord(normalized) && Array.isArray(normalized['components'])) return normalized;
-            }
-        }
-        return null;
-    }
-
-    extractActionResponse(payload: unknown): ActionRouterResponse | null {
-        if (!this.isRecord(payload)) return null;
-        const hasActionPayloadFields = (node: Record<string, unknown>): boolean => (
-            typeof node['mode'] === 'string' || Object.prototype.hasOwnProperty.call(node, 'data') || Object.prototype.hasOwnProperty.call(node, 'schema') || Object.prototype.hasOwnProperty.call(node, 'fields') || Object.prototype.hasOwnProperty.call(node, 'columns') || Object.prototype.hasOwnProperty.call(node, 'total_count') || Object.prototype.hasOwnProperty.call(node, 'model') || Object.prototype.hasOwnProperty.call(node, 'rec_name') || Object.prototype.hasOwnProperty.call(node, 'query') || Object.prototype.hasOwnProperty.call(node, 'batch_size') || Object.prototype.hasOwnProperty.call(node, 'editable_fields') || Object.prototype.hasOwnProperty.call(node, 'obfucated_fields') || Object.prototype.hasOwnProperty.call(node, 'filter_kyes')
-        );
-        const inferMode = (node: Record<string, unknown>, inheritedMode = ''): string => {
-            const own = this.readFirstString(node['mode']).toLowerCase();
-            if (own) return own;
-            const inherited = this.readFirstString(inheritedMode).toLowerCase();
-            if (inherited && inherited !== 'action') return inherited;
-            if (typeof node['schema'] === 'string' && String(node['schema']).trim()) return 'form';
-            if (this.isRecord(node['schema']) || Array.isArray(node['schema'])) return 'form';
-            if (Object.prototype.hasOwnProperty.call(node, 'columns') || Object.prototype.hasOwnProperty.call(node, 'total_count') || Array.isArray(node['data'])) return 'list';
-            return inherited;
-        };
-        const scoreCandidate = (candidate: ActionRouterResponse, depth: number): number => {
-            const mode = this.readFirstString(candidate.mode).toLowerCase();
-            let score = -(depth * 5);
-            if (mode === 'form') score += 100;
-            else if (mode === 'list') score += 90;
-            else if (mode === 'layout') score += 80;
-            else if (mode === 'menu') score += 70;
-            else if (mode === 'card') score += 60;
-            else if (mode === 'action') score += 10;
-            if (this.isRecord(candidate.schema) || Array.isArray(candidate.schema)) score += 200;
-            if (this.isRecord(candidate.data)) { score += 20; const ns = (candidate.data as Record<string, unknown>)['schema']; if (this.isRecord(ns) || Array.isArray(ns)) score += 120; }
-            return score;
-        };
-        const queue: Array<{ node: Record<string, unknown>; mode: string; depth: number }> = [{ node: payload, mode: '', depth: 0 }];
-        const visited = new Set<Record<string, unknown>>();
-        let best: { score: number; candidate: ActionRouterResponse } | null = null;
-        while (queue.length) {
-            const current = queue.shift();
-            if (!current) break;
-            const node = current.node;
-            if (visited.has(node)) continue;
-            visited.add(node);
-            const mode = inferMode(node, current.mode);
-            if (hasActionPayloadFields(node)) {
-                const candidate: ActionRouterResponse = { ...(node as ActionRouterResponse), ...(mode ? { mode } : {}) };
-                const score = scoreCandidate(candidate, current.depth);
-                if (!best || score > best.score) best = { score, candidate };
-            }
-            const dataNode = node['data'];
-            if (this.isRecord(dataNode)) queue.push({ node: dataNode, mode, depth: current.depth + 1 });
-            for (const wrapper of this.responseWrappers) {
-                const nested = node[wrapper];
-                if (!this.isRecord(nested)) continue;
-                queue.push({ node: nested, mode, depth: current.depth + 1 });
-            }
-        }
-        return best?.candidate ?? null;
-    }
-
-    private collectNextActionRedirectCandidates(payload: unknown): unknown[] {
-        const candidates: unknown[] = [];
-        const collect = (node: unknown): void => {
-            if (typeof node === 'string') { candidates.push(node); return; }
-            if (!this.isRecord(node)) return;
-            candidates.push(node['redirect'], node['redirect_to'], node['next_page'], node['nextPage'], node['next_path'], node['path'], node['url'], node['url_action'], node['location']);
-            collect(node['data']);
-            for (const wrapper of this.responseWrappers) collect(node[wrapper]);
-        };
-        collect(payload);
-        return candidates;
-    }
-
-    private extractNextActionRedirectRaw(payload: unknown): string {
-        const candidates = this.collectNextActionRedirectCandidates(payload);
-        for (const candidate of candidates) { if (typeof candidate === 'string' && candidate.trim()) return candidate.trim(); }
-        return '';
-    }
-
-    private extractNextActionRedirectPath(payload: unknown): string {
-        const candidates = this.collectNextActionRedirectCandidates(payload);
-        for (const candidate of candidates) { const path = this.normalizeNextActionRedirectCandidate(candidate); if (path) return path; }
-        return '';
-    }
-
-    private normalizeNextActionRedirectCandidate(candidate: unknown): string {
-        if (typeof candidate !== 'string') return '';
-        let raw = candidate.trim();
-        if (!raw) return '';
-        raw = raw.replace(/^https?:\/\/[^/]+/i, '').replace(/^\/+/, '');
-        if (!raw) return '';
-        if (raw.startsWith('api/')) raw = raw.slice('api/'.length);
-        if (raw.startsWith('actoin/')) raw = `action/${raw.slice('actoin/'.length)}`;
-        if (raw === 'next_action' || raw.startsWith('next_action/')) return '';
-        if (raw === 'action/next_action' || raw.startsWith('action/next_action/')) return '';
-        if (raw.startsWith('dashboard')) return '/dashboard';
-        if (raw.startsWith('action/')) return this.normalizeActionUrl(`/${raw}`);
-        if (raw.startsWith('list/') || raw.startsWith('record/')) return this.normalizeActionUrl(`/${raw}`);
-        return this.normalizeActionUrl(`/action/${raw}`);
-    }
-
-    private extractNextActionRedirectStatus(payload: unknown): number {
-        const statuses: unknown[] = [];
-        const collect = (node: unknown): void => {
-            if (!this.isRecord(node)) return;
-            statuses.push(node['redirect_status'], node['redirectStatus'], node['status_code'], node['http_status']);
-            collect(node['data']);
-            for (const wrapper of this.responseWrappers) collect(node[wrapper]);
-        };
-        collect(payload);
-        for (const status of statuses) {
-            const parsed = Number(status);
-            if (!Number.isFinite(parsed)) continue;
-            const value = Math.floor(parsed);
-            if (value >= 300 && value <= 399) return value;
-        }
-        return 0;
-    }
-
-    private extractNextActionResponseMode(payload: unknown): string {
-        const modes: unknown[] = [];
-        const collect = (node: unknown): void => {
-            if (!this.isRecord(node)) return;
-            modes.push(node['mode']);
-            collect(node['data']);
-            for (const wrapper of this.responseWrappers) collect(node[wrapper]);
-        };
-        collect(payload);
-        for (const mode of modes) {
-            if (typeof mode !== 'string') continue;
-            const normalized = mode.trim().toLowerCase();
-            if (normalized) return normalized;
-        }
-        return '';
-    }
-
-    private resolveFormResponseActionButtons(response: ActionRouterResponse, sourcePayload: unknown): MenuButton[] {
-        const buttons: MenuButton[] = [];
-        const targetNodes = this.collectFormActionTargetNodes(response, sourcePayload);
-        for (const node of targetNodes) {
-            const candidates: unknown[] = [node['buttons'], node['actions'], node['toolbar'], node['toolbar_buttons'], node['toolbarButtons'], node['form_actions'], node['formActions'], node['action_buttons'], node['actionButtons']];
-            for (const candidate of candidates) buttons.push(...this.normalizeFormResponseButtonsCandidate(candidate));
-        }
-        const deduped = this.dedupeMenuButtons(buttons).filter(button => !this.isMenuContainerButton(button));
-        if (deduped.length) return deduped;
-        const sequenceButtons = this.resolveActionSequenceButtons(targetNodes);
-        if (sequenceButtons.length) return sequenceButtons;
-        const submitPath = this.extractFormSubmitActionPath(targetNodes);
-        if (!submitPath) return [];
-        const submitNextActionPath = this.extractFormSubmitNextActionPath(targetNodes);
-        const submitButton = this.buildFormSubmitActionButton(submitPath, submitNextActionPath);
-        return submitButton ? this.ensureCopyFormActionButton([submitButton]) : [];
-    }
-
-    private collectFormActionTargetNodes(response: ActionRouterResponse, sourcePayload: unknown): Record<string, unknown>[] {
-        const nodes = this.renderer.collectResponseNodes(this.isRecord(sourcePayload) ? sourcePayload : { mode: response.mode, data: response.data, fields: response.fields, schema: response.schema });
-        const targetNodes: Record<string, unknown>[] = [...nodes];
-        nodes.forEach(node => { const fields = this.asRecord(node['fields']); if (fields) targetNodes.push(fields); });
-        return targetNodes;
-    }
-
-    private resolveFormSubmitActionPathFromResponse(response: ActionRouterResponse, sourcePayload: unknown): string {
-        return this.extractFormSubmitActionPath(this.collectFormActionTargetNodes(response, sourcePayload));
-    }
-
-    private resolveFormSubmitNextActionPathFromResponse(response: ActionRouterResponse, sourcePayload: unknown): string {
-        return this.extractFormSubmitNextActionPath(this.collectFormActionTargetNodes(response, sourcePayload));
-    }
-
     private resolveActionSequenceButtons(nodes: Record<string, unknown>[]): MenuButton[] {
         if (this.tableManager.selectedRecordName) return [];
         for (const node of nodes) {
             const actionSequence = this.resolveActionSequenceMetadata(node);
-            if (!actionSequence.submitActionPath && !actionSequence.abandonActionPath) continue;
+            if (!actionSequence.submitActionPath) continue;
             const result: MenuButton[] = [];
             if (actionSequence.submitActionPath) { const btn = this.buildFormSubmitActionButton(actionSequence.submitActionPath, actionSequence.submitNextActionPath); if (btn) result.push(btn); }
-            if (actionSequence.abandonActionPath) { const btn = this.buildAbandonActionButton(actionSequence.abandonActionPath); if (btn) result.push(btn); }
             if (result.length) return result;
         }
         return [];
     }
 
-    private resolveActionSequenceMetadata(node: Record<string, unknown>): { submitActionPath: string; submitNextActionPath: string; abandonActionPath: string } {
-        const seq = this.asRecord(node['action_sequence']);
+    private resolveActionSequenceMetadata(node: Record<string, unknown>): { submitActionPath: string; submitNextActionPath: string } {
         const submitActionPath = this.resolveSubmitActionPath([node]);
         const submitNextActionPath = this.resolveSubmitNextActionPath([node]);
-        const abandonActionPath = this.normalizeFormSubmitActionCandidate(this.readFirstString(node['abandon_action'], node['abandonAction'], node['abandon_action_name'], node['abandonActionName'], seq?.['abandon_action'], seq?.['abandonAction'], seq?.['abandon_action_name'], seq?.['abandonActionName']));
-        return { submitActionPath, submitNextActionPath, abandonActionPath };
-    }
-
-    private resolveFormAbandonActionPath(nodes: Record<string, unknown>[]): string {
-        for (const node of nodes) {
-            const actionSequence = this.resolveActionSequenceMetadata(node);
-            if (actionSequence.abandonActionPath) return actionSequence.abandonActionPath;
-            const normalized = this.normalizeFormSubmitActionCandidate(
-                this.readFirstString(
-                    node['abandon_action'],
-                    node['abandonAction'],
-                    node['abandon_action_name'],
-                    node['abandonActionName'],
-                    node['cancel_action'],
-                    node['cancelAction'],
-                    node['cancel_action_name'],
-                    node['cancelActionName']
-                )
-            );
-            if (normalized) return normalized;
-        }
-        return '';
-    }
-
-    private buildAbandonActionButton(path: string): MenuButton | null {
-        const normalizedPath = this.normalizeFormSubmitActionCandidate(path);
-        if (!normalizedPath) return null;
-        return { model: this.appManager.selectedModel, key: 'abandon', type: 'button', label: 'Abbandona', leftIcon: 'pi pi-times', authtoken: this.appManager.baseToken, req_id: this.uiReqId, btn_action_type: false, action_type: 'window', url_action: normalizedPath, builder: false, mode: 'form', content: normalizedPath, menu_group: 'form', menu_type: '', is_admin: false };
+        return { submitActionPath, submitNextActionPath };
     }
 
     private normalizeFormResponseButtonsCandidate(candidate: unknown): MenuButton[] {
@@ -1950,21 +1892,16 @@ export class AppActionManagerService {
     }
 
     private finalizeCurrentFormActionButtons(buttons: MenuButton[]): MenuButton[] {
-        const config = this.resolveCurrentFormViewerActionConfig();
+        const showSubmit = this.readCurrentFormConfigBoolean(['no_submit', 'noSubmit']) !== true;
         let result = buttons.map(button => this.normalizeCurrentFormActionButton(button));
 
-        if (!config.showSubmit) {
+        result = result.filter(button => !this.isAbandonFormButton(button));
+
+        if (!showSubmit) {
             result = result.filter(button => !this.isPrimaryFormSubmitButton(button));
         } else if (!result.some(button => this.isPrimaryFormSubmitButton(button))) {
             const submitButton = this.buildCurrentFormSubmitFallbackButton();
             if (submitButton) result = [submitButton, ...result];
-        }
-
-        if (!config.showAbandon) {
-            result = result.filter(button => !this.isAbandonFormButton(button));
-        } else if (!result.some(button => this.isAbandonFormButton(button))) {
-            const abandonButton = this.buildAbandonActionButton(config.abandonActionPath);
-            if (abandonButton) result = [...result, abandonButton];
         }
 
         return this.dedupeMenuButtons(result);
@@ -1987,26 +1924,6 @@ export class AppActionManagerService {
         return fallbackButtons.find(button => this.isPrimaryFormSubmitButton(button)) ?? null;
     }
 
-    private resolveCurrentFormViewerActionConfig(): { showSubmit: boolean; showAbandon: boolean; abandonActionPath: string } {
-        const noSubmit = this.readCurrentFormConfigBoolean(['no_submit', 'noSubmit']);
-        const noCancel = this.readCurrentFormConfigBoolean(['no_cancel', 'noCancel']);
-        const explicitAbandonPath = this.currentFormAbandonActionPath || this.readCurrentFormConfigPath([
-            'abandon_action',
-            'abandonAction',
-            'abandon_action_name',
-            'abandonActionName',
-            'cancel_action',
-            'cancelAction',
-            'cancel_action_name',
-            'cancelActionName'
-        ]);
-        return {
-            showSubmit: noSubmit !== true,
-            showAbandon: noCancel !== true,
-            abandonActionPath: explicitAbandonPath || this.buildDefaultFormAbandonPath()
-        };
-    }
-
     private readCurrentFormConfigBoolean(keys: string[]): boolean | null {
         for (const source of this.collectCurrentFormConfigSources()) {
             for (const key of keys) {
@@ -2017,40 +1934,11 @@ export class AppActionManagerService {
         return null;
     }
 
-    private readCurrentFormConfigPath(keys: string[]): string {
-        for (const source of this.collectCurrentFormConfigSources()) {
-            for (const key of keys) {
-                if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
-                const normalized = this.normalizeFormSubmitActionCandidate(source[key]);
-                if (normalized) return normalized;
-            }
-        }
-        return '';
-    }
-
     private collectCurrentFormConfigSources(): Record<string, unknown>[] {
         const sources: Record<string, unknown>[] = [];
         if (this.isRecord(this.renderer.formSchema)) sources.push(this.renderer.formSchema);
         if (this.isRecord(this.renderer.rawFormSchema)) sources.push(this.renderer.rawFormSchema);
         return sources;
-    }
-
-    private buildDefaultFormAbandonPath(): string {
-        const currentAction = this.resolveCurrentActionName();
-        if (currentAction && !this.isDirectFormActionName(currentAction)) {
-            return this.normalizeActionUrl(`/action/${currentAction}`);
-        }
-        const selectedModel = this.appManager.selectedModel;
-        if (selectedModel) {
-            return this.normalizeActionUrl(`/list/${encodeURIComponent(selectedModel)}`);
-        }
-        return '/dashboard';
-    }
-
-    private isDirectFormActionName(actionName: string): boolean {
-        const normalized = String(actionName ?? '').trim().toLowerCase();
-        if (!normalized) return false;
-        return normalized === 'form_form' || normalized.startsWith('form_form_') || normalized === 'form' || normalized.startsWith('form_');
     }
 
     private sanitizeFormEditorActionButtons(buttons: MenuButton[]): MenuButton[] {
@@ -2133,47 +2021,10 @@ export class AppActionManagerService {
         const label = this.readFirstString(button.label).toLowerCase();
         if (label.includes('abbandona') || label.includes('annulla') || label.includes('cancel')) return true;
         const actionType = this.normalizeMenuType(button.action_type);
-        return actionType === 'window' && this.getButtonActionPath(button) === this.currentFormAbandonActionPath;
+        return actionType === 'abandon' || actionType === 'cancel_button';
     }
 
-    private extractFormAbandonMeta(
-        response: Record<string, unknown>,
-        responseData: Record<string, unknown>,
-        targetNodes: Record<string, unknown>[],
-        data: Record<string, unknown>
-    ): void {
-        // Collect all candidate nodes to search for no_cancel / abandon label+icon.
-        const candidates: Record<string, unknown>[] = [response, responseData, data, ...targetNodes];
-        const fields = this.isRecord(response['fields']) ? response['fields'] as Record<string, unknown> : {};
-        candidates.push(fields);
-
-        this.currentFormNoCancel = candidates.some(node => {
-            const v = node['no_cancel'] ?? node['noCancel'];
-            return v === 1 || v === '1' || v === true;
-        });
-
-        for (const node of candidates) {
-            const label = this.readFirstString(
-                node['abandon_label'], node['abandonLabel'],
-                node['cancel_label'], node['cancelLabel'],
-                node['abandon_action_label'], node['abandonActionLabel']
-            );
-            if (label) { this.currentFormAbandonLabel = label; break; }
-        }
-
-        for (const node of candidates) {
-            const icon = this.readFirstString(
-                node['abandon_icon'], node['abandonIcon'],
-                node['cancel_icon'], node['cancelIcon'],
-                node['abandon_button_icon'], node['abandonButtonIcon']
-            );
-            if (icon) { this.currentFormAbandonIcon = icon; break; }
-        }
-    }
-
-    private extractContextActions(response: Record<string, unknown>, responseData: Record<string, unknown>): ContextAction[] {
-        const fields = this.isRecord(response['fields']) ? response['fields'] as Record<string, unknown> : {};
-        const raw = response['context_actions'] ?? fields['context_actions'] ?? responseData['context_actions'];
+    private normalizeContextActions(raw: unknown[]): ContextAction[] {
         if (!Array.isArray(raw)) return [];
         const actions: ContextAction[] = [];
         for (const item of raw) {
@@ -2185,13 +2036,13 @@ export class AppActionManagerService {
                     ? [rawModes.trim().toLowerCase()]
                     : [];
             actions.push({
-                rec_name: this.readFirstString(item['rec_name']),
-                action_type: this.readFirstString(item['action_type']),
-                label: this.readFirstString(item['label']),
-                button_icon: this.readFirstString(item['button_icon']),
+                rec_name: this.readFirstString(item['rec_name'] as string),
+                action_type: this.readFirstString(item['action_type'] as string),
+                label: this.readFirstString(item['label'] as string),
+                button_icon: this.readFirstString(item['button_icon'] as string),
                 modal: Boolean(item['modal']),
                 context_button_mode: modes,
-                url_action: this.readFirstString(item['url_action'])
+                url_action: this.readFirstString(item['url_action'] as string)
             });
         }
         return actions;
@@ -2200,8 +2051,10 @@ export class AppActionManagerService {
     contextActionToMenuButtonPublic(action: ContextAction): MenuButton { return this.contextActionToMenuButton(action); }
 
     private contextActionToMenuButton(action: ContextAction): MenuButton {
+        const isAbandon = this.isAbandonContextAction(action);
+        const urlAction = isAbandon ? this.readFirstString(this.currentFormOriginPath, this.readHistoryActionOriginPath()) : action.url_action;
         // abandon / window / cancel_button actions: navigate without POST.
-        const isNavigate = action.action_type === 'abandon' || action.action_type === 'window' || action.action_type === 'cancel_button';
+        const isNavigate = isAbandon || action.action_type === 'abandon' || action.action_type === 'window' || action.action_type === 'cancel_button';
         return {
             model: this.appManager.selectedModel,
             key: action.rec_name,
@@ -2212,14 +2065,30 @@ export class AppActionManagerService {
             req_id: this.uiReqId,
             btn_action_type: isNavigate ? false : 'post',
             action_type: action.action_type,
-            url_action: action.url_action,
+            url_action: urlAction,
             builder: false,
             mode: action.context_button_mode.includes('list') && !action.context_button_mode.includes('form') ? 'list' : 'form',
-            content: action.url_action,
+            content: urlAction,
             menu_group: 'context',
             menu_type: '',
             is_admin: false
         };
+    }
+
+    private isAbandonContextAction(action: ContextAction): boolean {
+        return this.isAbandonFormButton({
+            model: '',
+            key: action.rec_name,
+            type: 'button',
+            label: action.label,
+            leftIcon: action.button_icon,
+            authtoken: '',
+            req_id: '',
+            btn_action_type: false,
+            action_type: action.action_type,
+            url_action: action.url_action,
+            builder: false
+        });
     }
 
     private ensureCopyFormActionButton(buttons: MenuButton[]): MenuButton[] {

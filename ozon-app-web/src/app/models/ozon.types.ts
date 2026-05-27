@@ -11,6 +11,59 @@ export interface RuntimeConfig {
   authLoginPath: string;
   authLogoutPath: string;
   authRefreshPath: string;
+  appCode: string;
+}
+
+export type ResponseMode = 'form' | 'list' | 'list_stream' | 'layout' | 'menu' | 'card' | 'redirect' | 'action' | string;
+
+export interface ContextActionRaw {
+  rec_name: string;
+  action_type: string;
+  label: string;
+  button_icon: string;
+  modal: boolean;
+  context_button_mode: string | string[];
+  url_action: string;
+}
+
+export interface ResponseObjectData {
+  mode: ResponseMode;
+  data: unknown;
+  readable: boolean;
+  editable: boolean;
+  can_create: boolean;
+  model: string;
+  query: Record<string, unknown>;
+  obfucated_fields: string[];
+  editable_fields: string[];
+  schema: unknown;
+  rec_name: string;
+  fields: Record<string, unknown>;
+  columns: Record<string, string>;
+  filter_kyes: Record<string, string>;
+  batch_size: number;
+  total_count: number;
+  context_actions: ContextActionRaw[];
+  title: string;
+  next_action_url: string;
+}
+
+export interface ResponseObject {
+  content: ResponseObjectData;
+  fail: boolean;
+  message: string;
+}
+
+export function requireResponseObject(payload: unknown): ResponseObject {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload))
+    throw new Error('Invalid ResponseObject');
+  const p = payload as Record<string, unknown>;
+  if (!p['content'] || typeof p['content'] !== 'object' || Array.isArray(p['content']))
+    throw new Error('Invalid ResponseObject');
+  const c = p['content'] as Record<string, unknown>;
+  if (typeof c['mode'] !== 'string' || !c['mode'])
+    throw new Error('Invalid ResponseObject');
+  return payload as ResponseObject;
 }
 
 export interface ListRequestPayload {
@@ -49,57 +102,6 @@ export interface ApiErrorPayload {
   message?: string;
   [key: string]: unknown;
 }
-
-export type ResponseMode =
-  | 'form'
-  | 'list'
-  | 'list_stream'
-  | 'layout'
-  | 'menu'
-  | 'card'
-  | 'redirect'
-  | 'action'
-  | string;
-
-export interface ResponseObjectData {
-  mode: ResponseMode;
-  data: unknown;
-  readable?: boolean;
-  editable?: boolean;
-  can_create?: boolean;
-  model?: string;
-  query?: Record<string, unknown>;
-  obfucated_fields?: string[];
-  editable_fields?: string[];
-  schema?: unknown;
-  rec_name?: string;
-  fields?: Record<string, unknown>;
-  columns?: unknown;
-  filter_kyes?: Record<string, string>;
-  batch_size?: number;
-  total_count?: number;
-}
-
-export interface ResponseObject {
-  content: ResponseObjectData;
-  fail?: boolean;
-  message?: string;
-}
-
-export type ActionRouterResponse = Partial<ResponseObjectData> & {
-  mode?: string;
-  data?: unknown;
-  model?: string;
-  rec_name?: string;
-  query?: unknown;
-  schema?: unknown;
-  fields?: unknown;
-  columns?: unknown;
-  total_count?: unknown;
-  fail?: boolean;
-  message?: string;
-  content?: unknown;
-};
 
 export interface RemoteSelectRequestPayload {
   key?: string;

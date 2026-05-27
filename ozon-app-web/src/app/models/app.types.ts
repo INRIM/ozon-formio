@@ -142,16 +142,20 @@ export interface ImportColumnDescriptor {
     name: string;
 }
 
-export interface ImportPreviewRow extends Record<string, unknown> {}
-
-export interface ImportSubmissionPayload {
-    fields: ImportColumnDescriptor[];
-    data: ImportPreviewRow[];
-    delete_before?: boolean;
+export interface ImportPreviewRow extends Record<string, unknown> {
+    __sourceRow?: number;
 }
+
+export type ImportRecordPayload = Record<string, unknown>;
 
 export type ThemeMode = 'light' | 'dark';
 export type AppViewMode = 'dashboard' | 'list' | 'form';
+
+export interface FormNotification {
+    type: 'error' | 'warning' | 'success' | 'info';
+    title: string;
+    messages: string[];
+}
 
 /** Action button supplied by the backend in `context_actions`. */
 export interface ContextAction {
@@ -160,7 +164,7 @@ export interface ContextAction {
     label: string;
     button_icon: string;
     modal: boolean;
-    /** Empty array → all contexts. Otherwise list of contexts: "form", "list". */
+    /** Explicit list of supported contexts: "form", "list". Empty array hides the button. */
     context_button_mode: string[];
     url_action: string;
 }

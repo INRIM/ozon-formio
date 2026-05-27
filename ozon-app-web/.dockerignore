@@ -1,0 +1,12 @@
+.angular
+coverage
+dist
+node_modules
+
+.claude
+.DS_Store
+.idea
+
+README.md
+REFACTOR-METODI-RIPETUTI.md
+REFACTORING_REPORT.md

@@ -1,6 +1,8 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { By } from '@angular/platform-browser';
 import { RecordListComponent } from './record-list.component';
+import { RecordTransferToolsComponent } from './record-transfer-tools.component';
+import { OzonApiService } from '../core/ozon-api.service';
 
 describe('RecordListComponent', () => {
   let fixture: ComponentFixture<RecordListComponent>;
@@ -8,7 +10,21 @@ describe('RecordListComponent', () => {
 
   beforeEach(async () => {
     await TestBed.configureTestingModule({
-      imports: [RecordListComponent]
+      imports: [RecordListComponent],
+      providers: [
+        {
+          provide: OzonApiService,
+          useValue: jasmine.createSpyObj<OzonApiService>('OzonApiService', [
+            'getAction',
+            'getRecordSchema',
+            'importData',
+            'importClean',
+            'updateRecord',
+            'streamList',
+            'deleteAction'
+          ])
+        }
+      ]
     }).compileComponents();
 
     fixture = TestBed.createComponent(RecordListComponent);
@@ -40,5 +56,29 @@ describe('RecordListComponent', () => {
     const filterInput = fixture.debugElement.query(By.css('input[placeholder="Filtra righe..."]'));
     expect(filterInput).toBeNull();
     expect(fixture.debugElement.query(By.css('.ozon-fast-search-placeholder'))).toBeNull();
+  });
+
+  it('should forward import lifecycle events from transfer tools', () => {
+    component.isAdmin = true;
+    component.importConfig = {
+      visible: true,
+      model: 'demo.model',
+      title: 'Import Data'
+    };
+    spyOn(component.importBusyChange, 'emit');
+    spyOn(component.importFinished, 'emit');
+
+    fixture.detectChanges();
+    const gearButton = fixture.debugElement.query(By.css('.ozon-gear-btn'));
+    gearButton.nativeElement.click();
+    fixture.detectChanges();
+
+    const transferTools = fixture.debugElement.query(By.directive(RecordTransferToolsComponent));
+    const transferToolsInstance = transferTools.componentInstance as RecordTransferToolsComponent;
+    transferToolsInstance.importBusyChange.emit(true);
+    transferToolsInstance.importFinished.emit();
+
+    expect(component.importBusyChange.emit).toHaveBeenCalledOnceWith(true);
+    expect(component.importFinished.emit).toHaveBeenCalledTimes(1);
   });
 });

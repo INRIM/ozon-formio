@@ -4,7 +4,35 @@ import { AppComponent } from './app.component';
 import { OzonApiService } from './core/ozon-api.service';
 import { MainManagerService } from './core/main-manager.service';
 import { BackendAuthService } from './core/backend-auth.service';
-import { ListRequestPayload } from './models/ozon.types';
+import { ListRequestPayload, requireResponseObject, ResponseObject, ResponseObjectData } from './models/ozon.types';
+import { GlobalErrorStateService } from './core/global-error-state.service';
+
+const makeResponse = (content: Partial<ResponseObjectData>, fail = false, message = ''): ResponseObject => ({
+  content: {
+    mode: 'action',
+    data: {},
+    readable: true,
+    editable: true,
+    can_create: false,
+    model: '',
+    query: {},
+    obfucated_fields: [],
+    editable_fields: [],
+    schema: null,
+    rec_name: '',
+    fields: {},
+    columns: {},
+    filter_kyes: {},
+    batch_size: 0,
+    total_count: 0,
+    context_actions: [],
+    title: '',
+    next_action_url: '',
+    ...content
+  },
+  fail,
+  message
+});
 
 const runtimeConfig = {
   backendUrl: '',
@@ -16,13 +44,15 @@ const runtimeConfig = {
   authMode: 'none' as const,
   authLoginPath: '/login',
   authLogoutPath: '/logout',
-  authRefreshPath: '/refresh'
+  authRefreshPath: '/refresh',
+  appCode: ''
 };
 
 describe('AppComponent', () => {
   let apiMock: jasmine.SpyObj<OzonApiService>;
   let mainManagerMock: jasmine.SpyObj<MainManagerService>;
   let backendAuthMock: jasmine.SpyObj<BackendAuthService>;
+  let globalErrorState: GlobalErrorStateService;
 
   beforeEach(async () => {
     apiMock = jasmine.createSpyObj<OzonApiService>('OzonApiService', [
@@ -55,21 +85,21 @@ describe('AppComponent', () => {
     apiMock.updateRuntimeConfig.and.callFake((patch) => ({ ...runtimeConfig, ...patch }));
     apiMock.getModels.and.resolveTo([]);
     apiMock.getSession.and.resolveTo([]);
-    apiMock.getActionLayout.and.resolveTo({ mode: 'layout', data: { layout: 'standard', schema: {}, menu: [] } });
-    apiMock.getActionMenu.and.resolveTo({ mode: 'menu', data: [] });
-    apiMock.getActionDashboard.and.resolveTo({ mode: 'card', data: [] });
-    apiMock.getAction.and.resolveTo({ mode: 'action', data: { status: 'ok' } });
-    apiMock.getNextAction.and.resolveTo({ mode: 'action', data: { redirect: 'form_form_demo/rec-1' } });
+    apiMock.getActionLayout.and.resolveTo(makeResponse({ mode: 'layout', data: { layout: 'standard', schema: {}, menu: [] } }));
+    apiMock.getActionMenu.and.resolveTo(makeResponse({ mode: 'menu', data: [] }));
+    apiMock.getActionDashboard.and.resolveTo(makeResponse({ mode: 'card', data: [] }));
+    apiMock.getAction.and.resolveTo(makeResponse({ mode: 'action', data: { status: 'ok' } }));
+    apiMock.getNextAction.and.resolveTo(makeResponse({ mode: 'action', data: { status: 'ok' } }));
     apiMock.getExportData.and.resolveTo({ content: { data: [] } });
     apiMock.getSchemaModel.and.resolveTo({ fields: ['rec_name'], schema: { properties: { rec_name: { type: 'string' } } } });
     apiMock.getResourceData.and.resolveTo({ content: { data: [] } });
-    apiMock.postAction.and.resolveTo({ mode: 'action', data: { status: 'ok' } });
-    apiMock.deleteAction.and.resolveTo({ mode: 'action', data: { status: 'ok' } });
-    apiMock.getRecordSchema.and.resolveTo({});
-    apiMock.getRecord.and.resolveTo({ content: { data: { rec_name: 'r1' } } });
-    apiMock.updateRecord.and.resolveTo({ content: { data: { rec_name: 'r1' } } });
+    apiMock.postAction.and.resolveTo(makeResponse({ mode: 'action', data: { status: 'ok' } }));
+    apiMock.deleteAction.and.resolveTo(makeResponse({ mode: 'action', data: { status: 'ok' } }));
+    apiMock.getRecordSchema.and.resolveTo(makeResponse({ mode: 'form', schema: null }));
+    apiMock.getRecord.and.resolveTo(makeResponse({ mode: 'form', data: { rec_name: 'r1' } }));
+    apiMock.updateRecord.and.resolveTo(makeResponse({ mode: 'form', data: { rec_name: 'r1' } }));
     apiMock.importData.and.resolveTo({ status: 'done', ok: 0 });
-    apiMock.postActionPath.and.resolveTo({ mode: 'action', data: { status: 'ok' } });
+    apiMock.postActionPath.and.resolveTo(makeResponse({ mode: 'action', data: { status: 'ok' } }));
     apiMock.getRemoteSelect.and.resolveTo([]);
     apiMock.storeSearchQuery.and.resolveTo({ link: '#' });
     apiMock.persistFastSearchSession.and.resolveTo({ content: { data: {} } });
@@ -146,6 +176,8 @@ describe('AppComponent', () => {
         { provide: BackendAuthService, useValue: backendAuthMock }
       ]
     }).compileComponents();
+
+    globalErrorState = TestBed.inject(GlobalErrorStateService);
   });
 
   afterEach(() => {
@@ -186,6 +218,62 @@ describe('AppComponent', () => {
     expect(app.theme.themeMode).toBe('light');
     expect(window.localStorage.getItem('ozon-app-web.theme')).toBe('light');
     expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+  });
+
+  it('should use the global loader for import lifecycle events', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    spyOn(app.actionManager, 'beginExternalTransition').and.callThrough();
+    spyOn(app.actionManager, 'endExternalTransition').and.callThrough();
+
+    app.onImportBusyChange(true);
+    expect(app.actionManager.beginExternalTransition).toHaveBeenCalledTimes(1);
+    expect(app.isTransitionLoading).toBeTrue();
+
+    app.onImportBusyChange(false);
+    expect(app.actionManager.endExternalTransition).toHaveBeenCalledTimes(1);
+    expect(app.isTransitionLoading).toBeFalse();
+  });
+
+  it('should reload the current list after import finishes', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    app.appManager.viewMode = 'list';
+    app.appManager.selectedModel = 'demo.model';
+    spyOn(app.actionManager, 'loadRecords').and.resolveTo();
+
+    app.onImportFinished();
+    await Promise.resolve();
+
+    expect(app.actionManager.loadRecords).toHaveBeenCalledOnceWith(true);
+  });
+
+  it('should render a global client error banner and dismiss it', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    globalErrorState.report('Client exploded', 'stack trace');
+
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).toContain('Errore client.');
+    expect(fixture.nativeElement.textContent).toContain('Client exploded');
+
+    app.dismissFatalClientError();
+    fixture.detectChanges();
+
+    expect(fixture.nativeElement.textContent).not.toContain('Client exploded');
+  });
+
+  it('should clear fatal client error state and request a reload', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    globalErrorState.report('Client exploded', 'stack trace');
+    spyOn(app, 'reloadWindow').and.stub();
+
+    app.reloadAfterFatalClientError();
+
+    expect(globalErrorState.visible).toBeFalse();
+    expect(app.reloadWindow).toHaveBeenCalledTimes(1);
   });
 
   it('should bootstrap backend auth when keycloak mode is enabled', async () => {
@@ -232,7 +320,7 @@ describe('AppComponent', () => {
   });
 
   it('should hydrate remote select values from component properties via backend endpoint', async () => {
-    apiMock.getRecordSchema.and.resolveTo({
+    apiMock.getRecordSchema.and.resolveTo(makeResponse({ mode: 'form', schema: {
       components: [
         {
           type: 'select',
@@ -245,7 +333,7 @@ describe('AppComponent', () => {
           }
         }
       ]
-    });
+    }}));
     apiMock.getRemoteSelect.and.resolveTo([
       { label: 'Italia', value: 'IT' },
       { label: 'Francia', value: 'FR' }
@@ -298,24 +386,19 @@ describe('AppComponent', () => {
   });
 
   it('should preserve inline dataSrc values options without calling remote select endpoint', async () => {
-    apiMock.getRecordSchema.and.resolveTo({
-      content: {
-        mode: 'form',
-        schema: [
-          {
-            type: 'select',
-            key: 'status',
-            dataSrc: 'values',
-            data: {
-              values: [
-                { label: 'Attivo', value: 'active' },
-                { label: 'Inattivo', value: 'inactive' }
-              ]
-            }
-          }
-        ]
+    apiMock.getRecordSchema.and.resolveTo(makeResponse({ mode: 'form', schema: [
+      {
+        type: 'select',
+        key: 'status',
+        dataSrc: 'values',
+        data: {
+          values: [
+            { label: 'Attivo', value: 'active' },
+            { label: 'Inattivo', value: 'inactive' }
+          ]
+        }
       }
-    });
+    ]}));
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
@@ -335,7 +418,7 @@ describe('AppComponent', () => {
   });
 
   it('should cache remote select options and avoid duplicate requests between schema and record load', async () => {
-    apiMock.getRecordSchema.and.resolveTo({
+    apiMock.getRecordSchema.and.resolveTo(makeResponse({ mode: 'form', schema: {
       components: [
         {
           type: 'select',
@@ -345,15 +428,11 @@ describe('AppComponent', () => {
           }
         }
       ]
-    });
-    apiMock.getRecord.and.resolveTo({
-      content: {
-        data: {
-          rec_name: 'r1',
-          country: 'IT'
-        }
-      }
-    });
+    }}));
+    apiMock.getRecord.and.resolveTo(makeResponse({ mode: 'form', data: {
+      rec_name: 'r1',
+      country: 'IT'
+    }}));
     apiMock.getRemoteSelect.and.resolveTo([{ label: 'Italia', value: 'IT' }]);
 
     const fixture = TestBed.createComponent(AppComponent);
@@ -370,11 +449,12 @@ describe('AppComponent', () => {
   });
 
   it('should send canonical internal RemoteSelectRequest payload for formio source', async () => {
-    apiMock.getRecordSchema.and.resolveTo({
+    apiMock.getRecordSchema.and.resolveTo(makeResponse({ mode: 'form', schema: {
       components: [
         {
           type: 'select',
           key: 'customer_id',
+          idPath: 'rec_name',
           properties: {
             src: 'url',
             model: 'customer',
@@ -383,7 +463,7 @@ describe('AppComponent', () => {
           }
         }
       ]
-    });
+    }}));
     apiMock.getRemoteSelect.and.resolveTo([{ label: 'Mario Rossi', value: 'CUS-1' }]);
 
     const fixture = TestBed.createComponent(AppComponent);
@@ -405,25 +485,26 @@ describe('AppComponent', () => {
           domain: { active: true },
           compute_label: 'name',
           label: 'customer_id',
-          id: 'id'
+          id: 'rec_name'
         })
       })
     );
   });
 
   it('should hydrate resource select values from streamed list endpoint', async () => {
-    apiMock.getRecordSchema.and.resolveTo({
+    apiMock.getRecordSchema.and.resolveTo(makeResponse({ mode: 'form', schema: {
       components: [
         {
           type: 'select',
           key: 'partner_id',
+          idPath: 'rec_name',
           dataSrc: 'resource',
           data: {
             resource: 'res.partner'
           }
         }
       ]
-    });
+    }}));
     apiMock.streamList.and.callFake(async (model: string, payload: ListRequestPayload, onItem: (item: unknown) => void) => {
       expect(model).toBe('res.partner');
       expect(payload).toEqual(jasmine.objectContaining({
@@ -466,13 +547,13 @@ describe('AppComponent', () => {
     const selectComponent = components[0];
     expect(selectComponent['dataSrc']).toBe('values');
     expect((selectComponent['data'] as Record<string, unknown>)['values']).toEqual([
-      jasmine.objectContaining({ label: 'Partner A', value: '1', data: jasmine.objectContaining({ _id: '1', rec_name: 'Partner A' }) }),
-      jasmine.objectContaining({ label: 'Partner B', value: '2', data: jasmine.objectContaining({ _id: '2', rec_name: 'Partner B' }) })
+      jasmine.objectContaining({ label: 'Partner A', value: 'Partner A', rec_name: 'Partner A', data: jasmine.objectContaining({ _id: '1', rec_name: 'Partner A' }) }),
+      jasmine.objectContaining({ label: 'Partner B', value: 'Partner B', rec_name: 'Partner B', data: jasmine.objectContaining({ _id: '2', rec_name: 'Partner B' }) })
     ]);
   });
 
   it('should map remote select backend kv payload to label/value options', async () => {
-    apiMock.getRecordSchema.and.resolveTo({
+    apiMock.getRecordSchema.and.resolveTo(makeResponse({ mode: 'form', schema: {
       components: [
         {
           type: 'select',
@@ -482,7 +563,7 @@ describe('AppComponent', () => {
           }
         }
       ]
-    });
+    }}));
     apiMock.getRemoteSelect.and.resolveTo({
       content: {
         mode: 'list',
@@ -512,18 +593,19 @@ describe('AppComponent', () => {
   });
 
   it('should preserve data_value payload for resource select templates', async () => {
-    apiMock.getRecordSchema.and.resolveTo({
+    apiMock.getRecordSchema.and.resolveTo(makeResponse({ mode: 'form', schema: {
       components: [
         {
           type: 'select',
           key: 'user_id',
+          idPath: 'rec_name',
           dataSrc: 'resource',
           data: {
             resource: 'auth.user'
           }
         }
       ]
-    });
+    }}));
     apiMock.streamList.and.callFake(async (_model: string, _payload: ListRequestPayload, onItem: (item: unknown) => void) => {
       onItem({
         _id: '69f48d7c1eaec1bc77c2fcae',
@@ -563,7 +645,8 @@ describe('AppComponent', () => {
     expect((selectComponent['data'] as Record<string, unknown>)['values']).toEqual([
       jasmine.objectContaining({
         label: 'a.gerace',
-        value: '69f48d7c1eaec1bc77c2fcae',
+        value: 'a.gerace',
+        rec_name: 'a.gerace',
         data: jasmine.objectContaining({
           rec_name: 'a.gerace',
           data_value: jasmine.objectContaining({ rec_name: 'a.gerace' })
@@ -573,7 +656,7 @@ describe('AppComponent', () => {
   });
 
   it('should defer record form remote select hydration until the viewer ready event', async () => {
-    apiMock.getRecordSchema.and.resolveTo({
+    apiMock.getRecordSchema.and.resolveTo(makeResponse({ mode: 'form', schema: {
       components: [
         {
           type: 'select',
@@ -584,15 +667,11 @@ describe('AppComponent', () => {
           }
         }
       ]
-    });
-    apiMock.getRecord.and.resolveTo({
-      content: {
-        data: {
-          rec_name: 'REC-1',
-          country: 'IT'
-        }
-      }
-    });
+    }}));
+    apiMock.getRecord.and.resolveTo(makeResponse({ mode: 'form', data: {
+      rec_name: 'REC-1',
+      country: 'IT'
+    }}));
     apiMock.getRemoteSelect.and.resolveTo([{ label: 'Italia', value: 'IT' }]);
 
     const fixture = TestBed.createComponent(AppComponent);
@@ -616,16 +695,13 @@ describe('AppComponent', () => {
   });
 
   it('should build header menu groups from dynamic action menu payload', async () => {
-    apiMock.getActionMenu.and.resolveTo({
-      mode: 'menu',
-      data: [
-        {
-          Main: [
-            { label: 'Apri Anagrafica', content: '/action/open_anagrafica', action_type: 'window', icon: 'pi pi-folder' }
-          ]
-        }
-      ]
-    });
+    apiMock.getActionMenu.and.resolveTo(makeResponse({ mode: 'menu', data: [
+      {
+        Main: [
+          { label: 'Apri Anagrafica', content: '/action/open_anagrafica', action_type: 'window', icon: 'pi pi-folder' }
+        ]
+      }
+    ]}));
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
@@ -638,14 +714,11 @@ describe('AppComponent', () => {
   });
 
   it('should group flat menu payload by menu_group', async () => {
-    apiMock.getActionMenu.and.resolveTo({
-      mode: 'menu',
-      data: [
-        { menu_group: 'Config', label: 'Utenti', url_action: '/action/list_utenti', action_type: 'window' },
-        { menu_group: 'Config', label: 'Ruoli', url_action: '/action/list_ruoli', action_type: 'window' },
-        { menu_group: 'Documenti', label: 'Ordini', url_action: '/action/list_ordini', action_type: 'window' }
-      ]
-    });
+    apiMock.getActionMenu.and.resolveTo(makeResponse({ mode: 'menu', data: [
+      { menu_group: 'Config', label: 'Utenti', url_action: '/action/list_utenti', action_type: 'window' },
+      { menu_group: 'Config', label: 'Ruoli', url_action: '/action/list_ruoli', action_type: 'window' },
+      { menu_group: 'Documenti', label: 'Ordini', url_action: '/action/list_ordini', action_type: 'window' }
+    ]}));
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
@@ -662,14 +735,11 @@ describe('AppComponent', () => {
   });
 
   it('should build top menu drill-down by parent and group actions by menu_group', async () => {
-    apiMock.getActionMenu.and.resolveTo({
-      mode: 'menu',
-      data: [
-        { parent: 'Admin', menu_group: 'Config', label: 'Utenti', url_action: '/action/list_utenti', action_type: 'window' },
-        { parent: 'Admin', menu_group: 'Config', label: 'Ruoli', url_action: '/action/list_ruoli', action_type: 'window' },
-        { parent: 'Admin', menu_group: 'Documenti', label: 'Ordini', url_action: '/action/list_ordini', action_type: 'window' }
-      ]
-    });
+    apiMock.getActionMenu.and.resolveTo(makeResponse({ mode: 'menu', data: [
+      { parent: 'Admin', menu_group: 'Config', label: 'Utenti', url_action: '/action/list_utenti', action_type: 'window' },
+      { parent: 'Admin', menu_group: 'Config', label: 'Ruoli', url_action: '/action/list_ruoli', action_type: 'window' },
+      { parent: 'Admin', menu_group: 'Documenti', label: 'Ordini', url_action: '/action/list_ordini', action_type: 'window' }
+    ]}));
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
@@ -684,17 +754,14 @@ describe('AppComponent', () => {
   });
 
   it('should keep top menu parent toggle-only and run url_action on children from object payload', async () => {
-    apiMock.getActionMenu.and.resolveTo({
-      mode: 'menu',
-      data: {
-        Design: [
-          { key: 'design', label: 'Design', action_type: 'menu', url_action: '' },
-          { key: 'list_form', label: 'Form', action_type: 'menu', url_action: 'list_form' },
-          { key: 'list_resource', label: 'Resource', action_type: 'menu', url_action: '/action/list_resource' },
-          { key: 'list_layout', label: 'Layout', action_type: 'menu', url_action: '/action/list_layout' }
-        ]
-      }
-    });
+    apiMock.getActionMenu.and.resolveTo(makeResponse({ mode: 'menu', data: {
+      Design: [
+        { key: 'design', label: 'Design', action_type: 'menu', url_action: '' },
+        { key: 'list_form', label: 'Form', action_type: 'menu', url_action: 'list_form' },
+        { key: 'list_resource', label: 'Resource', action_type: 'menu', url_action: '/action/list_resource' },
+        { key: 'list_layout', label: 'Layout', action_type: 'menu', url_action: '/action/list_layout' }
+      ]
+    }}));
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
@@ -795,13 +862,10 @@ describe('AppComponent', () => {
   });
 
   it('should perform hard reload on action route 307 redirect', async () => {
-    apiMock.getAction.and.resolveTo({
-      mode: 'action',
-      data: {
-        redirect: '/action/form_form_doc_bene_servizi/ORDINE132873',
-        redirect_status: 307
-      }
-    });
+    apiMock.getAction.and.resolveTo(makeResponse({
+      mode: 'redirect',
+      next_action_url: '/action/form_form_doc_bene_servizi/ORDINE132873'
+    }));
     mainManagerMock.hardReloadToUrl.and.returnValue({
       reloaded: true,
       blocked: false,
@@ -825,18 +889,17 @@ describe('AppComponent', () => {
   it('should navigate to redirected action path when action response contains redirect', async () => {
     apiMock.getAction.and.callFake((name: string) => {
       if (name === 'list_doc_beni_servizi') {
-        return Promise.resolve({
-          mode: 'action',
-          data: {
-            redirect: '/action/form_form_doc_bene_servizi/ORDINE132873',
-            redirect_status: 302
-          }
-        });
+        return Promise.resolve(makeResponse({
+          mode: 'redirect',
+          next_action_url: '/action/form_form_doc_bene_servizi/ORDINE132873'
+        }));
       }
 
       if (name === 'form_form_doc_bene_servizi') {
-        return Promise.resolve({
+        return Promise.resolve(makeResponse({
           mode: 'form',
+          model: 'doc_bene_servizi',
+          rec_name: 'ORDINE132873',
           data: {
             rec_name: 'ORDINE132873',
             stato: 'bozza'
@@ -847,10 +910,10 @@ describe('AppComponent', () => {
               { type: 'textfield', key: 'stato', label: 'Stato', input: true }
             ]
           }
-        });
+        }));
       }
 
-      return Promise.resolve({ mode: 'action', data: { status: 'ok' } });
+      return Promise.resolve(makeResponse({ mode: 'action', data: { status: 'ok' } }));
     });
 
     const fixture = TestBed.createComponent(AppComponent);
@@ -863,7 +926,7 @@ describe('AppComponent', () => {
       window.history.replaceState({}, '', originalPath || '/');
     }
 
-    expect(mainManagerMock.hardReloadToUrl).not.toHaveBeenCalled();
+    expect(mainManagerMock.hardReloadToUrl).toHaveBeenCalledWith('/action/form_form_doc_bene_servizi/ORDINE132873');
     expect(apiMock.getAction).toHaveBeenCalledWith(
       'form_form_doc_bene_servizi',
       jasmine.objectContaining({ recName: 'ORDINE132873' })
@@ -888,18 +951,19 @@ describe('AppComponent', () => {
   });
 
   it('should fetch model schema when action form response has no schema on direct route', async () => {
-    apiMock.getAction.and.resolveTo({
+    apiMock.getAction.and.resolveTo(makeResponse({
       mode: 'form',
+      model: 'doc_bene_servizi',
       data: {
         rec_name: 'ORDINE63423',
         stato: 'bozza'
       }
-    });
-    apiMock.getRecordSchema.and.resolveTo({
+    }));
+    apiMock.getRecordSchema.and.resolveTo(makeResponse({ mode: 'form', schema: {
       components: [
         { type: 'textfield', key: 'stato', label: 'Stato', input: true }
       ]
-    });
+    }}));
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
@@ -918,22 +982,22 @@ describe('AppComponent', () => {
     expect(app.formSchema).toBeTruthy();
   });
 
-  it('should parse action form schema/data from payload envelope', async () => {
-    apiMock.getAction.and.resolveTo({
+  it('should parse action form schema/data from canonical content envelope', async () => {
+    apiMock.getAction.and.resolveTo(makeResponse({
       mode: 'form',
-      payload: {
-        schema: {
-          display: 'form',
-          components: [
-            { type: 'textfield', key: 'stato', label: 'Stato', input: true }
-          ]
-        },
-        data: {
-          rec_name: 'ORDINE63423',
-          stato: 'bozza'
-        }
+      model: 'doc_bene_servizi',
+      rec_name: 'ORDINE63423',
+      schema: {
+        display: 'form',
+        components: [
+          { type: 'textfield', key: 'stato', label: 'Stato', input: true }
+        ]
+      },
+      data: {
+        rec_name: 'ORDINE63423',
+        stato: 'bozza'
       }
-    } as any);
+    }));
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
@@ -953,122 +1017,22 @@ describe('AppComponent', () => {
     expect(app.selectedRecordName).toBe('ORDINE63423');
   });
 
-  it('should parse action form schema/data from nested action wrapper payload', async () => {
-    apiMock.getAction.and.resolveTo({
-      mode: 'action',
+  it('should parse action form schema as JSON string from canonical content envelope', async () => {
+    const actionResponse = makeResponse({
+      mode: 'form',
+      model: 'doc_bene_servizi',
+      rec_name: 'ORDINE63423',
+      schema: JSON.stringify({
+        display: 'form',
+        components: [
+          { type: 'textfield', key: 'stato', label: 'Stato', input: true }
+        ]
+      }),
       data: {
-        payload: {
-          schema: {
-            display: 'form',
-            components: [
-              { type: 'textfield', key: 'stato', label: 'Stato', input: true }
-            ]
-          },
-          data: {
-            rec_name: 'ORDINE63423',
-            stato: 'bozza'
-          }
-        }
+        rec_name: 'ORDINE63423',
+        stato: 'bozza'
       }
-    } as any);
-
-    const fixture = TestBed.createComponent(AppComponent);
-    const app = fixture.componentInstance as any;
-    const originalPath = window.location.pathname;
-
-    try {
-      window.history.replaceState({}, '', '/action/form_form_doc_bene_servizi/ORDINE63423');
-      await app.actionManager["handleLocationRoute"](false);
-    } finally {
-      window.history.replaceState({}, '', originalPath || '/');
-    }
-
-    expect(app.viewMode).toBe('form');
-    expect(app.formSchema).toBeTruthy();
-    expect(app.formSubmission?.data?.stato).toBe('bozza');
-    expect(app.selectedRecordName).toBe('ORDINE63423');
-  });
-
-  it('should prefer payload schema over deep inherited form nodes without schema', async () => {
-    apiMock.getAction.and.resolveTo({
-      mode: 'action',
-      data: {
-        payload: {
-          schema: [
-            { type: 'textfield', key: 'from_payload', label: 'From Payload', input: true }
-          ],
-          data: {
-            rec_name: 'ORDINE63423',
-            stato: 'bozza',
-            data: {
-              data: {
-                data: {
-                  data: {
-                    data: {
-                      data: {
-                        data: {
-                          data: {
-                            data: {
-                              data: {
-                                data: {
-                                  data: {
-                                    data: {
-                                      value: 'deep-node'
-                                    }
-                                  }
-                                }
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    } as any);
-    apiMock.getRecordSchema.and.resolveTo({
-      components: [
-        { type: 'textfield', key: 'from_model', label: 'From Model', input: true }
-      ]
     });
-
-    const fixture = TestBed.createComponent(AppComponent);
-    const app = fixture.componentInstance as any;
-    const originalPath = window.location.pathname;
-
-    try {
-      window.history.replaceState({}, '', '/action/form_form_doc_bene_servizi/ORDINE63423');
-      await app.actionManager["handleLocationRoute"](false);
-    } finally {
-      window.history.replaceState({}, '', originalPath || '/');
-    }
-
-    expect(apiMock.getRecordSchema).not.toHaveBeenCalled();
-    expect(app.viewMode).toBe('form');
-    expect(app.formSchema?.components?.[0]?.key).toBe('from_payload');
-  });
-
-  it('should parse action form schema/data when payload fields are JSON strings', async () => {
-    const actionResponse = {
-      mode: 'form',
-      payload: {
-        schema: JSON.stringify({
-          display: 'form',
-          components: [
-            { type: 'textfield', key: 'stato', label: 'Stato', input: true }
-          ]
-        }),
-        data: JSON.stringify({
-          rec_name: 'ORDINE63423',
-          stato: 'bozza'
-        })
-      }
-    } as any;
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
@@ -1083,9 +1047,11 @@ describe('AppComponent', () => {
     expect(app.selectedRecordName).toBe('ORDINE63423');
   });
 
-  it('should promote nested data_value fields to root in action form submission', async () => {
-    apiMock.getAction.and.resolveTo({
+  it('should load form submission data from flat content.data', async () => {
+    apiMock.getAction.and.resolveTo(makeResponse({
       mode: 'form',
+      model: 'doc_bene_servizi',
+      rec_name: 'ORDINE63424',
       schema: {
         display: 'form',
         components: [
@@ -1094,12 +1060,10 @@ describe('AppComponent', () => {
       },
       data: {
         rec_name: 'ORDINE63424',
-        data_value: {
-          document_type: 'DDT_ENTRATA',
-          stato: 'bozza'
-        }
+        document_type: 'DDT_ENTRATA',
+        stato: 'bozza'
       }
-    } as any);
+    }));
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
@@ -1114,50 +1078,15 @@ describe('AppComponent', () => {
 
     expect(app.viewMode).toBe('form');
     expect(app.formSubmission?.data?.document_type).toBe('DDT_ENTRATA');
-    expect((app.formSubmission?.data?.data_value as Record<string, unknown>)?.['document_type']).toBe('DDT_ENTRATA');
+    expect(app.formSubmission?.data?.stato).toBe('bozza');
     expect(app.selectedRecordName).toBe('ORDINE63424');
   });
 
-  it('should expose root form fields under data_value compatibility alias', async () => {
-    apiMock.getAction.and.resolveTo({
-      mode: 'form',
-      schema: {
-        display: 'form',
-        components: [
-          { type: 'textfield', key: 'document_type', label: 'Tipo Documento', input: true }
-        ]
-      },
-      data: {
-        rec_name: 'ORDINE63425',
-        document_type: 'DDT_RESO',
-        stato: 'bozza'
-      }
-    } as any);
-
-    const fixture = TestBed.createComponent(AppComponent);
-    const app = fixture.componentInstance as any;
-    const originalPath = window.location.pathname;
-
-    try {
-      window.history.replaceState({}, '', '/action/form_form_doc_bene_servizi/ORDINE63425');
-      await app.actionManager["handleLocationRoute"](false);
-    } finally {
-      window.history.replaceState({}, '', originalPath || '/');
-    }
-
-    const dataValue = app.formSubmission?.data?.data_value as Record<string, unknown>;
-    expect(app.viewMode).toBe('form');
-    expect(dataValue?.['document_type']).toBe('DDT_RESO');
-    expect(dataValue?.['stato']).toBe('bozza');
-  });
-
   it('should request next_action on table row double click using current action and rec_name', async () => {
-    apiMock.getNextAction.and.resolveTo({
-      mode: 'action',
-      data: {
-        redirect: 'form_form_list_posizione/Gov.30459'
-      }
-    });
+    apiMock.getNextAction.and.resolveTo(makeResponse({
+      mode: 'redirect',
+      next_action_url: '/action/form_form_list_posizione/Gov.30459'
+    }));
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
@@ -1177,8 +1106,10 @@ describe('AppComponent', () => {
   it('should resolve next_action redirect through canonical action route even when embedded content is present', async () => {
     apiMock.getAction.and.callFake((name: string) => {
       if (name === 'form_form_list_posizione') {
-        return Promise.resolve({
+        return Promise.resolve(makeResponse({
           mode: 'form',
+          model: 'list_posizione',
+          rec_name: 'Gov.30459',
           data: {
             rec_name: 'Gov.30459',
             stato: 'from-route'
@@ -1189,30 +1120,15 @@ describe('AppComponent', () => {
               { type: 'textfield', key: 'stato', label: 'Stato', input: true }
             ]
           }
-        });
+        }));
       }
-      return Promise.resolve({ mode: 'action', data: { status: 'ok' } });
+      return Promise.resolve(makeResponse({ mode: 'action', data: { status: 'ok' } }));
     });
 
-    apiMock.getNextAction.and.resolveTo({
-      mode: 'action',
-      data: {
-        redirect: '/action/form_form_list_posizione/Gov.30459'
-      },
-      content: {
-        mode: 'form',
-        data: {
-          rec_name: 'Gov.30459',
-          stato: 'bozza'
-        },
-        schema: {
-          display: 'form',
-          components: [
-            { type: 'textfield', key: 'stato', label: 'Stato', input: true }
-          ]
-        }
-      }
-    } as any);
+    apiMock.getNextAction.and.resolveTo(makeResponse({
+      mode: 'redirect',
+      next_action_url: '/action/form_form_list_posizione/Gov.30459'
+    }));
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
@@ -1235,13 +1151,10 @@ describe('AppComponent', () => {
   });
 
   it('should perform hard reload on next_action 307 redirect', async () => {
-    apiMock.getNextAction.and.resolveTo({
-      mode: 'action',
-      data: {
-        redirect: 'http://localhost:7999/action/form_form_list_posizione/Gov.30459',
-        redirect_status: 307
-      }
-    });
+    apiMock.getNextAction.and.resolveTo(makeResponse({
+      mode: 'redirect',
+      next_action_url: 'http://localhost:7999/action/form_form_list_posizione/Gov.30459'
+    }));
     mainManagerMock.hardReloadToUrl.and.returnValue({
       reloaded: true,
       blocked: false,
@@ -1255,21 +1168,16 @@ describe('AppComponent', () => {
     await app.actionManager["runNextActionRoute"](['list_posizione', 'Gov.30459']);
 
     expect(mainManagerMock.hardReloadToUrl).toHaveBeenCalledWith(
-      '/action/form_form_list_posizione/Gov.30459'
+      'http://localhost:7999/action/form_form_list_posizione/Gov.30459'
     );
     expect(apiMock.getAction).not.toHaveBeenCalled();
   });
 
-  it('should ignore next_action path hints and hard reload using 307 redirect path', async () => {
-    apiMock.getNextAction.and.resolveTo({
-      mode: 'action',
-      path: '/action/next_action/list_doc_beni_servizi/ORDINE63417',
-      next_action: 'next_action/list_doc_beni_servizi/ORDINE63417',
-      data: {
-        redirect: '/action/form_form_doc_bene_servizi/ORDINE63417',
-        redirect_status: 307
-      }
-    } as any);
+  it('should ignore next_action path hints and hard reload using canonical redirect path', async () => {
+    apiMock.getNextAction.and.resolveTo(makeResponse({
+      mode: 'redirect',
+      next_action_url: '/action/form_form_doc_bene_servizi/ORDINE63417'
+    }));
     mainManagerMock.hardReloadToUrl.and.returnValue({
       reloaded: true,
       blocked: false,
@@ -1285,19 +1193,14 @@ describe('AppComponent', () => {
     expect(mainManagerMock.hardReloadToUrl).toHaveBeenCalledWith(
       '/action/form_form_doc_bene_servizi/ORDINE63417'
     );
-    expect(mainManagerMock.hardReloadToUrl).not.toHaveBeenCalledWith(
-      '/action/next_action/list_doc_beni_servizi/ORDINE63417'
-    );
     expect(apiMock.getAction).not.toHaveBeenCalled();
   });
 
   it('should request next_action without rec_name for nuovo record', async () => {
-    apiMock.getNextAction.and.resolveTo({
-      mode: 'action',
-      data: {
-        redirect: 'fom_form_list_posizione/'
-      }
-    });
+    apiMock.getNextAction.and.resolveTo(makeResponse({
+      mode: 'redirect',
+      next_action_url: '/action/fom_form_list_posizione/'
+    }));
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
@@ -1330,6 +1233,42 @@ describe('AppComponent', () => {
     expect(app.statusText).toContain('Compila i campi obbligatori');
   });
 
+  it('should coerce blank multiple fields to arrays before saving a form', async () => {
+    apiMock.updateRecord.and.resolveTo(makeResponse({ mode: 'form', data: {
+      rec_name: 'ACT-1',
+      delete_cascade: []
+    }}));
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.appManager.selectedModel = 'action';
+    app.renderer.formSchema = {
+      components: [
+        {
+          type: 'select',
+          key: 'delete_cascade',
+          input: true,
+          multiple: true
+        }
+      ]
+    };
+    app.renderer.rawFormSchema = app.renderer.formSchema;
+    app.renderer.formSubmission = {
+      data: {
+        rec_name: 'ACT-1',
+        delete_cascade: ''
+      }
+    };
+
+    await app.actionManager.saveCurrentRecord();
+
+    expect(apiMock.updateRecord).toHaveBeenCalledWith('action', 'ACT-1', jasmine.objectContaining({
+      rec_name: 'ACT-1',
+      delete_cascade: []
+    }));
+    expect(app.formSubmission.data.delete_cascade).toEqual([]);
+  });
+
   it('should block post actions when Formio validation returns required-field errors', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
@@ -1358,7 +1297,7 @@ describe('AppComponent', () => {
     expect(app.statusText).toContain('Compila i campi obbligatori');
   });
 
-  it('should show Aggiorna and Abbandona when form config enables cancel button', () => {
+  it('should not synthesize Abbandona when form config enables cancel button', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
     app.appManager.viewMode = 'form';
@@ -1377,23 +1316,34 @@ describe('AppComponent', () => {
     const labels = app.currentFormActionButtons.map((button: any) => button.label);
 
     expect(labels).toContain('Aggiorna');
-    expect(labels).toContain('Abbandona');
+    expect(labels).not.toContain('Abbandona');
   });
 
-  it('should hide submit and keep Abbandona when no_submit is enabled', () => {
+  it('should show Abbandona only when it is present in context_actions', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
-    app.appManager.viewMode = 'form';
-    app.appManager.selectedModel = 'ordine';
-    app.actionManager.currentActionName = 'list_ordini';
-    app.renderer.formSchema = {
-      display: 'form',
-      no_cancel: '0',
-      no_submit: '1',
-      components: []
-    };
-    app.renderer.rawFormSchema = app.renderer.formSchema;
-    app.renderer.formSubmission = { data: { rec_name: 'NEW-1' } };
+    await app.actionManager.applyActionResponse(makeResponse({
+      mode: 'form',
+      model: 'ordine',
+      fields: { action_name: 'new_ordine' },
+      data: { rec_name: 'NEW-1' },
+      schema: {
+        display: 'form',
+        no_submit: '1',
+        components: []
+      },
+      context_actions: [
+        {
+          rec_name: 'abandon',
+          action_type: 'window',
+          label: 'Abbandona',
+          button_icon: 'pi pi-times',
+          modal: false,
+          context_button_mode: ['form'],
+          url_action: ''
+        }
+      ]
+    }));
 
     const labels = app.currentFormActionButtons.map((button: any) => button.label);
 
@@ -1457,18 +1407,15 @@ describe('AppComponent', () => {
   });
 
   it('should load dashboard cards only from mode card payload', async () => {
-    apiMock.getActionDashboard.and.resolveTo({
-      mode: 'card',
-      data: [
-        {
-          group_id: 'docs',
-          title: 'Documenti',
-          buttons: [
-            { label: 'Lista', content: '/action/list_documenti', action_type: 'window', icon: 'pi pi-list' }
-          ]
-        }
-      ]
-    });
+    apiMock.getActionDashboard.and.resolveTo(makeResponse({ mode: 'card', data: [
+      {
+        group_id: 'docs',
+        title: 'Documenti',
+        buttons: [
+          { label: 'Lista', content: '/action/list_documenti', action_type: 'window', icon: 'pi pi-list' }
+        ]
+      }
+    ]}));
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
@@ -1555,49 +1502,49 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await app.actionManager.applyActionResponse({
+    await app.actionManager.applyActionResponse(makeResponse({
       mode: 'list',
       fields: {
         in_form: true,
         enable_copy: true,
         enable_remove: false
       },
-      columns: [['rec_name', 'Record']],
+      columns: { rec_name: 'Record' },
       total_count: 1,
       data: [{ rec_name: 'rec-1' }]
-    });
+    }));
 
     expect(app.showTableRowCopyAction).toBeTrue();
     expect(app.showTableRowRemoveAction).toBeFalse();
     expect(app.tableExtraColumnCount).toBe(3);
 
-    await app.actionManager.applyActionResponse({
+    await app.actionManager.applyActionResponse(makeResponse({
       mode: 'list',
       fields: {
         in_form: true,
         enable_copy: true,
         enable_remove: true
       },
-      columns: [['rec_name', 'Record']],
+      columns: { rec_name: 'Record' },
       total_count: 1,
       data: [{ rec_name: 'rec-1' }]
-    });
+    }));
 
     expect(app.showTableRowCopyAction).toBeTrue();
     expect(app.showTableRowRemoveAction).toBeTrue();
     expect(app.tableExtraColumnCount).toBe(4);
 
-    await app.actionManager.applyActionResponse({
+    await app.actionManager.applyActionResponse(makeResponse({
       mode: 'list',
       fields: {
         in_form: false,
         enable_copy: true,
         enable_remove: true
       },
-      columns: [['rec_name', 'Record']],
+      columns: { rec_name: 'Record' },
       total_count: 1,
       data: [{ rec_name: 'rec-1' }]
-    });
+    }));
 
     expect(app.showTableRowCopyAction).toBeFalse();
     expect(app.showTableRowRemoveAction).toBeFalse();
@@ -1608,7 +1555,7 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await app.actionManager.applyActionResponse({
+    await app.actionManager.applyActionResponse(makeResponse({
       mode: 'list',
       fields: {
         in_form: true,
@@ -1617,10 +1564,10 @@ describe('AppComponent', () => {
           remove_url: '/action/remove_documento'
         }
       },
-      columns: [['rec_name', 'Record']],
+      columns: { rec_name: 'Record' },
       total_count: 1,
       data: [{ rec_name: 'rec-1' }]
-    });
+    }));
 
     expect(app.showTableRowCopyAction).toBeTrue();
     expect(app.showTableRowRemoveAction).toBeTrue();
@@ -1746,28 +1693,26 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await app.actionManager.applyActionResponse({
+    await app.actionManager.applyActionResponse(makeResponse({
       mode: 'list',
       model: 'ordine',
-      columns: [['rec_name', 'Record']],
+      columns: { rec_name: 'Record' },
       total_count: 1,
-      data: {
-        items: [{ rec_name: 'rec-1' }],
-        schema: {
-          display: 'form',
-          components: [
-            {
-              type: 'well',
-              key: 'search_main',
-              properties: {
-                type: 'search_area',
-                query: { stato: 'APERTO' }
-              }
+      data: [{ rec_name: 'rec-1' }],
+      schema: {
+        display: 'form',
+        components: [
+          {
+            type: 'well',
+            key: 'search_main',
+            properties: {
+              type: 'search_area',
+              query: { stato: 'APERTO' }
             }
-          ]
-        }
+          }
+        ]
       }
-    });
+    }));
 
     const query = app.tableManager.parseQueryInput((_m: string, _e: boolean) => {});
     expect(query).toEqual({ stato: 'APERTO' });
@@ -1778,17 +1723,15 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance as any;
     app.actionManager.currentActionName = 'list_component';
 
-    await app.actionManager.applyActionResponse({
+    await app.actionManager.applyActionResponse(makeResponse({
       mode: 'list',
       model: 'component',
       can_create: true,
       editable: true,
-      columns: [['rec_name', 'Record']],
+      columns: { rec_name: 'Record' },
       total_count: 1,
-      data: {
-        items: [{ rec_name: 'rec-1' }]
-      }
-    });
+      data: [{ rec_name: 'rec-1' }]
+    }));
 
     expect(app.tableManager.listExportConfig.visible).toBeTrue();
     expect(app.tableManager.listExportConfig.model).toBe('component');
@@ -1843,8 +1786,7 @@ describe('AppComponent', () => {
 
     await app.appManager.loadSession();
     app.appManager.applyLayoutResponse(
-      { mode: 'layout', data: { layout: 'standard', schema: {}, menu: [], settings: { user: 'admin' } } },
-      (p: unknown) => p as any,
+      makeResponse({ mode: 'layout', data: { layout: 'standard', schema: {}, menu: [], settings: { user: 'admin' } } }).content,
       (_d: unknown) => [],
       (s: Record<string, unknown>) => ({ ...s }),
       []
@@ -1915,13 +1857,10 @@ describe('AppComponent', () => {
     app.tableManager.sessionLocale = app.appManager.sessionLocale;
     app.tableManager.sessionTimezone = app.appManager.sessionTimezone;
 
-    await app.actionManager.applyActionResponse({
+    await app.actionManager.applyActionResponse(makeResponse({
       mode: 'list',
       model: 'ordine',
-      columns: [
-        ['rec_name', 'Record'],
-        ['created_at', 'Creato il']
-      ],
+      columns: { rec_name: 'Record', created_at: 'Creato il' },
       total_count: 1,
       schema: {
         components: [
@@ -1938,7 +1877,7 @@ describe('AppComponent', () => {
           created_at: '2025-01-15T14:30:00Z'
         }
       ]
-    });
+    }));
 
     const expected = new Intl.DateTimeFormat('en-US', {
       day: '2-digit',
@@ -2060,12 +1999,13 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance as any;
     app.appManager.builderEnabled = true;
 
-    await app.actionManager.applyActionResponse({
+    await app.actionManager.applyActionResponse(makeResponse({
       mode: 'form',
+      model: 'component',
       fields: { component_type: 'form', action_name: 'design_form' },
       data: { rec_name: 'component.form.demo' },
       schema: { display: 'form', components: [] }
-    });
+    }));
 
     expect(app.builderMode).toBeFalse();
     expect(app.showFormBuilder).toBeFalse();
@@ -2077,12 +2017,13 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance as any;
     app.appManager.builderEnabled = true;
 
-    await app.actionManager.applyActionResponse({
+    await app.actionManager.applyActionResponse(makeResponse({
       mode: 'form',
+      model: 'component',
       fields: { component_type: 'form', action_name: 'design_form' },
       data: { rec_name: 'component.form.demo' },
       schema: { display: 'form', components: [] }
-    });
+    }));
 
     app.enableFormBuilderMode();
 
@@ -2097,25 +2038,276 @@ describe('AppComponent', () => {
     app.appManager.builderFeatureEnabled = true;
     app.onBuilderSwitchChanged(true);
 
-    await app.actionManager.applyActionResponse({
+    await app.actionManager.applyActionResponse(makeResponse({
       mode: 'form',
+      model: 'component',
       fields: { component_type: 'form', action_name: 'design_form' },
       data: { rec_name: 'component.form.demo' },
       schema: { display: 'form', components: [] }
-    });
+    }));
 
     app.enableFormBuilderMode();
     expect(app.builderMode).toBeTrue();
 
-    await app.actionManager.applyActionResponse({
+    await app.actionManager.applyActionResponse(makeResponse({
       mode: 'form',
+      model: 'component',
       fields: { component_type: 'form', action_name: 'design_form' },
       data: { rec_name: 'component.form.demo.2' },
       schema: { display: 'form', components: [] }
-    });
+    }));
 
     expect(app.builderMode).toBeTrue();
     expect(app.showFormBuilder).toBeTrue();
+  });
+
+  it('should execute list window context actions via url_action and keep ordinary form actions out of builder mode', async () => {
+    apiMock.getAction.and.callFake(async (name: string) => {
+      if (name === 'new_action') {
+        return makeResponse({
+          mode: 'form',
+          model: 'action',
+          rec_name: '',
+          readable: true,
+          editable: true,
+          can_create: true,
+          data: {},
+          schema: {
+            display: 'form',
+            components: [
+              { type: 'textfield', key: 'label', input: true }
+            ]
+          },
+          fields: {
+            action_name: 'new_action',
+            action_model: 'action',
+            action_type: 'window',
+            component_type: 'form',
+            action_sequence: {
+              current_action: 'new_action',
+              submit_action: 'submit_action',
+              submit_next_action: 'list_action',
+              abandon_action: 'list_action_menu'
+            },
+            submit_action_name: 'submit_action',
+            abandon_action_name: 'list_action_menu',
+            next_action_name: 'submit_action'
+          },
+          context_actions: [
+            {
+              rec_name: 'submit_action',
+              action_type: 'save',
+              label: 'Salva',
+              button_icon: 'fa-plus',
+              modal: false,
+              url_action: '/action/submit_action/submit_action',
+              context_button_mode: []
+            }
+          ]
+        });
+      }
+      return makeResponse({ mode: 'action', data: { status: 'ok' } });
+    });
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.appManager.isAdminUser = true;
+    app.appManager.builderFeatureEnabled = true;
+    app.onBuilderSwitchChanged(true);
+
+    await app.actionManager.applyActionResponse(makeResponse({
+      mode: 'form',
+      model: 'component',
+      fields: { component_type: 'form', action_name: 'design_form' },
+      data: { rec_name: 'component.form.demo' },
+      schema: { display: 'form', components: [] }
+    }));
+
+    app.enableFormBuilderMode();
+    expect(app.builderMode).toBeTrue();
+
+    app.actionManager.currentActionName = 'list_action';
+    app.appManager.viewMode = 'list';
+
+    await app.onContextActionClick({
+      rec_name: 'new_action',
+      action_type: 'window',
+      label: 'Nuovo',
+      button_icon: 'it-plus',
+      modal: false,
+      url_action: '/action/new_action',
+      context_button_mode: ['list']
+    });
+
+    expect(apiMock.getAction).toHaveBeenCalledWith(
+      'new_action',
+      jasmine.objectContaining({ recName: '', limit: 1 })
+    );
+    expect(app.currentActionName).toBe('new_action');
+    expect(app.selectedModel).toBe('action');
+    expect(app.viewMode).toBe('form');
+    expect(app.builderMode).toBeFalse();
+    expect(app.showFormBuilder).toBeFalse();
+    expect(app.isFormEditorPage).toBeFalse();
+    expect(app.formSchema).toEqual(jasmine.objectContaining({ display: 'form' }));
+  });
+
+  it('should prefer canonical content payloads for action lists', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+
+    await app.actionManager.applyActionResponse(makeResponse({
+      mode: 'list',
+      model: 'customer',
+      title: 'Customers',
+      fields: { action_name: 'list_customers' },
+      columns: { rec_name: 'Record' },
+      total_count: 1,
+      data: [{ rec_name: 'CUST-1' }],
+      context_actions: [
+        {
+          rec_name: 'new_customer',
+          action_type: 'window',
+          label: 'Nuovo',
+          button_icon: 'it-plus',
+          modal: false,
+          url_action: '/action/new_customer',
+          context_button_mode: ['list']
+        }
+      ]
+    }));
+
+    expect(app.viewMode).toBe('list');
+    expect(app.currentActionName).toBe('list_customers');
+    expect(app.selectedModel).toBe('customer');
+    expect(app.dashboardTitle).toBe('Customers');
+    expect(app.tableRows.length).toBe(1);
+    expect(app.tableRows[0].__rec_name).toBe('CUST-1');
+    expect(app.listContextActions).toEqual([
+      jasmine.objectContaining({
+        rec_name: 'new_customer',
+        action_type: 'window',
+        url_action: '/action/new_customer'
+      })
+    ]);
+  });
+
+  it('should hide list action buttons when context_button_mode is empty', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+
+    await app.actionManager.applyActionResponse(makeResponse({
+      mode: 'list',
+      model: 'customer',
+      title: 'Customers',
+      fields: { action_name: 'list_customers' },
+      columns: { rec_name: 'Record' },
+      total_count: 1,
+      data: [{ rec_name: 'CUST-1' }],
+      context_actions: [
+        {
+          rec_name: 'new_customer',
+          action_type: 'window',
+          label: 'Nuovo',
+          button_icon: 'it-plus',
+          modal: false,
+          url_action: '/action/new_customer',
+          context_button_mode: []
+        }
+      ]
+    }));
+
+    fixture.detectChanges();
+
+    expect(app.listContextActions).toEqual([]);
+    expect(app.showListActionButtonsFallback).toBeFalse();
+    const pageText = String(fixture.nativeElement.textContent || '');
+    expect(pageText).not.toContain('Apri record');
+    expect(pageText).not.toContain('Nuovo record');
+  });
+
+  it('should return to the origin action url when Abbandona is provided by context_actions', async () => {
+    apiMock.getAction.and.callFake(async (name: string) => {
+      if (name === 'list_customers') {
+        return makeResponse({
+          mode: 'list',
+          model: 'customer',
+          title: 'Customers',
+          fields: { action_name: 'list_customers' },
+          columns: { rec_name: 'Record' },
+          total_count: 1,
+          data: [{ rec_name: 'CUST-1' }],
+          context_actions: [
+            {
+              rec_name: 'new_customer',
+              action_type: 'window',
+              label: 'Nuovo',
+              button_icon: 'it-plus',
+              modal: false,
+              url_action: '/action/new_customer',
+              context_button_mode: ['list']
+            }
+          ]
+        });
+      }
+
+      if (name === 'new_customer') {
+        return makeResponse({
+          mode: 'form',
+          model: 'customer',
+          fields: { action_name: 'new_customer' },
+          data: { rec_name: 'NEW-1' },
+          schema: {
+            display: 'form',
+            components: [{ type: 'textfield', key: 'name', input: true }]
+          },
+          context_actions: [
+            {
+              rec_name: 'abandon',
+              action_type: 'window',
+              label: 'Abbandona',
+              button_icon: 'pi pi-times',
+              modal: false,
+              url_action: '',
+              context_button_mode: ['form']
+            }
+          ]
+        });
+      }
+
+      return makeResponse({ mode: 'action', data: { status: 'ok' } });
+    });
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    const originalPath = window.location.pathname;
+
+    try {
+      window.history.replaceState({}, '', '/action/list_customers');
+      await app.actionManager["handleLocationRoute"](false);
+
+      expect(app.listContextActions).toEqual([
+        jasmine.objectContaining({
+          rec_name: 'new_customer',
+          url_action: '/action/new_customer'
+        })
+      ]);
+
+      await app.onContextActionClick(app.listContextActions[0]);
+
+      const abandonButton = app.currentFormActionButtons.find((button: any) => button.label === 'Abbandona');
+      expect(abandonButton).toEqual(jasmine.objectContaining({
+        url_action: '/action/list_customers'
+      }));
+
+      await app.runTopMenuAction(abandonButton);
+
+      expect(apiMock.getAction.calls.mostRecent().args[0]).toBe('list_customers');
+      expect(app.viewMode).toBe('list');
+      expect(window.location.pathname).toBe('/action/list_customers');
+    } finally {
+      window.history.replaceState({}, '', originalPath || '/');
+    }
   });
 
   it('should ignore stale form responses after returning to dashboard', async () => {
@@ -2131,12 +2323,12 @@ describe('AppComponent', () => {
     app.appManager.viewMode = 'dashboard';
 
     await actionManager.applyActionResponse(
-      {
+      makeResponse({
         mode: 'form',
         fields: { component_type: 'form', action_name: 'design_form' },
         data: { rec_name: 'component.form.demo' },
         schema: { display: 'form', components: [] }
-      },
+      }),
       staleContext
     );
 
@@ -2277,13 +2469,10 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await app.actionManager.applyActionResponse({
+    await app.actionManager.applyActionResponse(makeResponse({
       mode: 'list',
       model: 'ordine',
-      columns: [
-        ['rec_name', 'Record'],
-        ['stato', 'Stato']
-      ],
+      columns: { rec_name: 'Record', stato: 'Stato' },
       total_count: 1,
       schema: {
         components: [
@@ -2305,7 +2494,7 @@ describe('AppComponent', () => {
           stato: 'CONF'
         }
       ]
-    });
+    }));
 
     expect(Array.from((app.tableManager as any).tableCellRenderers.keys())).toContain('stato');
     expect(app.displayCell(app.tableRows[0], 'stato')).toBe('Confermato');
@@ -2317,13 +2506,10 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await app.actionManager.applyActionResponse({
+    await app.actionManager.applyActionResponse(makeResponse({
       mode: 'list',
       model: 'anagrafica',
-      columns: [
-        ['rec_name', 'Record'],
-        ['country', 'Country']
-      ],
+      columns: { rec_name: 'Record', country: 'Country' },
       total_count: 1,
       schema: {
         components: [
@@ -2342,7 +2528,7 @@ describe('AppComponent', () => {
           country: 'IT'
         }
       ]
-    });
+    }));
 
     await app.tableManager.warmTableCellRenderers(app.tableManager.allRows);
     expect(apiMock.getRemoteSelect).toHaveBeenCalled();
@@ -2350,7 +2536,7 @@ describe('AppComponent', () => {
   });
 
   it('should fallback to model schema to render select labels in action lists without inline schema', async () => {
-    apiMock.getRecordSchema.and.resolveTo({
+    apiMock.getRecordSchema.and.resolveTo(makeResponse({ mode: 'form', schema: {
       components: [
         {
           type: 'select',
@@ -2375,18 +2561,15 @@ describe('AppComponent', () => {
           }
         }
       ]
-    });
+    }}));
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await app.actionManager.applyActionResponse({
+    await app.actionManager.applyActionResponse(makeResponse({
       mode: 'list',
       model: 'anagrafica',
-      columns: [
-        ['ruoli_sicurezza', 'Ruoli Sicurezza'],
-        ['classificazione', 'Classificazione']
-      ],
+      columns: { ruoli_sicurezza: 'Ruoli Sicurezza', classificazione: 'Classificazione' },
       total_count: 1,
       data: [
         {
@@ -2395,7 +2578,7 @@ describe('AppComponent', () => {
           ruoli_sicurezza: ['anti_incendio', 'emergenza_sanitaria', 'emergenza']
         }
       ]
-    });
+    }));
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
@@ -2405,41 +2588,36 @@ describe('AppComponent', () => {
     expect(app.displayCell(app.tableRows[0], 'ruoli_sicurezza')).toBe('Antincendio, Emergenza sanitaria, Emergenza');
   });
 
-  it('should render select labels in list table when schema is nested in data envelope', async () => {
+  it('should render select labels in list table when schema is provided in content.schema', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await app.actionManager.applyActionResponse({
+    await app.actionManager.applyActionResponse(makeResponse({
       mode: 'list',
       model: 'ordine',
-      columns: [
-        ['rec_name', 'Record'],
-        ['stato', 'Stato']
-      ],
+      columns: { rec_name: 'Record', stato: 'Stato' },
       total_count: 1,
-      data: {
-        data: [
+      schema: {
+        components: [
           {
-            rec_name: 'ORD-2',
-            stato: 'DRAFT'
-          }
-        ],
-        schema: JSON.stringify({
-          components: [
-            {
-              type: 'select',
-              key: 'stato',
-              data: {
-                values: [
-                  { label: 'Bozza', value: 'DRAFT' },
-                  { label: 'Confermato', value: 'CONF' }
-                ]
-              }
+            type: 'select',
+            key: 'stato',
+            data: {
+              values: [
+                { label: 'Bozza', value: 'DRAFT' },
+                { label: 'Confermato', value: 'CONF' }
+              ]
             }
-          ]
-        })
-      }
-    });
+          }
+        ]
+      },
+      data: [
+        {
+          rec_name: 'ORD-2',
+          stato: 'DRAFT'
+        }
+      ]
+    }));
 
     expect(app.displayCell(app.tableRows[0], 'stato')).toBe('Bozza');
   });
@@ -2448,13 +2626,10 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await app.actionManager.applyActionResponse({
+    await app.actionManager.applyActionResponse(makeResponse({
       mode: 'list',
       model: 'ordine',
-      columns: [
-        ['rec_name', 'Record'],
-        ['created_at', 'Creato il']
-      ],
+      columns: { rec_name: 'Record', created_at: 'Creato il' },
       total_count: 1,
       schema: {
         components: [
@@ -2471,24 +2646,21 @@ describe('AppComponent', () => {
           created_at: '2025-01-15T14:30:00Z'
         }
       ]
-    });
+    }));
 
     const rendered = app.displayCell(app.tableRows[0], 'created_at');
     expect(rendered).toMatch(/\d{2}\/\d{2}\/\d{4}/);
     expect(rendered).toContain(':');
   });
 
-  it('should fallback to record data_value when root field is missing in list rows', async () => {
+  it('should resolve select label from flat list row data', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await app.actionManager.applyActionResponse({
+    await app.actionManager.applyActionResponse(makeResponse({
       mode: 'list',
       model: 'ordine',
-      columns: [
-        ['rec_name', 'Record'],
-        ['stato', 'Stato']
-      ],
+      columns: { rec_name: 'Record', stato: 'Stato' },
       total_count: 1,
       schema: {
         components: [
@@ -2507,12 +2679,10 @@ describe('AppComponent', () => {
       data: [
         {
           rec_name: 'ORD-4',
-          data_value: {
-            stato: 'CONF'
-          }
+          stato: 'CONF'
         }
       ]
-    });
+    }));
 
     expect(app.displayCell(app.tableRows[0], 'stato')).toBe('Confermato');
   });
@@ -2615,15 +2785,14 @@ describe('AppComponent', () => {
         { type: 'button', action: 'submit', label: 'Submit', key: 'submit' }
       ]
     };
-    const listResponse = {
+    const listResponse = makeResponse({
       mode: 'list',
       model: 'customer',
-      fields: { action_name: 'list_customers' },
-      fast_search: fastSearchConfig,
-      columns: [['rec_name', 'Record']],
+      fields: { action_name: 'list_customers', fast_search: fastSearchConfig },
+      columns: { rec_name: 'Record' },
       total_count: 1,
       data: [{ rec_name: 'CUST-1' }]
-    };
+    });
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
@@ -2654,23 +2823,23 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    apiMock.getAction.and.resolveTo({
+    apiMock.getAction.and.resolveTo(makeResponse({
       mode: 'list',
       model: 'customer',
       fields: { action_name: 'list_customers' },
-      columns: [['rec_name', 'Record']],
+      columns: { rec_name: 'Record' },
       total_count: 1,
       data: [{ rec_name: 'CUST-1' }]
-    });
+    }));
 
-    await app.actionManager.applyActionResponse({
+    await app.actionManager.applyActionResponse(makeResponse({
       mode: 'list',
       model: 'customer',
       fields: { action_name: 'list_customers' },
-      columns: [['rec_name', 'Record']],
+      columns: { rec_name: 'Record' },
       total_count: 0,
-      data: { meta: true }
-    });
+      data: {}
+    }));
     await Promise.resolve();
     await Promise.resolve();
 
@@ -2690,24 +2859,24 @@ describe('AppComponent', () => {
     apiMock.getAction.calls.reset();
     apiMock.getAction.and.callFake(async (_name: string, options: any) => {
       if (options.limit === 1) {
-        return {
+        return makeResponse({
           mode: 'list',
           model: 'customer',
           fields: { action_name: 'list_customers' },
-          columns: [['rec_name', 'Record']],
+          columns: { rec_name: 'Record' },
           total_count: 2,
           data: [{ rec_name: 'PRIME-ROW' }]
-        };
+        });
       }
       if (options.limit === 20) {
-        return {
+        return makeResponse({
           mode: 'list',
           model: 'customer',
           fields: { action_name: 'list_customers' },
-          columns: [['rec_name', 'Record']],
+          columns: { rec_name: 'Record' },
           total_count: 2,
           data: [{ rec_name: 'CUST-1' }, { rec_name: 'CUST-2' }]
-        };
+        });
       }
       throw new Error(`Unexpected limit ${options.limit}`);
     });
@@ -2743,14 +2912,14 @@ describe('AppComponent', () => {
 
     apiMock.getAction.calls.reset();
 
-    await app.actionManager.applyActionResponse({
+    await app.actionManager.applyActionResponse(makeResponse({
       mode: 'list',
       model: 'customer',
       fields: { action_name: 'list_customers' },
-      columns: [['rec_name', 'Record']],
+      columns: { rec_name: 'Record' },
       total_count: 1,
       data: [{ rec_name: 'CUST-1' }]
-    });
+    }));
 
     expect(apiMock.getAction).not.toHaveBeenCalled();
     expect(app.tableRows.length).toBe(1);
@@ -2765,7 +2934,7 @@ describe('AppComponent', () => {
     spyOn(app.actionManager, 'applyFastSearchConfig').and.returnValue(pendingWarmup);
     const tableWarmupSpy = spyOn(app.tableManager, 'warmTableCellRenderers').and.returnValue(pendingWarmup);
 
-    await app.actionManager.applyActionResponse({
+    await app.actionManager.applyActionResponse(makeResponse({
       mode: 'list',
       model: 'customer',
       fields: {
@@ -2779,10 +2948,10 @@ describe('AppComponent', () => {
       schema: {
         components: []
       },
-      columns: [['rec_name', 'Record']],
+      columns: { rec_name: 'Record' },
       total_count: 1,
       data: [{ rec_name: 'CUST-1' }]
-    });
+    }));
 
     expect(app.viewMode).toBe('list');
     expect(app.tableRows.length).toBe(1);
@@ -2796,14 +2965,14 @@ describe('AppComponent', () => {
 
     spyOn(app.actionManager, 'loadRecords').and.returnValue(pendingLoad);
 
-    await app.actionManager.applyActionResponse({
+    await app.actionManager.applyActionResponse(makeResponse({
       mode: 'list',
       model: 'customer',
       fields: { action_name: 'list_customers' },
-      columns: [['rec_name', 'Record']],
+      columns: { rec_name: 'Record' },
       total_count: 0,
-      data: { meta: true }
-    });
+      data: {}
+    }));
 
     expect(app.viewMode).toBe('list');
     expect(app.actionManager.loadRecords).toHaveBeenCalledWith(true);
@@ -2908,6 +3077,63 @@ describe('AppComponent', () => {
         project: 'ozon'
       }
     });
+  });
+
+  it('should restore fast search from temporary local cache without consuming it', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    const schema = {
+      display: 'form',
+      components: [
+        { type: 'textfield', key: 'name', label: 'Nome' }
+      ]
+    };
+
+    await app.tableManager.setFastSearchConfig('list_customers', schema);
+    await app.onFastSearchFormChange({
+      data: { name: 'mario' },
+      changed: { component: { key: 'name', type: 'textfield' } }
+    });
+
+    expect(window.localStorage.getItem('ozon.fs.list_customers')).not.toBeNull();
+
+    app.tableManager.beginFastSearchWarmup(true);
+    const restored = await app.tableManager.setFastSearchConfig('list_customers', schema);
+
+    expect(restored).toBeTrue();
+    expect(app.tableManager.fastSearchActive).toBeTrue();
+    expect(app.fastSearchSubmission).toEqual({
+      data: {
+        name: 'mario'
+      }
+    });
+    expect(window.localStorage.getItem('ozon.fs.list_customers')).not.toBeNull();
+  });
+
+  it('should expire stale fast search local cache entries', async () => {
+    const nowSpy = spyOn(Date, 'now').and.returnValue(1_000);
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    const schema = {
+      display: 'form',
+      components: [
+        { type: 'textfield', key: 'name', label: 'Nome' }
+      ]
+    };
+
+    await app.tableManager.setFastSearchConfig('list_customers', schema);
+    await app.onFastSearchFormChange({
+      data: { name: 'mario' },
+      changed: { component: { key: 'name', type: 'textfield' } }
+    });
+
+    nowSpy.and.returnValue((8 * 60 * 60 * 1000) + 1_001);
+    app.tableManager.beginFastSearchWarmup(true);
+    const restored = await app.tableManager.setFastSearchConfig('list_customers', schema);
+
+    expect(restored).toBeFalse();
+    expect(app.fastSearchSubmission).toEqual({ data: {} });
+    expect(window.localStorage.getItem('ozon.fs.list_customers')).toBeNull();
   });
 
   it('should auto trigger fast search when a select changes', async () => {
@@ -3057,17 +3283,16 @@ describe('AppComponent', () => {
   });
 
   it('should reset fast search back to base action list reload', async () => {
-    const listResponse = {
+    const listResponse = makeResponse({
       mode: 'list',
       model: 'customer',
-      fields: { action_name: 'list_customers' },
-      fast_search: {
+      fields: { action_name: 'list_customers', fast_search: {
         schema: [{ type: 'textfield', key: 'name', label: 'Nome' }]
-      },
-      columns: null,
+      }},
+      columns: {},
       total_count: 1,
       data: [{ rec_name: 'CUST-BASE', name: 'Base' }]
-    };
+    });
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
@@ -3086,6 +3311,7 @@ describe('AppComponent', () => {
     await app.onFastSearchFormChange({ data: { name: 'mario' } });
 
     await app.doFastSearch();
+    expect(window.localStorage.getItem('ozon.fs.list_customers')).not.toBeNull();
 
     apiMock.filterFastSearch.calls.reset();
     apiMock.getAction.calls.reset();
@@ -3100,18 +3326,77 @@ describe('AppComponent', () => {
       skip: 0,
       limit: 20
     }));
+    expect(window.localStorage.getItem('ozon.fs.list_customers')).toBeNull();
     expect(app.tableColumns.map((column: any) => column.field)).toEqual(['__rec_name', 'name']);
   });
 
+  it('should clear cached fast search filters when reopening an action from the menu', async () => {
+    const listResponse = makeResponse({
+      mode: 'list',
+      model: 'customer',
+      fields: { action_name: 'list_customers', fast_search: {
+        schema: [{ type: 'textfield', key: 'name', label: 'Nome' }]
+      }},
+      columns: {},
+      total_count: 1,
+      data: [{ rec_name: 'CUST-BASE', name: 'Base' }]
+    });
+    const originalPath = window.location.pathname;
+    apiMock.getAction.and.resolveTo(listResponse);
+    window.localStorage.setItem('ozon.fs.list_customers', JSON.stringify({
+      savedAt: Date.now(),
+      data: { name: 'mario' }
+    }));
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+
+    try {
+      await app.actionManager.onMenuActionAnchorClick({
+        model: 'customer',
+        key: 'list_customers',
+        type: 'button',
+        label: 'Clienti',
+        leftIcon: 'pi pi-list',
+        authtoken: '',
+        req_id: 'req_1',
+        btn_action_type: false,
+        action_type: 'window',
+        url_action: '/action/list_customers',
+        builder: false,
+        menu_group: 'customer',
+        menu_type: '',
+        is_admin: false
+      }, {
+        button: 0,
+        ctrlKey: false,
+        metaKey: false,
+        shiftKey: false,
+        altKey: false,
+        preventDefault: jasmine.createSpy('preventDefault')
+      } as any);
+
+      expect(window.localStorage.getItem('ozon.fs.list_customers')).toBeNull();
+      expect(app.tableManager.fastSearchActive).toBeFalse();
+      expect(app.fastSearchSubmission).toEqual({ data: {} });
+      expect(apiMock.getAction).toHaveBeenCalledWith(
+        'list_customers',
+        jasmine.objectContaining({ recName: '' })
+      );
+    } finally {
+      window.history.replaceState({}, '', originalPath || '/');
+    }
+  });
+
   it('should normalize formio table components in schema', async () => {
-    apiMock.getRecordSchema.and.resolveTo({
+    apiMock.getRecordSchema.and.resolveTo(makeResponse({ mode: 'form', schema: {
       components: [
         {
           type: 'table',
           key: 'tabella1'
         }
       ]
-    });
+    }}));
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
@@ -3129,34 +3414,25 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
 
-    await expectAsync(app.actionManager['applyActionResponse']({
-      fail: true,
-      message: 'Errore business',
-      content: {
-        mode: 'action',
-        data: {}
-      }
-    })).toBeRejectedWithError('Errore business');
+    await expectAsync(app.actionManager['applyActionResponse'](
+      makeResponse({ mode: 'action', data: {} }, true, 'Errore business')
+    )).toBeRejectedWithError('Errore business');
   });
 
   it('should load form schema from canonical response envelope content', async () => {
-    apiMock.getRecordSchema.and.resolveTo({
-      fail: false,
-      message: '',
-      content: {
-        mode: 'form',
-        data: {},
-        schema: {
-          display: 'form',
-          components: [
-            {
-              type: 'textfield',
-              key: 'nome'
-            }
-          ]
-        }
+    apiMock.getRecordSchema.and.resolveTo(makeResponse({
+      mode: 'form',
+      data: {},
+      schema: {
+        display: 'form',
+        components: [
+          {
+            type: 'textfield',
+            key: 'nome'
+          }
+        ]
       }
-    });
+    }));
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
@@ -3171,22 +3447,21 @@ describe('AppComponent', () => {
   });
 
   it('should open the form without waiting for list renderers or builder warmup', async () => {
-    apiMock.getRecord.and.resolveTo({
-      content: {
-        schema: [
-          {
-            type: 'textfield',
-            key: 'title',
-            input: true
-          }
-        ],
-        data: {
-          rec_name: 'cmp-1',
-          data_model: 'res.partner',
-          title: 'Demo'
+    apiMock.getRecord.and.resolveTo(makeResponse({
+      mode: 'form',
+      schema: [
+        {
+          type: 'textfield',
+          key: 'title',
+          input: true
         }
+      ],
+      data: {
+        rec_name: 'cmp-1',
+        data_model: 'res.partner',
+        title: 'Demo'
       }
-    });
+    }));
 
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
@@ -3212,6 +3487,41 @@ describe('AppComponent', () => {
         data_model: 'res.partner',
         title: 'Demo'
       })
+    });
+  });
+
+  describe('requireResponseObject', () => {
+    it('should throw when payload is null', () => {
+      expect(() => requireResponseObject(null)).toThrowError('Invalid ResponseObject');
+    });
+
+    it('should throw when payload is empty object', () => {
+      expect(() => requireResponseObject({})).toThrowError('Invalid ResponseObject');
+    });
+
+    it('should throw when payload has no content field', () => {
+      expect(() => requireResponseObject({ fail: false, message: '' })).toThrowError('Invalid ResponseObject');
+    });
+
+    it('should throw when content is not an object', () => {
+      expect(() => requireResponseObject({ content: 'bad', fail: false, message: '' })).toThrowError('Invalid ResponseObject');
+    });
+
+    it('should throw when content is empty object (no mode)', () => {
+      expect(() => requireResponseObject({ content: {}, fail: false, message: '' })).toThrowError('Invalid ResponseObject');
+    });
+
+    it('should throw when content.mode is empty string', () => {
+      expect(() => requireResponseObject({ content: { mode: '' }, fail: false, message: '' })).toThrowError('Invalid ResponseObject');
+    });
+
+    it('should throw when content.mode is not a string', () => {
+      expect(() => requireResponseObject({ content: { mode: 42 }, fail: false, message: '' })).toThrowError('Invalid ResponseObject');
+    });
+
+    it('should return the payload when content.mode is a non-empty string', () => {
+      const payload = makeResponse({ mode: 'form' });
+      expect(requireResponseObject(payload)).toBe(payload);
     });
   });
 });

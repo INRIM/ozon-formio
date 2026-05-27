@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { BreakpointObserver } from '@angular/cdk/layout';
 import { FormioModule } from '@formio/angular';
-import { ContextAction, ListExportConfig, ListImportConfig, ListPageChange, ListRowReorderChange, ListSearchSessionContext, ListSortChange, TableColumn, TableRow, TableSortDirection } from '../models/app.types';
+import { ContextAction, FormNotification, ListExportConfig, ListImportConfig, ListPageChange, ListRowReorderChange, ListSearchSessionContext, ListSortChange, TableColumn, TableRow, TableSortDirection } from '../models/app.types';
 import { RecordCardsComponent } from './record-cards.component';
 import { RecordTransferToolsComponent } from './record-transfer-tools.component';
 import { RecordTableCdkComponent } from './record-table-cdk.component';
@@ -36,6 +36,7 @@ export class RecordListComponent {
     @Input() canOpenRecord = false;
     @Input() canOpenNewRecord = false;
     @Input() canDeleteRecord = false;
+    @Input() showStaticActionButtons = true;
     @Input() contextActions: readonly ContextAction[] = [];
     @Input() isLoadingRecords = false;
     @Input() fastSearchEnabled = false;
@@ -50,6 +51,7 @@ export class RecordListComponent {
     @Input() statusText = '';
     @Input() statusError = false;
     @Input() serverErrorRetryVisible = false;
+    @Input() formNotifications: FormNotification[] = [];
     @Input() displayCell: (row: TableRow, field: string) => string = () => '';
 
     @Output() fastSearchFormChange = new EventEmitter<unknown>();
@@ -61,6 +63,7 @@ export class RecordListComponent {
     @Output() deleteRecord = new EventEmitter<void>();
     @Output() contextActionClick = new EventEmitter<ContextAction>();
     @Output() retryServerError = new EventEmitter<void>();
+    @Output() dismissFormNotifications = new EventEmitter<void>();
     @Output() rowClick = new EventEmitter<{ row: TableRow; event: Event }>();
     @Output() rowDblClick = new EventEmitter<{ row: TableRow; event: Event }>();
     @Output() selectionChange = new EventEmitter<TableRow[]>();
@@ -69,6 +72,8 @@ export class RecordListComponent {
     @Output() rowReorder = new EventEmitter<ListRowReorderChange>();
     @Output() copyRow = new EventEmitter<{ row: TableRow; event: Event }>();
     @Output() removeRow = new EventEmitter<{ row: TableRow; event: Event }>();
+    @Output() importBusyChange = new EventEmitter<boolean>();
+    @Output() importFinished = new EventEmitter<void>();
 
     isMobile = false;
     gearOpen = false;

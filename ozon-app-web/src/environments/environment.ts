@@ -9,5 +9,6 @@ export const environment = {
   authMode: 'keycloak',
   authLoginPath: '/api/login',
   authLogoutPath: '/api/logout',
-  authRefreshPath: '/refresh'
+  authRefreshPath: '/refresh',
+  appCode: ''
 };

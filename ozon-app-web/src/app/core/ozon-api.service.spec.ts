@@ -110,17 +110,31 @@ describe('OzonApiService', () => {
   });
 
   it('should post import payloads to the backend api', async () => {
-    const fetchSpy = spyOn(globalThis, 'fetch').and.resolveTo(jsonResponse({ status: 'done', ok: 1 }));
+    const fetchSpy = spyOn(globalThis, 'fetch').and.resolveTo(jsonResponse({ status: 'ok', rec_name: 'row-1' }));
 
     const response = await service.importData('demo.model', {
-      fields: [{ name: 'rec_name' }],
-      data: [{ rec_name: 'row-1' }],
-      delete_before: true
+      rec_name: 'row-1',
+      qty: 4
     });
 
-    expect(response).toEqual({ status: 'done', ok: 1 });
+    expect(response).toEqual({ status: 'ok', rec_name: 'row-1' });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(fetchSpy.calls.mostRecent().args[0]).toBe('/api/import/demo.model');
+    expect(JSON.parse((fetchSpy.calls.mostRecent().args[1] as RequestInit).body as string)).toEqual({
+      rec_name: 'row-1',
+      qty: 4
+    });
+  });
+
+  it('should post import clean requests to the backend api', async () => {
+    const fetchSpy = spyOn(globalThis, 'fetch').and.resolveTo(jsonResponse({ status: 'ok', model: 'demo.model' }));
+
+    const response = await service.importClean('demo.model');
+
+    expect(response).toEqual({ status: 'ok', model: 'demo.model' });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.calls.mostRecent().args[0]).toBe('/api/import/clean/demo.model');
+    expect(JSON.parse((fetchSpy.calls.mostRecent().args[1] as RequestInit).body as string)).toEqual({});
   });
 
   it('should rewrite builder resource requests with an object payload and clear stale body strings', () => {

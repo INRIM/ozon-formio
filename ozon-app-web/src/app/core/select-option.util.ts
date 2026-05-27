@@ -2,8 +2,15 @@ import { SelectValueOption } from '../models/app.types';
 
 type UnknownRecord = Record<string, unknown>;
 
-const VALUE_KEYS = ['value', 'id', '_id', 'code', 'key', 'k', 'name', 'rec_name'] as const;
-const LABEL_KEYS = ['label', 'title', 'name', 'rec_name', 'description', 'v'] as const;
+export interface SelectOptionMappingConfig {
+    valuePaths?: readonly string[];
+    labelPaths?: readonly string[];
+    aliasValuePaths?: readonly string[];
+}
+
+const DEFAULT_VALUE_PATHS = ['value', 'rec_name', 'id', '_id', 'code', 'key', 'k', 'name'] as const;
+const DEFAULT_LABEL_PATHS = ['label', 'title', 'full_name', 'name', 'rec_name', 'description', 'v'] as const;
+const SIMPLE_PATH_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 function isRecord(value: unknown): value is UnknownRecord {
     return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -18,10 +25,38 @@ function toDisplayValue(value: unknown): string {
     return typeof value === 'object' ? JSON.stringify(value) : String(value);
 }
 
-function firstDefined(source: UnknownRecord | null, keys: readonly string[]): unknown {
+function readPath(source: UnknownRecord | null, path: string): unknown {
     if (!source) return undefined;
-    for (const key of keys) {
-        const value = source[key];
+    const normalized = String(path ?? '').trim();
+    if (!normalized) return undefined;
+    if (!normalized.includes('.')) return source[normalized];
+
+    let current: unknown = source;
+    const segments = normalized.split('.').map(segment => segment.trim()).filter(Boolean);
+    for (const segment of segments) {
+        if (!isRecord(current)) return undefined;
+        current = current[segment];
+        if (current === undefined) return undefined;
+    }
+    return current;
+}
+
+function uniquePaths(preferred: readonly string[] = [], defaults: readonly string[] = []): string[] {
+    const paths: string[] = [];
+    const seen = new Set<string>();
+    [...preferred, ...defaults].forEach((entry) => {
+        const normalized = String(entry ?? '').trim();
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        paths.push(normalized);
+    });
+    return paths;
+}
+
+function firstDefined(source: UnknownRecord | null, paths: readonly string[]): unknown {
+    if (!source) return undefined;
+    for (const path of paths) {
+        const value = readPath(source, path);
         if (value !== undefined) return value;
     }
     return undefined;
@@ -51,37 +86,59 @@ function extractOptionPayload(entry: UnknownRecord): UnknownRecord {
     return { ...nested, data_value: nestedDataValue };
 }
 
-export function selectOptionPrimitiveValue(value: unknown): unknown {
+function isAliasablePrimitive(value: unknown): value is string | number | boolean {
+    return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
+}
+
+function applyOptionAliases(
+    option: SelectValueOption & Record<string, unknown>,
+    value: unknown,
+    aliasPaths: readonly string[]
+): void {
+    if (!isAliasablePrimitive(value)) return;
+    const aliases = uniquePaths(aliasPaths, ['rec_name', 'id', '_id', 'value']);
+    aliases.forEach((path) => {
+        if (!SIMPLE_PATH_PATTERN.test(path)) return;
+        option[path] = value;
+    });
+}
+
+export function selectOptionPrimitiveValue(value: unknown, config: SelectOptionMappingConfig = {}): unknown {
     if (!isRecord(value)) return value;
+    const valuePaths = uniquePaths(config.valuePaths, DEFAULT_VALUE_PATHS);
     const sources = collectOptionSources(value);
     for (const source of sources) {
-        const primitive = firstDefined(source, VALUE_KEYS);
+        const primitive = firstDefined(source, valuePaths);
         if (primitive !== undefined) return primitive;
     }
     return value;
 }
 
-export function toSelectValueOption(value: unknown): SelectValueOption | null {
+export function toSelectValueOption(value: unknown, config: SelectOptionMappingConfig = {}): SelectValueOption | null {
     if (value == null) return null;
     if (!isRecord(value)) return { label: toDisplayValue(value), value };
 
+    const valuePaths = uniquePaths(config.valuePaths, DEFAULT_VALUE_PATHS);
+    const labelPaths = uniquePaths(config.labelPaths, DEFAULT_LABEL_PATHS);
     const sources = collectOptionSources(value);
     let optionValue: unknown = undefined;
     for (const source of sources) {
-        optionValue = firstDefined(source, VALUE_KEYS);
+        optionValue = firstDefined(source, valuePaths);
         if (optionValue !== undefined) break;
     }
     if (optionValue === undefined) return null;
 
     let optionLabel: unknown = undefined;
     for (const source of sources) {
-        optionLabel = firstDefined(source, LABEL_KEYS);
+        optionLabel = firstDefined(source, labelPaths);
         if (optionLabel !== undefined) break;
     }
 
-    return {
+    const option: SelectValueOption & Record<string, unknown> = {
         label: toDisplayValue(optionLabel ?? optionValue),
         value: optionValue,
         data: extractOptionPayload(value)
     };
+    applyOptionAliases(option, optionValue, config.aliasValuePaths ?? config.valuePaths ?? []);
+    return option;
 }

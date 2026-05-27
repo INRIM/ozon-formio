@@ -1,8 +1,13 @@
 import { Injectable } from '@angular/core';
+import { eachComponent as formioEachComponent } from '@formio/js/utils';
 import { OzonApiService } from '../core/ozon-api.service';
-import { selectOptionPrimitiveValue, toSelectValueOption as mapSelectValueOption } from '../core/select-option.util';
+import {
+    SelectOptionMappingConfig,
+    selectOptionPrimitiveValue,
+    toSelectValueOption as mapSelectValueOption
+} from '../core/select-option.util';
 import { SelectValueOption } from '../models/app.types';
-import { ListRequestPayload, RemoteSelectRequestPayload } from '../models/ozon.types';
+import { ListRequestPayload, RemoteSelectRequestPayload, requireResponseObject } from '../models/ozon.types';
 
 @Injectable()
 export class AppFormioRendererService {
@@ -12,6 +17,7 @@ export class AppFormioRendererService {
     rawFormSchema: Record<string, unknown> | null = null;
     rawFormSchemaModel = '';
     formViewerLoading = false;
+    formDataReady = true;
 
     selectedModel = '';
     selectedRecordName = '';
@@ -31,10 +37,6 @@ export class AppFormioRendererService {
     private nextPostRenderHydrationRequestId = 0;
     private activePostRenderHydrationRequestId = 0;
     private activePostRenderHydrationPromise: Promise<void> | null = null;
-    private readonly responseWrappers: Array<'content' | 'payload' | 'response' | 'result' | 'action'> = [
-        'content', 'payload', 'response', 'result', 'action'
-    ];
-
     constructor(private readonly api: OzonApiService) {}
 
     isRecord(v: unknown): v is Record<string, unknown> { return !!v && typeof v === 'object' && !Array.isArray(v); }
@@ -87,76 +89,44 @@ export class AppFormioRendererService {
         return JSON.stringify(value ?? null);
     }
 
-    extractFormSchema(payload: unknown): Record<string, unknown> | null {
-        if (!this.isRecord(payload)) return null;
-        const content = this.asRecord(payload['content']);
-        if (content) {
-            const schema = content['schema'];
-            if (Array.isArray(schema)) return { display: 'form', components: schema };
-            if (this.isRecord(schema) && Array.isArray(schema['components'])) return schema as Record<string, unknown>;
+    extractFormSchema(schemaValue: unknown): Record<string, unknown> | null {
+        if (Array.isArray(schemaValue)) {
+            if (!schemaValue.length) return null;
+            return { display: 'form', components: schemaValue };
         }
-        // Fallback: top-level components array (e.g. { components: [...] })
-        if (Array.isArray(payload['components'])) return { display: 'form', components: payload['components'] };
-        return null;
-    }
-
-    extractActionFormSchema(payload: unknown): Record<string, unknown> | null {
-        const source = this.isRecord(payload) ? payload : null;
-        if (!source) return null;
-        const candidates: unknown[] = [
-            this.asRecord(source['content'])?.['schema'],
-            source['schema'],
-            this.asRecord(source['payload'])?.['schema'],
-            this.asRecord(this.asRecord(source['data'])?.['payload'])?.['schema']
-        ];
-        for (const candidate of candidates) {
-            const parsed = this.parseJsonMaybe(candidate);
-            const normalized = parsed ?? candidate;
-            if (Array.isArray(normalized)) return { display: 'form', components: normalized };
-            if (this.isRecord(normalized) && Array.isArray(normalized['components'])) return normalized as Record<string, unknown>;
+        if (this.isRecord(schemaValue) && Array.isArray(schemaValue['components'])) return schemaValue as Record<string, unknown>;
+        if (typeof schemaValue === 'string') {
+            try { return this.extractFormSchema(JSON.parse(schemaValue)); } catch { return null; }
         }
         return null;
     }
 
     extractSubmission(payload: unknown): { data: Record<string, unknown> } | null {
-        const nodes = this.collectResponseNodes(payload);
-        for (const target of nodes) {
-            const data = this.asRecord(target['data']);
-            if (!data || !Object.keys(data).length) continue;
-            if (this.isEnvelopeNode(target)) continue;
-            return { data: this.normalizeFormSubmissionData(data) };
-        }
-        const rec = this.extractRecord(payload);
-        return rec ? { data: this.normalizeFormSubmissionData(rec) } : null;
+        const obj = requireResponseObject(payload);
+        if (!this.isRecord(obj.content.data)) return null;
+        return { data: this.normalizeFormSubmissionData(obj.content.data as Record<string, unknown>) };
     }
 
-    normalizeFormSubmissionData(raw: Record<string, unknown>): Record<string, unknown> {
+    normalizeFormSubmissionData(raw: Record<string, unknown>, schema: Record<string, unknown> | null = null): Record<string, unknown> {
         const normalized: Record<string, unknown> = { ...raw };
         const nestedData = this.asRecord(normalized['data']);
-        const nestedDataValue = this.asRecord(normalized['data_value']);
-        const promoteMissingFields = (source: Record<string, unknown> | null): void => {
-            if (!source) return;
-            Object.entries(source).forEach(([key, value]) => {
+        if (nestedData) {
+            Object.entries(nestedData).forEach(([key, value]) => {
                 if (value === undefined) return;
                 if (Object.prototype.hasOwnProperty.call(normalized, key)) return;
                 normalized[key] = value;
             });
-        };
-        promoteMissingFields(nestedData);
-        promoteMissingFields(nestedDataValue);
-        normalized['data_value'] = this.buildSubmissionDataValueAlias(normalized, nestedDataValue);
+        }
+        this.normalizeMultipleSubmissionFields(normalized, schema);
         return normalized;
     }
 
-    buildSubmissionDataValueAlias(submission: Record<string, unknown>, explicitDataValue: Record<string, unknown> | null): Record<string, unknown> {
-        const alias: Record<string, unknown> = explicitDataValue ? { ...explicitDataValue } : {};
-        const excludedKeys = new Set(['data', 'data_value', 'schema', 'formio', 'components']);
-        Object.entries(submission).forEach(([key, value]) => {
-            if (excludedKeys.has(key) || value === undefined) return;
-            if (Object.prototype.hasOwnProperty.call(alias, key)) return;
-            alias[key] = value;
-        });
-        return alias;
+    normalizeCurrentSubmissionData(schema: Record<string, unknown> | null = null): Record<string, unknown> | null {
+        const current = this.formSubmission?.data;
+        if (!current || !this.isRecord(current)) return null;
+        const normalized = this.normalizeFormSubmissionData({ ...current }, schema);
+        this.formSubmission = { data: normalized };
+        return normalized;
     }
 
     async hydrateRemoteSelectSchema(schema: Record<string, unknown>, sub: Record<string, unknown> | null): Promise<Record<string, unknown>> {
@@ -170,7 +140,7 @@ export class AppFormioRendererService {
             const resourcePayload = this.extractResourceSelectPayload(comp, formKey);
             if (resourcePayload) {
                 try {
-                    const resourceOptions = await this.fetchResourceSelectOptions(resourcePayload);
+                    const resourceOptions = await this.fetchResourceSelectOptions(comp, resourcePayload);
                     const selectedOptions = this.extractSubmissionSelectOptions(comp, sub);
                     this.applyRemoteSelectValues(comp, this.mergeSelectValues(resourceOptions, selectedOptions));
                 } catch (error) {
@@ -185,7 +155,7 @@ export class AppFormioRendererService {
             const payload = this.extractRemoteSelectPayload(comp, formKey);
             if (payload) {
                 try {
-                    const remoteOptions = await this.fetchRemoteSelectOptions(payload);
+                    const remoteOptions = await this.fetchRemoteSelectOptions(comp, payload);
                     const selectedOptions = this.extractSubmissionSelectOptions(comp, sub);
                     this.applyRemoteSelectValues(comp, this.mergeSelectValues(remoteOptions, selectedOptions));
                 } catch (error) {
@@ -200,9 +170,9 @@ export class AppFormioRendererService {
             if (String(comp['dataSrc'] ?? '').trim() === 'custom' && sub) {
                 const data = this.isRecord(comp['data']) ? comp['data'] : {};
                 const customKey = String(data['custom'] ?? '').trim();
-                const customValue = customKey ? (sub[customKey] ?? (this.isRecord(sub['data_value']) ? sub['data_value'][customKey] : null)) : null;
+                const customValue = customKey ? (sub[customKey] ?? null) : null;
                 if (Array.isArray(customValue)) {
-                    const options = customValue.map(e => this.toSelectValueOption(e)).filter((e): e is SelectValueOption => Boolean(e));
+                    const options = customValue.map(e => this.toSelectValueOption(e, comp)).filter((e): e is SelectValueOption => Boolean(e));
                     this.applyRemoteSelectValues(comp, options);
                 }
             }
@@ -233,9 +203,9 @@ export class AppFormioRendererService {
             if (String(comp['dataSrc'] ?? '').trim() === 'custom' && sub) {
                 const data = this.isRecord(comp['data']) ? comp['data'] : {};
                 const customKey = String(data['custom'] ?? '').trim();
-                const customValue = customKey ? (sub[customKey] ?? (this.isRecord(sub['data_value']) ? sub['data_value'][customKey] : null)) : null;
+                const customValue = customKey ? (sub[customKey] ?? null) : null;
                 if (Array.isArray(customValue)) {
-                    const options = customValue.map(e => this.toSelectValueOption(e)).filter((e): e is SelectValueOption => Boolean(e));
+                    const options = customValue.map(e => this.toSelectValueOption(e, comp)).filter((e): e is SelectValueOption => Boolean(e));
                     this.applyRemoteSelectValues(comp, options);
                 }
             }
@@ -254,7 +224,7 @@ export class AppFormioRendererService {
             const resourcePayload = this.extractResourceSelectPayload(comp, formKey);
             if (resourcePayload) {
                 try {
-                    const resourceOptions = await this.fetchResourceSelectOptions(resourcePayload);
+                    const resourceOptions = await this.fetchResourceSelectOptions(comp, resourcePayload);
                     const selectedOptions = this.extractSubmissionSelectOptions(comp, sub);
                     this.applyRemoteSelectValues(comp, this.mergeSelectValues(resourceOptions, selectedOptions));
                     changed = true;
@@ -269,7 +239,7 @@ export class AppFormioRendererService {
             const payload = this.extractRemoteSelectPayload(comp, formKey);
             if (!payload) continue;
             try {
-                const remoteOptions = await this.fetchRemoteSelectOptions(payload);
+                const remoteOptions = await this.fetchRemoteSelectOptions(comp, payload);
                 const selectedOptions = this.extractSubmissionSelectOptions(comp, sub);
                 this.applyRemoteSelectValues(comp, this.mergeSelectValues(remoteOptions, selectedOptions));
                 changed = true;
@@ -290,6 +260,7 @@ export class AppFormioRendererService {
         const schema = this.formSchema;
         if (!schema || !this.schemaHasRemoteSelectHydrationTargets(schema)) {
             this.pendingHydrationPromise = Promise.resolve();
+            this.formDataReady = true;
             return this.pendingHydrationPromise;
         }
         let resolve!: () => void;
@@ -310,16 +281,18 @@ export class AppFormioRendererService {
 
     beginFormViewerLoad(): void {
         this.formViewerLoading = true;
+        this.formDataReady = false;
     }
 
     cancelFormViewerLoad(): void {
         this.formViewerLoading = false;
+        this.formDataReady = true;
     }
 
     async onFormViewerReady(): Promise<void> {
         this.formViewerLoading = false;
         const scheduled = this.pendingPostRenderHydration;
-        if (!scheduled) return;
+        if (!scheduled) { this.formDataReady = true; return; }
         if (this.activePostRenderHydrationRequestId === scheduled.requestId && this.activePostRenderHydrationPromise) {
             return this.activePostRenderHydrationPromise;
         }
@@ -338,6 +311,7 @@ export class AppFormioRendererService {
                     this.activePostRenderHydrationRequestId = 0;
                 }
                 this.activePostRenderHydrationPromise = null;
+                this.formDataReady = true;
             });
         return this.activePostRenderHydrationPromise;
     }
@@ -401,100 +375,53 @@ export class AppFormioRendererService {
         this.remoteSelectInflight.clear();
     }
 
-    readEnvelopeFailureMessage(payload: unknown): string {
-        const nodes = this.collectResponseNodes(payload, 4);
-        for (const node of nodes) {
-            const hasEnvelopeSignature = Boolean(this.asRecord(node['content'])) || (Object.prototype.hasOwnProperty.call(node, 'fail') && (Object.prototype.hasOwnProperty.call(node, 'message') || Object.prototype.hasOwnProperty.call(node, 'content')));
-            if (!hasEnvelopeSignature) continue;
-            const failed = this.toOptionalBooleanFlag(node['fail']);
-            if (failed !== true) continue;
-            const data = this.asRecord(node['data']);
-            const message = this.readFirstString(node['message'], data ? data['message'] : undefined, 'Operazione fallita');
-            return message || 'Operazione fallita';
-        }
-        return '';
-    }
-
-    collectResponseNodes(payload: unknown, maxDepth = 8): Record<string, unknown>[] {
-        if (!this.isRecord(payload)) return [];
-        const queue: Array<{ node: Record<string, unknown>; depth: number }> = [{ node: payload, depth: 0 }];
-        const visited = new Set<Record<string, unknown>>();
-        const nodes: Record<string, unknown>[] = [];
-        while (queue.length) {
-            const current = queue.shift();
-            if (!current) break;
-            const { node, depth } = current;
-            if (visited.has(node)) continue;
-            visited.add(node);
-            nodes.push(node);
-            if (depth >= maxDepth) continue;
-            const nestedData = this.asRecord(node['data']);
-            if (nestedData) queue.push({ node: nestedData, depth: depth + 1 });
-            for (const wrapper of this.responseWrappers) {
-                const nested = this.asRecord(node[wrapper]);
-                if (!nested) continue;
-                queue.push({ node: nested, depth: depth + 1 });
-            }
-        }
-        return nodes;
-    }
-
-    extractRecord(payload: unknown): Record<string, unknown> | null {
-        const nodes = this.collectResponseNodes(payload);
-        for (const target of nodes) {
-            const record = this.asRecord(target['record']);
-            if (record) return record;
-            const item = this.asRecord(target['item']);
-            if (item) return item;
-            const data = this.asRecord(target['data']);
-            if (data && !this.isEnvelopeNode(target)) return data;
-            if (!this.isEnvelopeNode(target)) return target;
-        }
-        return null;
-    }
-
-    scoreFormSubmissionData(record: Record<string, unknown> | null): number {
-        if (!record) return 0;
-        const ignoredKeys = new Set(['data', 'data_value', 'schema', 'formio', 'components', 'content', 'payload', 'response', 'result', 'action', 'fields', 'mode', 'fail', 'status', 'message', 'res_data', 'session_diff', 'query', 'columns', 'total_count', 'batch_size', 'editable_fields', 'obfucated_fields', 'filter_kyes']);
-        let score = 0;
-        Object.entries(record).forEach(([key, value]) => {
-            if (ignoredKeys.has(key) || value === undefined || value === null) return;
-            if (typeof value === 'string' && !value.trim()) return;
-            if (this.isRecord(value) && !Object.keys(value).length) return;
-            if (Array.isArray(value) && !value.length) return;
-            score += 1;
-            if (key === 'rec_name') score += 5;
-            if (key === 'display' || key === 'title' || key === 'type' || key === 'data_model') score += 3;
-        });
-        return score;
-    }
-
-    resolveBestActionFormData(responseData: Record<string, unknown>, initialData: Record<string, unknown>, envelopeCandidates: unknown[]): Record<string, unknown> {
-        let bestData = initialData;
-        let bestScore = this.scoreFormSubmissionData(initialData);
-        const consider = (candidate: unknown): void => {
-            const record = this.asRecord(candidate);
-            if (!record) return;
-            const score = this.scoreFormSubmissionData(record);
-            if (score <= bestScore) return;
-            bestData = record;
-            bestScore = score;
-        };
-        consider(responseData);
-        consider(responseData['data']);
-        envelopeCandidates.forEach(c => {
-            const cr = this.asRecord(c);
-            if (!cr) return;
-            consider(cr);
-            consider(cr['data']);
-        });
-        return bestData;
-    }
 
     readComponentProperties(c: Record<string, unknown>): Record<string, unknown> {
         if (this.isRecord(c['properties'])) return c['properties'];
         if (this.isRecord(c['property'])) return c['property'];
         return {};
+    }
+
+    private normalizeMultipleSubmissionFields(submission: Record<string, unknown>, schema: Record<string, unknown> | null = null): void {
+        const effectiveSchema = this.resolveSubmissionNormalizationSchema(schema);
+        if (!effectiveSchema) return;
+        this.collectMultipleComponentKeys(effectiveSchema).forEach((key) => {
+            if (!Object.prototype.hasOwnProperty.call(submission, key)) return;
+            submission[key] = this.coerceMultipleSubmissionValue(submission[key]);
+        });
+    }
+
+    private resolveSubmissionNormalizationSchema(schema: Record<string, unknown> | null = null): Record<string, unknown> | null {
+        if (schema && Array.isArray(schema['components'])) return schema;
+        if (this.formSchema && Array.isArray(this.formSchema['components'])) return this.formSchema;
+        if (this.rawFormSchema && Array.isArray(this.rawFormSchema['components'])) return this.rawFormSchema;
+        return null;
+    }
+
+    private collectMultipleComponentKeys(schema: Record<string, unknown>): string[] {
+        if (!Array.isArray(schema['components'])) return [];
+        const keys = new Set<string>();
+        formioEachComponent(schema['components'] as any[], (component: Record<string, unknown>) => {
+            if (!this.isRecord(component)) return false;
+            const key = String(component['key'] ?? '').trim();
+            if (!key || component['multiple'] !== true || component['input'] === false) return false;
+            keys.add(key);
+            return false;
+        }, true);
+        return [...keys];
+    }
+
+    private coerceMultipleSubmissionValue(value: unknown): unknown {
+        if (Array.isArray(value)) return value;
+        if (value == null) return [];
+        if (typeof value === 'string') {
+            const trimmed = value.trim();
+            if (!trimmed) return [];
+            const parsed = this.parseJsonMaybe(trimmed);
+            return Array.isArray(parsed) ? parsed : value;
+        }
+        if (this.isRecord(value) && !Object.keys(value).length) return [];
+        return value;
     }
 
     resolvePath(src: Record<string, unknown>, path: string): unknown {
@@ -551,7 +478,7 @@ export class AppFormioRendererService {
                 const payload = this.extractRemoteSelectPayload(comp, formKey);
                 if (payload) {
                     try {
-                        const remoteOptions = await this.fetchRemoteSelectOptions(payload);
+                        const remoteOptions = await this.fetchRemoteSelectOptions(comp, payload);
                         this.applyRemoteSelectValues(comp, remoteOptions);
                         schemaChanged = true;
                     } catch (error) { console.error('Dependent remote select fetch failed', error); }
@@ -564,7 +491,7 @@ export class AppFormioRendererService {
                     const customKey = String(data['custom'] ?? '').trim();
                     const customValue = customKey ? (submissionData[customKey] ?? (this.isRecord(submissionData['data_value']) ? submissionData['data_value'][customKey] : null)) : null;
                     if (Array.isArray(customValue)) {
-                        const options = customValue.map(e => this.toSelectValueOption(e)).filter((e): e is SelectValueOption => Boolean(e));
+                        const options = customValue.map(e => this.toSelectValueOption(e, comp)).filter((e): e is SelectValueOption => Boolean(e));
                         this.applyRemoteSelectValues(comp, options);
                         schemaChanged = true;
                         submissionChanged = this.pruneSelectSubmissionValue(comp, submissionData) || submissionChanged;
@@ -605,13 +532,13 @@ export class AppFormioRendererService {
         const allowedValues = new Set(options.map(o => this.optionLookupKey(o.value)).filter(Boolean));
         const current = submissionData[key];
         if (Array.isArray(current)) {
-            const filtered = current.filter(e => allowedValues.has(this.optionLookupKey(e)));
+            const filtered = current.filter(e => allowedValues.has(this.optionLookupKey(e, component)));
             if (filtered.length === current.length) return false;
             submissionData[key] = filtered;
             return true;
         }
         if (current == null || current === '') return false;
-        if (allowedValues.has(this.optionLookupKey(current))) return false;
+        if (allowedValues.has(this.optionLookupKey(current, component))) return false;
         submissionData[key] = null;
         return true;
     }
@@ -807,7 +734,7 @@ export class AppFormioRendererService {
             const sourceDomain = this.normalizeRemoteDomain(props['domain'] ?? data['domain']);
             const sourceComputeLabel = this.readFirstString(props['compute_label'], props['computeLabel'], data['compute_label'], data['computeLabel']);
             const labelKey = this.readFirstString(props['label'], comp['label'], key, 'label');
-            const idKey = this.readFirstString(props['id'], comp['valueProperty'], 'id');
+            const idKey = this.resolveSelectIdentifierPath(comp);
             if (src) payloadProperties['src'] = src;
             if (sourceModel) payloadProperties['model'] = sourceModel;
             if (sourceDomain) payloadProperties['domain'] = sourceDomain;
@@ -872,21 +799,21 @@ export class AppFormioRendererService {
         try { const parsed = JSON.parse(text); return this.isRecord(parsed) ? parsed : null; } catch { return null; }
     }
 
-    private async fetchRemoteSelectOptions(payload: RemoteSelectRequestPayload): Promise<SelectValueOption[]> {
+    private async fetchRemoteSelectOptions(comp: Record<string, unknown>, payload: RemoteSelectRequestPayload): Promise<SelectValueOption[]> {
         const cacheKey = this.stableStringify(payload);
         const cached = this.remoteSelectCache.get(cacheKey);
         if (cached) return cached;
         const inflight = this.remoteSelectInflight.get(cacheKey);
         if (inflight) return inflight;
         const request = this.api.getRemoteSelect(payload)
-            .then((response: unknown) => this.normalizeRemoteSelectResponse(response))
+            .then((response: unknown) => this.normalizeRemoteSelectResponse(response, comp))
             .then((options: SelectValueOption[]) => { this.remoteSelectCache.set(cacheKey, options); return options; })
             .finally(() => { this.remoteSelectInflight.delete(cacheKey); });
         this.remoteSelectInflight.set(cacheKey, request);
         return request;
     }
 
-    private async fetchResourceSelectOptions(payload: { model: string; payload: ListRequestPayload }): Promise<SelectValueOption[]> {
+    private async fetchResourceSelectOptions(comp: Record<string, unknown>, payload: { model: string; payload: ListRequestPayload }): Promise<SelectValueOption[]> {
         const cacheKey = `resource:${this.stableStringify(payload)}`;
         const cached = this.remoteSelectCache.get(cacheKey);
         if (cached) return cached;
@@ -894,7 +821,7 @@ export class AppFormioRendererService {
         if (inflight) return inflight;
         const options: SelectValueOption[] = [];
         const request = this.api.streamList(payload.model, payload.payload, (item: unknown) => {
-            const option = this.toSelectValueOption(item);
+            const option = this.toSelectValueOption(item, comp);
             if (option) options.push(option);
         }, undefined, { stream: false }).then(() => {
                 this.remoteSelectCache.set(cacheKey, options);
@@ -905,7 +832,7 @@ export class AppFormioRendererService {
         return request;
     }
 
-    private normalizeRemoteSelectResponse(payload: unknown): SelectValueOption[] {
+    private normalizeRemoteSelectResponse(payload: unknown, comp: Record<string, unknown>): SelectValueOption[] {
         let target: unknown = payload;
         for (let i = 0; i < 4; i++) {
             if (this.isRecord(target) && this.isRecord(target['content'])) { target = target['content']['data'] ?? target['content']; continue; }
@@ -913,7 +840,7 @@ export class AppFormioRendererService {
             break;
         }
         if (!Array.isArray(target)) return [];
-        return target.map(e => this.toSelectValueOption(e)).filter((e): e is SelectValueOption => Boolean(e));
+        return target.map(e => this.toSelectValueOption(e, comp)).filter((e): e is SelectValueOption => Boolean(e));
     }
 
     private extractSubmissionSelectOptions(comp: Record<string, unknown>, sub: Record<string, unknown> | null): SelectValueOption[] {
@@ -923,7 +850,7 @@ export class AppFormioRendererService {
         const current = sub[key];
         if (current == null) return [];
         const values = Array.isArray(current) ? current : [current];
-        return values.map(e => this.toSelectValueOption(e)).filter((e): e is SelectValueOption => Boolean(e));
+        return values.map(e => this.toSelectValueOption(e, comp)).filter((e): e is SelectValueOption => Boolean(e));
     }
 
     private mergeSelectValues(primary: SelectValueOption[], secondary: SelectValueOption[]): SelectValueOption[] {
@@ -959,34 +886,59 @@ export class AppFormioRendererService {
         const candidates: unknown[] = [data['values'], component['values'], data['items'], component['items']];
         for (const candidate of candidates) {
             if (!Array.isArray(candidate)) continue;
-            const parsed = candidate.map(e => this.toSelectValueOption(e)).filter((e): e is SelectValueOption => Boolean(e));
+            const parsed = candidate.map(e => this.toSelectValueOption(e, component)).filter((e): e is SelectValueOption => Boolean(e));
             if (parsed.length) return parsed;
         }
         return [];
     }
 
-    private optionLookupKey(value: unknown): string {
-        const primitive = this.optionPrimitiveValue(value);
+    private buildSelectOptionMappingConfig(component?: Record<string, unknown>): SelectOptionMappingConfig {
+        if (!component) return {};
+        const valuePath = this.resolveSelectIdentifierPath(component);
+        const props = this.readComponentProperties(component);
+        const labelPath = this.readFirstString(
+            props['label'],
+            props['compute_label'],
+            props['computeLabel'],
+            props['labelPath'],
+            props['label_path']
+        );
+        return {
+            valuePaths: valuePath ? [valuePath] : [],
+            labelPaths: labelPath ? [labelPath] : [],
+            aliasValuePaths: valuePath ? [valuePath] : []
+        };
+    }
+
+    private resolveSelectIdentifierPath(component: Record<string, unknown>): string {
+        const props = this.readComponentProperties(component);
+        return this.readFirstString(
+            component['idPath'],
+            props['idPath'],
+            props['id_path'],
+            props['id'],
+            component['valueProperty'],
+            'rec_name'
+        );
+    }
+
+    private optionLookupKey(value: unknown, component?: Record<string, unknown>): string {
+        const primitive = this.optionPrimitiveValue(value, component);
         if (primitive == null) return '';
         if (typeof primitive === 'string') return `s:${primitive}`;
         if (typeof primitive === 'number') return `n:${primitive}`;
         if (typeof primitive === 'boolean') return `b:${primitive}`;
-        if (Array.isArray(primitive)) return `a:${primitive.map(e => this.optionLookupKey(e)).join('|')}`;
+        if (Array.isArray(primitive)) return `a:${primitive.map(e => this.optionLookupKey(e, component)).join('|')}`;
         if (this.isRecord(primitive)) return `j:${this.stableStringify(primitive)}`;
         return `x:${String(primitive)}`;
     }
 
-    private optionPrimitiveValue(value: unknown): unknown {
-        return selectOptionPrimitiveValue(value);
+    private optionPrimitiveValue(value: unknown, component?: Record<string, unknown>): unknown {
+        return selectOptionPrimitiveValue(value, this.buildSelectOptionMappingConfig(component));
     }
 
-    toSelectValueOption(e: unknown): SelectValueOption | null {
-        return mapSelectValueOption(e);
-    }
-
-    private isEnvelopeNode(node: Record<string, unknown>): boolean {
-        if (!this.asRecord(node['content'])) return false;
-        return Object.prototype.hasOwnProperty.call(node, 'fail') || Object.prototype.hasOwnProperty.call(node, 'message') || !Object.prototype.hasOwnProperty.call(node, 'mode');
+    toSelectValueOption(e: unknown, component?: Record<string, unknown>): SelectValueOption | null {
+        return mapSelectValueOption(e, this.buildSelectOptionMappingConfig(component));
     }
 
     private normalizeArrayValue(value: unknown): unknown[] {
