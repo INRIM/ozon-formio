@@ -223,66 +223,42 @@ export class OzonApiService {
         const response = await this.fetchRaw(path, { redirect: 'manual' });
         const location = this.readLocationHeader(response.headers);
         if (location && this.isRedirectStatus(response.status)) {
-            return {
-                mode: 'action',
-                data: {
-                    redirect: location,
-                    redirect_status: response.status
-                }
-            };
+            return { content: { mode: 'redirect', next_action_url: location }, fail: false, message: '' };
         }
 
         const bodyText = await response.text();
         if (!response.ok) throw this.createApiError(response.status, this.parseJsonOrText(bodyText), bodyText);
 
         const parsed = this.parseJsonOrText(bodyText);
-        // Some runtimes may still auto-follow redirects; preserve final URL as explicit redirect hint.
+        // Some runtimes auto-follow redirects; if body is not a ResponseObject, synthesize a redirect.
         if (response.redirected && response.url) {
             const finalPath = this.pathFromAbsoluteUrl(response.url);
-            if (finalPath) {
-                return {
-                    mode: 'action',
-                    data: {
-                        redirect: finalPath
-                    },
-                    content: parsed
-                };
+            if (finalPath && (!this.isRecord(parsed) || !this.isRecord((parsed as Record<string, unknown>)['content']))) {
+                return { content: { mode: 'redirect', next_action_url: finalPath }, fail: false, message: '' };
             }
         }
-        return parsed;
+        return this.normalizeResponsePayload(parsed);
     }
 
     private async fetchAction(path: string): Promise<unknown> {
         const response = await this.fetchRaw(path, { redirect: 'manual' });
         const location = this.readLocationHeader(response.headers);
         if (location && this.isRedirectStatus(response.status)) {
-            return {
-                mode: 'action',
-                data: {
-                    redirect: location,
-                    redirect_status: response.status
-                }
-            };
+            return { content: { mode: 'redirect', next_action_url: location }, fail: false, message: '' };
         }
 
         const bodyText = await response.text();
         if (!response.ok) throw this.createApiError(response.status, this.parseJsonOrText(bodyText), bodyText);
 
         const parsed = this.parseJsonOrText(bodyText);
-        // Some runtimes may still auto-follow redirects; preserve final URL as explicit redirect hint.
+        // Some runtimes auto-follow redirects; if body is not a ResponseObject, synthesize a redirect.
         if (response.redirected && response.url) {
             const finalPath = this.pathFromAbsoluteUrl(response.url);
-            if (finalPath) {
-                return {
-                    mode: 'action',
-                    data: {
-                        redirect: finalPath
-                    },
-                    content: parsed
-                };
+            if (finalPath && (!this.isRecord(parsed) || !this.isRecord((parsed as Record<string, unknown>)['content']))) {
+                return { content: { mode: 'redirect', next_action_url: finalPath }, fail: false, message: '' };
             }
         }
-        return parsed;
+        return this.normalizeResponsePayload(parsed);
     }
 
     postAction(name: string, payload: Record<string, unknown>, recName = ''): Promise<unknown> {
@@ -631,6 +607,49 @@ export class OzonApiService {
         return '';
     }
 
+    private normalizeResponsePayload(payload: unknown): unknown {
+        if (!this.isRecord(payload)) return payload;
+        if (this.isRecord(payload['content'])) {
+            return {
+                ...payload,
+                content: this.normalizeResponseContent(payload['content'])
+            };
+        }
+        if (typeof payload['mode'] === 'string' && String(payload['mode']).trim()) {
+            return {
+                content: this.normalizeResponseContent(payload),
+                fail: false,
+                message: ''
+            };
+        }
+        return payload;
+    }
+
+    private normalizeResponseContent(content: Record<string, unknown>): Record<string, unknown> {
+        const mode = String(content['mode'] ?? '').trim().toLowerCase();
+        if (mode !== 'redirect') return content;
+        const data = this.isRecord(content['data']) ? content['data'] : null;
+        const nextActionUrl = this.firstNonEmptyString(
+            content['next_action_url'],
+            content['nextActionUrl'],
+            content['next_page'],
+            content['nextPage'],
+            content['next_path'],
+            content['nextPath'],
+            data?.['next_action_url'],
+            data?.['nextActionUrl'],
+            data?.['next_page'],
+            data?.['nextPage'],
+            data?.['next_path'],
+            data?.['nextPath'],
+            data?.['path'],
+            data?.['url'],
+            data?.['location']
+        );
+        if (!nextActionUrl || nextActionUrl === this.firstNonEmptyString(content['next_action_url'])) return content;
+        return { ...content, next_action_url: nextActionUrl };
+    }
+
     private resolveSessionCacheTtlMs(override?: number): number {
         const configured = Number.isFinite(Number(override))
             ? Number(override)
@@ -648,7 +667,7 @@ export class OzonApiService {
             if (r.status === 401 || r.status === 403) this.unauthorizedSubject.next();
             throw this.createApiError(r.status, this.parseJsonOrText(t), t);
         }
-        return this.parseJsonOrText(t);
+        return this.normalizeResponsePayload(this.parseJsonOrText(t));
     }
 
     private async fetchRaw(path: string, opt?: any): Promise<Response> {

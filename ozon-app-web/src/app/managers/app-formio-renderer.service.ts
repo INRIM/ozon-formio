@@ -30,6 +30,7 @@ export class AppFormioRendererService {
     private remoteSelectInflight = new Map<string, Promise<SelectValueOption[]>>();
     private pendingPostRenderHydration: {
         requestId: number;
+        contextId: number;
         submission: Record<string, unknown> | null;
         resolve: () => void;
         reject: (reason?: unknown) => void;
@@ -37,6 +38,7 @@ export class AppFormioRendererService {
     private nextPostRenderHydrationRequestId = 0;
     private activePostRenderHydrationRequestId = 0;
     private activePostRenderHydrationPromise: Promise<void> | null = null;
+    private formAsyncContextId = 0;
     constructor(private readonly api: OzonApiService) {}
 
     isRecord(v: unknown): v is Record<string, unknown> { return !!v && typeof v === 'object' && !Array.isArray(v); }
@@ -215,20 +217,23 @@ export class AppFormioRendererService {
     }
 
     /** Background: fetch remote selects for the current formSchema and patch it in-place, then trigger re-render. */
-    async hydrateRemoteSelectsInBackground(sub: Record<string, unknown> | null): Promise<void> {
+    async hydrateRemoteSelectsInBackground(sub: Record<string, unknown> | null, contextId = this.formAsyncContextId): Promise<void> {
         if (!this.formSchema) return;
         const schema = this.formSchema;
         const formKey = String(schema['key'] || schema['name'] || schema['path'] || this.selectedModel || '').trim();
         let changed = false;
         for (const comp of this.findSelectComponents(schema)) {
+            if (!this.isCurrentFormAsyncContext(contextId, schema)) return;
             const resourcePayload = this.extractResourceSelectPayload(comp, formKey);
             if (resourcePayload) {
                 try {
                     const resourceOptions = await this.fetchResourceSelectOptions(comp, resourcePayload);
+                    if (!this.isCurrentFormAsyncContext(contextId, schema)) return;
                     const selectedOptions = this.extractSubmissionSelectOptions(comp, sub);
                     this.applyRemoteSelectValues(comp, this.mergeSelectValues(resourceOptions, selectedOptions));
                     changed = true;
                 } catch (error) {
+                    if (!this.isCurrentFormAsyncContext(contextId, schema)) return;
                     const selectedOptions = this.extractSubmissionSelectOptions(comp, sub);
                     this.applyRemoteSelectValues(comp, selectedOptions);
                     console.error('Remote select fetch failed', error);
@@ -240,17 +245,19 @@ export class AppFormioRendererService {
             if (!payload) continue;
             try {
                 const remoteOptions = await this.fetchRemoteSelectOptions(comp, payload);
+                if (!this.isCurrentFormAsyncContext(contextId, schema)) return;
                 const selectedOptions = this.extractSubmissionSelectOptions(comp, sub);
                 this.applyRemoteSelectValues(comp, this.mergeSelectValues(remoteOptions, selectedOptions));
                 changed = true;
             } catch (error) {
+                if (!this.isCurrentFormAsyncContext(contextId, schema)) return;
                 const selectedOptions = this.extractSubmissionSelectOptions(comp, sub);
                 this.applyRemoteSelectValues(comp, selectedOptions);
                 console.error('Remote select fetch failed', error);
             }
             this.ensureSelectTemplate(comp);
         }
-        if (changed && this.formSchema === schema) {
+        if (changed && this.isCurrentFormAsyncContext(contextId, schema)) {
             this.formSchema = this.cloneSchema(schema);
         }
     }
@@ -272,6 +279,7 @@ export class AppFormioRendererService {
         this.pendingHydrationPromise = promise;
         this.pendingPostRenderHydration = {
             requestId: ++this.nextPostRenderHydrationRequestId,
+            contextId: this.formAsyncContextId,
             submission: this.cloneSubmissionData(sub),
             resolve,
             reject
@@ -284,20 +292,36 @@ export class AppFormioRendererService {
         this.formDataReady = false;
     }
 
-    cancelFormViewerLoad(): void {
+    /** Builder/editor pages render no <formio> viewer; mark the form ready without waiting for onFormViewerReady. */
+    markFormDataReadyForBuilder(): void {
+        this.clearScheduledRemoteSelectHydration();
+        this.pendingHydrationPromise = Promise.resolve();
         this.formViewerLoading = false;
         this.formDataReady = true;
+    }
+
+    cancelFormViewerLoad(): void {
+        this.invalidateActiveFormAsyncWork();
     }
 
     async onFormViewerReady(): Promise<void> {
         this.formViewerLoading = false;
         const scheduled = this.pendingPostRenderHydration;
         if (!scheduled) { this.formDataReady = true; return; }
+        if (!this.isCurrentFormAsyncContext(scheduled.contextId, this.formSchema)) {
+            scheduled.resolve();
+            if (this.pendingPostRenderHydration?.requestId === scheduled.requestId) {
+                this.pendingPostRenderHydration = null;
+            }
+            this.pendingHydrationPromise = null;
+            this.formDataReady = true;
+            return;
+        }
         if (this.activePostRenderHydrationRequestId === scheduled.requestId && this.activePostRenderHydrationPromise) {
             return this.activePostRenderHydrationPromise;
         }
         this.activePostRenderHydrationRequestId = scheduled.requestId;
-        this.activePostRenderHydrationPromise = this.hydrateRemoteSelectsInBackground(scheduled.submission)
+        this.activePostRenderHydrationPromise = this.hydrateRemoteSelectsInBackground(scheduled.submission, scheduled.contextId)
             .then(() => { scheduled.resolve(); })
             .catch((error) => {
                 scheduled.reject(error);
@@ -340,6 +364,7 @@ export class AppFormioRendererService {
         event: unknown,
         setStatusFn: (m: string, e: boolean) => void
     ): Promise<void> {
+        if (!this.formSchema) return;
         const eventRecord = this.asRecord(event);
         const changedKey = this.extractChangedComponentKey(eventRecord);
         const submissionData = this.extractChangeEventSubmissionData(eventRecord);
@@ -364,7 +389,7 @@ export class AppFormioRendererService {
     }
 
     resetFormState(): void {
-        this.clearScheduledRemoteSelectHydration();
+        this.invalidateActiveFormAsyncWork();
         this.formSchema = null;
         this.formSubmission = null;
         this.formPreviewSubmission = null;
@@ -373,6 +398,13 @@ export class AppFormioRendererService {
         this.formViewerLoading = false;
         this.remoteSelectCache.clear();
         this.remoteSelectInflight.clear();
+    }
+
+    clearActiveFormView(): void {
+        this.invalidateActiveFormAsyncWork();
+        this.formSchema = null;
+        this.formSubmission = null;
+        this.formPreviewSubmission = null;
     }
 
 
@@ -465,6 +497,7 @@ export class AppFormioRendererService {
 
     private async refreshDependentSelectComponents(changedKey: string, setStatusFn: (m: string, e: boolean) => void): Promise<void> {
         if (!changedKey || !this.formSchema || this.isRefreshingDependentSelects) return;
+        const contextId = this.formAsyncContextId;
         const schema = this.formSchema;
         const dependents = this.findDependentSelectComponents(schema, changedKey);
         if (!dependents.length) return;
@@ -475,10 +508,12 @@ export class AppFormioRendererService {
         this.isRefreshingDependentSelects = true;
         try {
             for (const comp of dependents) {
+                if (!this.isCurrentFormAsyncContext(contextId, schema)) return;
                 const payload = this.extractRemoteSelectPayload(comp, formKey);
                 if (payload) {
                     try {
                         const remoteOptions = await this.fetchRemoteSelectOptions(comp, payload);
+                        if (!this.isCurrentFormAsyncContext(contextId, schema)) return;
                         this.applyRemoteSelectValues(comp, remoteOptions);
                         schemaChanged = true;
                     } catch (error) { console.error('Dependent remote select fetch failed', error); }
@@ -491,6 +526,7 @@ export class AppFormioRendererService {
                     const customKey = String(data['custom'] ?? '').trim();
                     const customValue = customKey ? (submissionData[customKey] ?? (this.isRecord(submissionData['data_value']) ? submissionData['data_value'][customKey] : null)) : null;
                     if (Array.isArray(customValue)) {
+                        if (!this.isCurrentFormAsyncContext(contextId, schema)) return;
                         const options = customValue.map(e => this.toSelectValueOption(e, comp)).filter((e): e is SelectValueOption => Boolean(e));
                         this.applyRemoteSelectValues(comp, options);
                         schemaChanged = true;
@@ -499,8 +535,8 @@ export class AppFormioRendererService {
                 }
             }
         } finally { this.isRefreshingDependentSelects = false; }
-        if (schemaChanged && this.formSchema) this.formSchema = this.cloneSchema(this.formSchema);
-        if (submissionChanged && submissionData) this.mergeSubmissionData(submissionData);
+        if (schemaChanged && this.isCurrentFormAsyncContext(contextId, schema) && this.formSchema) this.formSchema = this.cloneSchema(this.formSchema);
+        if (submissionChanged && submissionData && this.isCurrentFormAsyncContext(contextId, schema)) this.mergeSubmissionData(submissionData);
     }
 
     private findDependentSelectComponents(schema: Record<string, unknown>, changedKey: string): Record<string, unknown>[] {
@@ -613,6 +649,21 @@ export class AppFormioRendererService {
             this.pendingPostRenderHydration = null;
         }
         this.pendingHydrationPromise = null;
+    }
+
+    private invalidateActiveFormAsyncWork(): void {
+        this.formAsyncContextId += 1;
+        this.clearScheduledRemoteSelectHydration();
+        this.activePostRenderHydrationRequestId = 0;
+        this.activePostRenderHydrationPromise = null;
+        this.formViewerLoading = false;
+        this.formDataReady = true;
+    }
+
+    private isCurrentFormAsyncContext(contextId: number, schema: Record<string, unknown> | null = null): boolean {
+        if (contextId !== this.formAsyncContextId) return false;
+        if (!schema) return true;
+        return this.formSchema === schema;
     }
 
     private schemaHasRemoteSelectHydrationTargets(schema: Record<string, unknown>): boolean {

@@ -170,14 +170,15 @@ export class RuntimeConfigService {
         ),
         '/refresh'
       ),
-      appCode: this.pickFirstString(
+      appCode: this.pickFirstPresentString(
         query['app_code'],
         query['APP_CODE'],
         runtime['app_code'],
         runtime['APP_CODE'],
+        runtime['appCode'],
         stored?.appCode,
         environment.appCode
-      )
+      ) ?? ''
     };
 
     this.persist(merged);
@@ -237,6 +238,15 @@ export class RuntimeConfigService {
       }
     }
     return '';
+  }
+
+  private pickFirstPresentString(...values: unknown[]): string | undefined {
+    for (const value of values) {
+      if (value === undefined || value === null) continue;
+      if (typeof value === 'string') return value.trim();
+      return String(value).trim();
+    }
+    return undefined;
   }
 
   private pickFirstOrigins(...values: unknown[]): unknown {

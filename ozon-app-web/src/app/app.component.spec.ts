@@ -1017,6 +1017,61 @@ describe('AppComponent', () => {
     expect(app.selectedRecordName).toBe('ORDINE63423');
   });
 
+  it('should open Design Form records in the inline builder editor', async () => {
+    apiMock.getNextAction.and.resolveTo(makeResponse({
+      mode: 'form',
+      model: 'component',
+      rec_name: 'customer_form',
+      schema: {
+        display: 'form',
+        components: [
+          { type: 'textfield', key: 'title', label: 'Titolo', input: true },
+          { type: 'textfield', key: 'rec_name', label: 'Name', input: true }
+        ]
+      },
+      data: {
+        rec_name: 'customer_form',
+        title: 'Customer Form',
+        data_model: 'res.partner',
+        formio: {
+          display: 'form',
+          components: [
+            { type: 'textfield', key: 'name', label: 'Nome', input: true }
+          ]
+        }
+      }
+    }));
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+
+    await app.actionManager.applyActionResponse(makeResponse({
+      mode: 'list',
+      model: 'component',
+      fields: {
+        action_name: 'list_design_forms',
+        component_type: 'form'
+      } as any,
+      columns: { rec_name: 'Record' },
+      total_count: 1,
+      data: [{ rec_name: 'customer_form' }]
+    }));
+
+    await app.onTableRowDblClick(
+      { __rowid: 1, __rec_name: 'customer_form', rec_name: 'customer_form' } as any,
+      new MouseEvent('dblclick')
+    );
+
+    expect(apiMock.getNextAction).toHaveBeenCalledWith('list_design_forms', 'customer_form');
+    expect(app.viewMode).toBe('form');
+    expect(app.selectedRecordName).toBe('customer_form');
+    expect(app.builderEligibleCurrentForm).toBeTrue();
+    expect(app.formEditorDesignContext).toBeTrue();
+    expect(app.isFormEditorPage).toBeTrue();
+    expect(app.showFormViewerShell).toBeFalse();
+    expect((app.builderSchemaForm?.components as unknown[]).length).toBe(1);
+  });
+
   it('should parse action form schema as JSON string from canonical content envelope', async () => {
     const actionResponse = makeResponse({
       mode: 'form',
@@ -1103,6 +1158,52 @@ describe('AppComponent', () => {
     );
   });
 
+  it('should follow next_action redirect when backend returns data.next_page', async () => {
+    apiMock.getAction.and.callFake((name: string) => {
+      if (name === 'form_form_menu_group') {
+        return Promise.resolve(makeResponse({
+          mode: 'form',
+          model: 'menu_group',
+          rec_name: 'mail_template',
+          data: {
+            rec_name: 'mail_template',
+            name: 'Template Mail'
+          },
+          schema: {
+            display: 'form',
+            components: [
+              { type: 'textfield', key: 'name', label: 'Nome', input: true }
+            ]
+          }
+        }));
+      }
+      return Promise.resolve(makeResponse({ mode: 'action', data: { status: 'ok' } }));
+    });
+    apiMock.getNextAction.and.resolveTo(makeResponse({
+      mode: 'redirect',
+      data: {
+        next_page: '/action/form_form_menu_group/mail_template'
+      } as any,
+      next_action_url: ''
+    }));
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.actionManager.currentActionName = 'menu_group';
+    app.appManager.viewMode = 'list';
+
+    const row = { __rowid: 1, __rec_name: 'mail_template', rec_name: 'mail_template' };
+    await app.onTableRowDblClick(row as any, new MouseEvent('dblclick'));
+
+    expect(apiMock.getNextAction).toHaveBeenCalledWith('menu_group', 'mail_template');
+    expect(apiMock.getAction).toHaveBeenCalledWith(
+      'form_form_menu_group',
+      jasmine.objectContaining({ recName: 'mail_template' })
+    );
+    expect(app.viewMode).toBe('form');
+    expect(app.selectedRecordName).toBe('mail_template');
+  });
+
   it('should resolve next_action redirect through canonical action route even when embedded content is present', async () => {
     apiMock.getAction.and.callFake((name: string) => {
       if (name === 'form_form_list_posizione') {
@@ -1171,6 +1272,91 @@ describe('AppComponent', () => {
       'http://localhost:7999/action/form_form_list_posizione/Gov.30459'
     );
     expect(apiMock.getAction).not.toHaveBeenCalled();
+  });
+
+  it('should not fabricate a browser form route when next_action returns direct form content without redirect', async () => {
+    apiMock.getNextAction.and.resolveTo(makeResponse({
+      mode: 'form',
+      model: 'component',
+      fields: { component_type: 'form', action_name: 'design_form' } as any,
+      rec_name: 'component.form.demo',
+      data: { rec_name: 'component.form.demo' },
+      schema: { display: 'form', components: [] }
+    }));
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    const originalPath = window.location.pathname;
+
+    try {
+      window.history.replaceState({}, '', '/action/list_component');
+      app.actionManager.currentActionName = 'list_component';
+      await app.actionManager["runNextActionRoute"](['list_component', 'component.form.demo']);
+      expect(window.location.pathname).toBe('/action/list_component');
+      expect(app.viewMode).toBe('form');
+      expect(app.isFormEditorPage).toBeTrue();
+    } finally {
+      window.history.replaceState({}, '', originalPath || '/');
+    }
+  });
+
+  it('should resolve post-action redirects from data.next_page', async () => {
+    apiMock.postActionPath.and.resolveTo(makeResponse({
+      mode: 'redirect',
+      data: {
+        next_page: '/action/form_form_menu_group/mail_template'
+      } as any,
+      next_action_url: ''
+    }));
+    apiMock.getAction.and.callFake((name: string) => {
+      if (name === 'form_form_menu_group') {
+        return Promise.resolve(makeResponse({
+          mode: 'form',
+          model: 'menu_group',
+          rec_name: 'mail_template',
+          data: { rec_name: 'mail_template', name: 'Template Mail' },
+          schema: {
+            display: 'form',
+            components: [
+              { type: 'textfield', key: 'name', label: 'Nome', input: true }
+            ]
+          }
+        }));
+      }
+      return Promise.resolve(makeResponse({ mode: 'action', data: { status: 'ok' } }));
+    });
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    const button = {
+      model: 'menu_group',
+      key: 'open_manage',
+      type: 'button',
+      label: 'Gestione',
+      leftIcon: 'pi pi-pencil',
+      authtoken: 'token',
+      req_id: 'req',
+      btn_action_type: 'post',
+      action_type: 'post',
+      url_action: '/action/open_manage',
+      builder: false,
+      mode: 'form',
+      content: '/action/open_manage',
+      is_admin: false
+    };
+
+    app.appManager.selectedModel = 'menu_group';
+    app.renderer.formSubmission = { data: { rec_name: 'mail_template' } };
+
+    await app.actionManager.runTopMenuAction(button);
+
+    expect(apiMock.postActionPath).toHaveBeenCalledWith('/action/open_manage', jasmine.objectContaining({ rec_name: 'mail_template' }));
+    expect(apiMock.getAction).toHaveBeenCalledWith(
+      'form_form_menu_group',
+      jasmine.objectContaining({ recName: 'mail_template' })
+    );
+    expect(app.viewMode).toBe('form');
+    expect(app.selectedRecordName).toBe('mail_template');
   });
 
   it('should ignore next_action path hints and hard reload using canonical redirect path', async () => {
@@ -1297,7 +1483,7 @@ describe('AppComponent', () => {
     expect(app.statusText).toContain('Compila i campi obbligatori');
   });
 
-  it('should not synthesize Abbandona when form config enables cancel button', () => {
+  it('should not show Abbandona when fields.cancel_button is missing', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
     app.appManager.viewMode = 'form';
@@ -1319,13 +1505,92 @@ describe('AppComponent', () => {
     expect(labels).not.toContain('Abbandona');
   });
 
-  it('should show Abbandona only when it is present in context_actions', async () => {
+  it('should synthesize Abbandona when fields.cancel_button is true', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    const originalPath = window.location.pathname;
+
+    try {
+      window.history.replaceState({}, '', '/dashboard');
+      await app.actionManager.applyActionResponse(makeResponse({
+        mode: 'form',
+        model: 'ordine',
+        fields: {
+          action_name: 'new_ordine',
+          cancel_button: true,
+          abandon_action: 'list_ordini'
+        } as any,
+        data: { rec_name: 'NEW-1' },
+        schema: {
+          display: 'form',
+          no_submit: '1',
+          components: []
+        },
+        context_actions: []
+      }));
+
+      const abandonButton = app.currentFormActionButtons.find((button: any) => button.label === 'Abbandona');
+
+      expect(app.currentFormActionButtons.map((button: any) => button.label)).not.toContain('Salva');
+      expect(app.currentFormActionButtons.map((button: any) => button.label)).not.toContain('Aggiorna');
+      expect(abandonButton).toEqual(jasmine.objectContaining({
+        action_type: 'abandon',
+        url_action: '/action/list_ordini'
+      }));
+    } finally {
+      window.history.replaceState({}, '', originalPath || '/');
+    }
+  });
+
+  it('should prefer the origin action over abandon_action for Abbandona', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    const originalPath = window.location.pathname;
+
+    try {
+      window.history.replaceState({}, '', '/action/list_ordini');
+      await app.actionManager.applyActionResponse(makeResponse({
+        mode: 'form',
+        model: 'ordine',
+        fields: {
+          action_name: 'new_ordine',
+          cancel_button: true,
+          abandon_action: 'list_ordini_archivio'
+        } as any,
+        data: { rec_name: 'NEW-1' },
+        schema: {
+          display: 'form',
+          no_submit: '1',
+          components: []
+        },
+        context_actions: []
+      }), undefined, { formOriginPath: '/action/list_ordini' });
+
+      const abandonButton = app.currentFormActionButtons.find((button: any) => button.label === 'Abbandona');
+
+      expect(abandonButton).toEqual(jasmine.objectContaining({
+        action_type: 'abandon',
+        url_action: '/action/list_ordini'
+      }));
+
+      await app.runTopMenuAction(abandonButton);
+
+      expect(window.location.pathname).toBe('/action/list_ordini');
+    } finally {
+      window.history.replaceState({}, '', originalPath || '/');
+    }
+  });
+
+  it('should hide Abbandona from context_actions when fields.cancel_button is false', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
     await app.actionManager.applyActionResponse(makeResponse({
       mode: 'form',
       model: 'ordine',
-      fields: { action_name: 'new_ordine' },
+      fields: {
+        action_name: 'new_ordine',
+        cancel_button: false
+      } as any,
       data: { rec_name: 'NEW-1' },
       schema: {
         display: 'form',
@@ -1345,11 +1610,7 @@ describe('AppComponent', () => {
       ]
     }));
 
-    const labels = app.currentFormActionButtons.map((button: any) => button.label);
-
-    expect(labels).not.toContain('Salva');
-    expect(labels).not.toContain('Aggiorna');
-    expect(labels).toContain('Abbandona');
+    expect(app.currentFormActionButtons.map((button: any) => button.label)).not.toContain('Abbandona');
   });
 
   it('should keep one save button and hide Preview/EditForm actions in the form editor', () => {
@@ -1994,7 +2255,7 @@ describe('AppComponent', () => {
     expect(app.canRunMenuAction(adminButton)).toBeTrue();
   });
 
-  it('should open eligible design form actions in viewer mode even when builder is on', async () => {
+  it('should open design form actions in the dedicated form editor context', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
     app.appManager.builderEnabled = true;
@@ -2007,9 +2268,11 @@ describe('AppComponent', () => {
       schema: { display: 'form', components: [] }
     }));
 
+    expect(app.formEditorDesignContext).toBeTrue();
+    expect(app.isFormEditorPage).toBeTrue();
     expect(app.builderMode).toBeFalse();
     expect(app.showFormBuilder).toBeFalse();
-    expect(app.canEditCurrentForm).toBeTrue();
+    expect(app.builderSchemaForm).toEqual(jasmine.objectContaining({ display: 'form', components: [] }));
   });
 
   it('should enter builder mode only after explicit user action', async () => {
@@ -2255,7 +2518,11 @@ describe('AppComponent', () => {
         return makeResponse({
           mode: 'form',
           model: 'customer',
-          fields: { action_name: 'new_customer' },
+          fields: {
+            action_name: 'new_customer',
+            cancel_button: true,
+            abandon_action: 'list_archived_customers'
+          } as any,
           data: { rec_name: 'NEW-1' },
           schema: {
             display: 'form',
@@ -2305,6 +2572,110 @@ describe('AppComponent', () => {
       expect(apiMock.getAction.calls.mostRecent().args[0]).toBe('list_customers');
       expect(app.viewMode).toBe('list');
       expect(window.location.pathname).toBe('/action/list_customers');
+    } finally {
+      window.history.replaceState({}, '', originalPath || '/');
+    }
+  });
+
+  it('should ignore pending lazy select hydration after Abbandona returns to the origin page', async () => {
+    let resolveRemoteSelect!: (value: Array<{ label: string; value: string }>) => void;
+    const remoteSelectPromise = new Promise<Array<{ label: string; value: string }>>((resolve) => {
+      resolveRemoteSelect = resolve;
+    });
+
+    apiMock.getRemoteSelect.and.returnValue(remoteSelectPromise as Promise<any>);
+    apiMock.getAction.and.callFake(async (name: string) => {
+      if (name === 'list_customers') {
+        return makeResponse({
+          mode: 'list',
+          model: 'customer',
+          title: 'Customers',
+          fields: { action_name: 'list_customers' },
+          columns: { rec_name: 'Record' },
+          total_count: 1,
+          data: [{ rec_name: 'CUST-1' }],
+          context_actions: [
+            {
+              rec_name: 'new_customer',
+              action_type: 'window',
+              label: 'Nuovo',
+              button_icon: 'it-plus',
+              modal: false,
+              url_action: '/action/new_customer',
+              context_button_mode: ['list']
+            }
+          ]
+        });
+      }
+
+      if (name === 'new_customer') {
+        return makeResponse({
+          mode: 'form',
+          model: 'customer',
+          fields: {
+            action_name: 'new_customer',
+            cancel_button: true
+          } as any,
+          data: { rec_name: 'NEW-1', country: 'IT' },
+          schema: {
+            display: 'form',
+            components: [
+              {
+                type: 'select',
+                key: 'country',
+                properties: {
+                  model: 'country',
+                  src: 'url'
+                }
+              }
+            ]
+          },
+          context_actions: [
+            {
+              rec_name: 'abandon',
+              action_type: 'window',
+              label: 'Abbandona',
+              button_icon: 'pi pi-times',
+              modal: false,
+              url_action: '',
+              context_button_mode: ['form']
+            }
+          ]
+        });
+      }
+
+      return makeResponse({ mode: 'action', data: { status: 'ok' } });
+    });
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    const originalPath = window.location.pathname;
+
+    try {
+      window.history.replaceState({}, '', '/action/list_customers');
+      await app.actionManager["handleLocationRoute"](false);
+      await app.onContextActionClick(app.listContextActions[0]);
+
+      const readyPromise = app.onFormViewerReady();
+      const abandonButton = app.currentFormActionButtons.find((button: any) => button.label === 'Abbandona');
+      await app.runTopMenuAction(abandonButton);
+
+      expect(app.viewMode).toBe('list');
+      expect(window.location.pathname).toBe('/action/list_customers');
+      expect(app.renderer.formSchema).toBeNull();
+
+      resolveRemoteSelect([{ label: 'Italia', value: 'IT' }]);
+      await readyPromise;
+
+      expect(app.viewMode).toBe('list');
+      expect(window.location.pathname).toBe('/action/list_customers');
+      expect(app.renderer.formSchema).toBeNull();
+      expect(app.listContextActions).toEqual([
+        jasmine.objectContaining({
+          rec_name: 'new_customer',
+          url_action: '/action/new_customer'
+        })
+      ]);
     } finally {
       window.history.replaceState({}, '', originalPath || '/');
     }

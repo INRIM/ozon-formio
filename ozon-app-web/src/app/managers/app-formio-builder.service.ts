@@ -369,19 +369,15 @@ export class AppFormioBuilderService {
     }
 
     private isBuilderEligibleResponse(response: Record<string, unknown>, data: Record<string, unknown> | null): boolean {
-        const fields = this.isRecord(response['fields']) ? response['fields'] : {};
-        const actionName = this.readFirstString(fields['action_name']).toLowerCase();
         const responseModel = this.readFirstString(response['model'], data?.['model'], this.renderer.selectedModel).toLowerCase();
-        // component_type=form/resource only tells the client how to render the payload.
-        // It must not implicitly switch the page into builder/edit-form behavior.
-        if (responseModel === 'component') return true;
-        return actionName === 'form_form' || actionName.startsWith('form_form_') || actionName === 'form' || actionName.startsWith('form_') || actionName.includes('design') || actionName.includes('resource');
+        return responseModel === 'component';
     }
 
     private isDesignContextResponse(response: Record<string, unknown>, data: Record<string, unknown> | null): boolean {
-        const fields = this.isRecord(response['fields']) ? response['fields'] : {};
-        const actionName = this.readFirstString(fields['action_name']).toLowerCase();
-        return actionName === 'form_form' || actionName.includes('design');
+        // A `component` record is a form/resource definition: editing it always means the form builder.
+        // component_type is often absent (e.g. when opened directly via URL), so the model is the signal.
+        const responseModel = this.readFirstString(response['model'], data?.['model'], this.renderer.selectedModel).toLowerCase();
+        return responseModel === 'component';
     }
 
     private extractBuilderSchema(event: unknown): Record<string, unknown> | null {

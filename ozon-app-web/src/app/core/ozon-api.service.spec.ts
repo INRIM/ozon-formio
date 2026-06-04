@@ -137,6 +137,28 @@ describe('OzonApiService', () => {
     expect(JSON.parse((fetchSpy.calls.mostRecent().args[1] as RequestInit).body as string)).toEqual({});
   });
 
+  it('should normalize raw next_action redirect payloads using data.next_page', async () => {
+    const fetchSpy = spyOn(globalThis, 'fetch').and.resolveTo(jsonResponse({
+      mode: 'redirect',
+      data: {
+        next_page: '/action/form_form_menu_group/mail_template'
+      }
+    }));
+
+    const response = await service.getNextAction('menu_group', 'mail_template');
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.calls.mostRecent().args[0]).toBe('/api/action/next_action/menu_group/mail_template');
+    expect(response).toEqual({
+      content: jasmine.objectContaining({
+        mode: 'redirect',
+        next_action_url: '/action/form_form_menu_group/mail_template'
+      }),
+      fail: false,
+      message: ''
+    } as any);
+  });
+
   it('should rewrite builder resource requests with an object payload and clear stale body strings', () => {
     const args: any = {
       url: 'http://localhost/form?type=resource&skip=0&limit=1000000',

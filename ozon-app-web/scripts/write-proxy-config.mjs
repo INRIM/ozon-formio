@@ -27,6 +27,14 @@ function pickFirstString(...values) {
   return '';
 }
 
+function pickFirstDefinedTrimmedString(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null) continue;
+    return String(value).trim();
+  }
+  return '';
+}
+
 function parseOriginList(value) {
   if (Array.isArray(value)) {
     return value.map((entry) => String(entry ?? '').trim()).filter(Boolean);
@@ -169,6 +177,17 @@ function buildRuntimeConfig(localEnv, parentEnv, backendTarget, siteUrl, allowed
   return {
     backendurl: backendTarget,
     siteurl: siteUrl,
+    app_code: pickFirstDefinedTrimmedString(
+      process.env.app_code,
+      process.env.APP_CODE,
+      process.env.appCode,
+      localEnv.app_code,
+      localEnv.APP_CODE,
+      localEnv.appCode,
+      parentEnv.app_code,
+      parentEnv.APP_CODE,
+      parentEnv.appCode
+    ),
     allowedorigins: allowedOrigins,
     useproxy: true,
     sessioncachettlms: sessionCacheTtlMs,

@@ -1,0 +1,54 @@
+import { RuntimeConfigService } from './runtime-config.service';
+
+describe('RuntimeConfigService', () => {
+  const storageKey = 'ozon-app-web.runtime';
+  const originalAppConfig = window.__OZON_APP_CONFIG__;
+  const originalUrl = `${window.location.pathname}${window.location.search}`;
+
+  function seedStoredRuntime(appCode: string): void {
+    window.localStorage.setItem(storageKey, JSON.stringify({
+      backendUrl: '',
+      siteUrl: '',
+      allowedOrigins: [],
+      baseToken: '',
+      useProxy: true,
+      sessionCacheTtlMs: 30000,
+      authMode: 'keycloak',
+      authLoginPath: '/login',
+      authLogoutPath: '/logout',
+      authRefreshPath: '/refresh',
+      appCode
+    }));
+  }
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    window.__OZON_APP_CONFIG__ = {};
+    window.history.replaceState({}, '', '/');
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+    window.__OZON_APP_CONFIG__ = originalAppConfig;
+    window.history.replaceState({}, '', originalUrl || '/');
+  });
+
+  it('should prefer runtime app_code over a stored appCode', () => {
+    seedStoredRuntime('stored-code');
+    window.__OZON_APP_CONFIG__ = { app_code: 'runtime-code' };
+
+    const service = new RuntimeConfigService();
+
+    expect(service.getConfig().appCode).toBe('runtime-code');
+  });
+
+  it('should treat an empty runtime app_code as authoritative and clear a stored appCode', () => {
+    seedStoredRuntime('stored-code');
+    window.__OZON_APP_CONFIG__ = { app_code: '' };
+
+    const service = new RuntimeConfigService();
+
+    expect(service.getConfig().appCode).toBe('');
+    expect(JSON.parse(window.localStorage.getItem(storageKey) || '{}').appCode).toBe('');
+  });
+});
