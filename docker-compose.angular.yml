@@ -12,6 +12,7 @@ services:
       - "${OZON_ANGULAR_PORT:-4200}:80"
     networks:
       - backend
+    restart: unless-stopped
     healthcheck:
       test:
         - CMD-SHELL
@@ -21,7 +22,9 @@ services:
       retries: 6
       start_period: 20s
 
+
+
 networks:
   backend:
     external: true
-    name: ${BACKEND_DOCKER_NETWORK:-backend_default}
+    name: ozn-network
