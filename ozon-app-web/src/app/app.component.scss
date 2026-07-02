@@ -347,7 +347,7 @@
 
 .ozon-dashboard-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 25%));
   gap: 0.75rem;
 }
 
@@ -356,6 +356,7 @@
   background: var(--ozon-surface);
   border-radius: 10px;
   min-height: 14rem;
+  width: 100%;
   display: grid;
   grid-template-rows: auto 1fr;
   overflow: hidden;
@@ -594,8 +595,13 @@
     width: 100%;
   }
 
+  .ozon-dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
   .ozon-dashboard-card {
     min-height: 11rem;
+    max-width: 100%;
   }
 
   .ozon-card-title {
