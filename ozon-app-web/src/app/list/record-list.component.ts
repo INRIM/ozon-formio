@@ -4,7 +4,12 @@ import { FormsModule } from '@angular/forms';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { BreakpointObserver } from '@angular/cdk/layout';
 import { FormioModule } from '@formio/angular';
-import { ContextAction, FormNotification, ListExportConfig, ListImportConfig, ListPageChange, ListRowReorderChange, ListSearchSessionContext, ListSortChange, TableColumn, TableRow, TableSortDirection } from '../models/app.types';
+import { DatePicker } from 'primeng/datepicker';
+import {
+    ContextAction, FormNotification, ListExportConfig, ListImportConfig, ListPageChange, ListRowReorderChange,
+    ListSearchSessionContext, ListSortChange, QueryBuilderConfig, Rule, RuleSet,
+    TableColumn, TableRow, TableSortDirection
+} from '../models/app.types';
 import { RecordCardsComponent } from './record-cards.component';
 import { RecordTransferToolsComponent } from './record-transfer-tools.component';
 import { RecordTableCdkComponent } from './record-table-cdk.component';
@@ -12,7 +17,7 @@ import { RecordTableCdkComponent } from './record-table-cdk.component';
 @Component({
     selector: 'app-record-list',
     standalone: true,
-    imports: [CommonModule, FormsModule, FormioModule, RecordTableCdkComponent, RecordCardsComponent, RecordTransferToolsComponent],
+    imports: [CommonModule, FormsModule, FormioModule, RecordTableCdkComponent, RecordCardsComponent, RecordTransferToolsComponent, DatePicker],
     templateUrl: './record-list.component.html',
     styleUrl: './record-list.component.scss',
     changeDetection: ChangeDetectionStrategy.OnPush
@@ -48,6 +53,9 @@ export class RecordListComponent {
     @Input() exportConfig: ListExportConfig | null = null;
     @Input() importConfig: ListImportConfig | null = null;
     @Input() searchContext: ListSearchSessionContext | null = null;
+    @Input() filterConfig: QueryBuilderConfig = { fields: {} };
+    @Input() filterRules: RuleSet = { condition: 'and', rules: [] };
+    @Input() filterPreview = '{}';
     @Input() statusText = '';
     @Input() statusError = false;
     @Input() serverErrorRetryVisible = false;
@@ -65,6 +73,7 @@ export class RecordListComponent {
     @Output() retryServerError = new EventEmitter<void>();
     @Output() dismissFormNotifications = new EventEmitter<void>();
     @Output() rowClick = new EventEmitter<{ row: TableRow; event: Event }>();
+    @Output() desktopRowOpen = new EventEmitter<{ row: TableRow; event: Event }>();
     @Output() rowDblClick = new EventEmitter<{ row: TableRow; event: Event }>();
     @Output() selectionChange = new EventEmitter<TableRow[]>();
     @Output() sortChange = new EventEmitter<ListSortChange>();
@@ -74,9 +83,13 @@ export class RecordListComponent {
     @Output() removeRow = new EventEmitter<{ row: TableRow; event: Event }>();
     @Output() importBusyChange = new EventEmitter<boolean>();
     @Output() importFinished = new EventEmitter<void>();
+    @Output() filterRulesChange = new EventEmitter<RuleSet>();
+    @Output() filterApply = new EventEmitter<void>();
+    @Output() filterReset = new EventEmitter<void>();
 
     isMobile = false;
     gearOpen = false;
+    filterOpen = false;
     fastSearchCollapsed = false;
 
     private lastMobileClickTime = 0;
@@ -106,12 +119,223 @@ export class RecordListComponent {
         return Boolean(this.exportConfig?.visible || this.importConfig?.visible);
     }
 
+    get filterFieldOptions(): Array<{ field: string; title: string; type: string }> {
+        const fields = this.filterConfig?.fields ?? {};
+        return Object.entries(fields)
+            .map(([field, config]) => ({
+                field,
+                title: String(config?.name ?? field),
+                type: String(config?.type ?? 'string')
+            }))
+            .filter(option => Boolean(option.field));
+    }
+
+    get directFilterRules(): Rule[] {
+        const rules = Array.isArray(this.filterRules?.rules) ? this.filterRules.rules : [];
+        return rules.filter((rule): rule is Rule => Boolean(rule && !Array.isArray((rule as RuleSet).rules)));
+    }
+
+    get filterCondition(): string {
+        return String(this.filterRules?.condition ?? 'and').toLowerCase() === 'or' ? 'or' : 'and';
+    }
+
+    get hasActiveFilters(): boolean {
+        return this.directFilterRules.some(rule => this.isMeaningfulFilterRule(rule));
+    }
+
+    get filterCount(): number {
+        return this.directFilterRules.filter(rule => this.isMeaningfulFilterRule(rule)).length;
+    }
+
     toggleGear(): void {
         this.gearOpen = !this.gearOpen;
     }
 
+    showMongoQuery = false;
+    toggleMongoQuery(): void {
+        this.showMongoQuery = !this.showMongoQuery;
+    }
+
+    toggleFilters(): void {
+        this.filterOpen = !this.filterOpen;
+    }
+
     toggleFastSearch(): void {
         this.fastSearchCollapsed = !this.fastSearchCollapsed;
+    }
+
+    addFilterRule(): void {
+        const field = this.filterFieldOptions[0]?.field ?? 'rec_name';
+        this.emitFilterRules([...this.directFilterRules, {
+            field,
+            operator: '=',
+            value: this.defaultFilterValue(field)
+        }]);
+    }
+
+    removeFilterRule(index: number): void {
+        const nextRules = this.directFilterRules.filter((_rule, ruleIndex) => ruleIndex !== index);
+        this.emitFilterRules(nextRules);
+    }
+
+    onFilterConditionChange(condition: string): void {
+        const normalized = String(condition ?? '').toLowerCase() === 'or' ? 'or' : 'and';
+        this.filterRulesChange.emit({ condition: normalized, rules: this.cloneRules(this.directFilterRules) });
+    }
+
+    onFilterRuleFieldChange(index: number, field: string): void {
+        const nextRules = this.cloneRules(this.directFilterRules);
+        const rule = nextRules[index];
+        if (!rule) return;
+        rule.field = String(field ?? '').trim();
+        rule.value = this.defaultFilterValue(rule.field || 'rec_name');
+        this.emitFilterRules(nextRules);
+    }
+
+    onFilterRuleOperatorChange(index: number, operator: string): void {
+        const nextRules = this.cloneRules(this.directFilterRules);
+        const rule = nextRules[index];
+        if (!rule) return;
+        rule.operator = String(operator ?? '=').trim() || '=';
+        if (!this.operatorRequiresValue(rule.operator)) delete rule.value;
+        else if (rule.value === undefined) rule.value = this.defaultFilterValue(rule.field || 'rec_name');
+        this.emitFilterRules(nextRules);
+    }
+
+    onFilterRuleValueChange(index: number, value: unknown): void {
+        const nextRules = this.cloneRules(this.directFilterRules);
+        const rule = nextRules[index];
+        if (!rule) return;
+        rule.value = this.normalizeFilterValue(rule.field || '', value);
+        this.emitFilterRules(nextRules);
+    }
+
+    applyFilters(): void {
+        this.filterApply.emit();
+    }
+
+    resetFilters(): void {
+        this.filterReset.emit();
+    }
+
+    filterFieldType(field: string): string {
+        return String(this.filterConfig?.fields?.[field]?.type ?? 'string').toLowerCase();
+    }
+
+    filterValueInputType(field: string): string {
+        const type = this.filterFieldType(field);
+        if (type === 'number') return 'number';
+        if (type === 'datetime') return 'datetime-local';
+        if (type === 'date') return 'date';
+        if (type === 'time') return 'time';
+        return 'text';
+    }
+
+    operatorRequiresValue(operator: string | undefined): boolean {
+        const normalized = String(operator ?? '').trim().toLowerCase();
+        return normalized !== 'is null' && normalized !== 'is not null';
+    }
+
+    filterOperatorOptions(field: string): Array<{ value: string; label: string }> {
+        const type = this.filterFieldType(field);
+        const base = [
+            { value: '=', label: '=' },
+            { value: '!=', label: '!=' },
+            { value: 'is null', label: 'Vuoto' },
+            { value: 'is not null', label: 'Non vuoto' }
+        ];
+        if (type === 'number' || type === 'date' || type === 'datetime' || type === 'time') {
+            return [
+                ...base,
+                { value: '<', label: '<' },
+                { value: '<=', label: '<=' },
+                { value: '>', label: '>' },
+                { value: '>=', label: '>=' },
+                { value: 'in', label: 'In' },
+                { value: 'not in', label: 'Non in' }
+            ];
+        }
+        if (type === 'boolean') return base;
+        return [
+            ...base,
+            { value: 'contains', label: 'Contiene' },
+            { value: 'does not contain', label: 'Non contiene' },
+            { value: 'begins with', label: 'Inizia con' },
+            { value: 'ends with', label: 'Finisce con' },
+            { value: 'in', label: 'In' },
+            { value: 'not in', label: 'Non in' }
+        ];
+    }
+
+    private emitFilterRules(rules: Rule[]): void {
+        this.filterRulesChange.emit({
+            condition: this.filterCondition,
+            rules: this.cloneRules(rules)
+        });
+    }
+
+    private cloneRules(rules: Rule[]): Rule[] {
+        return rules.map(rule => ({
+            field: rule.field,
+            operator: rule.operator,
+            value: rule.value
+        }));
+    }
+
+    private defaultFilterValue(field: string): unknown {
+        const type = this.filterFieldType(field);
+        if (type === 'number') return 0;
+        if (type === 'boolean') return true;
+        return '';
+    }
+
+    toDateValue(value: unknown): Date | null {
+        if (value instanceof Date) return value;
+        if (typeof value === 'string' && value.trim()) {
+            const parsed = Date.parse(value);
+            if (!Number.isNaN(parsed)) return new Date(parsed);
+        }
+        return null;
+    }
+
+    private normalizeFilterValue(field: string, value: unknown): unknown {
+        const type = this.filterFieldType(field);
+        if (type === 'number') {
+            const parsed = Number(value);
+            return Number.isFinite(parsed) ? parsed : 0;
+        }
+        if (type === 'boolean') {
+            if (typeof value === 'boolean') return value;
+            return String(value ?? '').toLowerCase() === 'true';
+        }
+        if (type === 'datetime' || type === 'date') {
+            if (value instanceof Date) {
+                if (Number.isNaN(value.getTime())) return '';
+                if (type === 'date') {
+                    const year = value.getFullYear();
+                    const month = String(value.getMonth() + 1).padStart(2, '0');
+                    const day = String(value.getDate()).padStart(2, '0');
+                    return `${year}-${month}-${day}`;
+                } else {
+                    const year = value.getFullYear();
+                    const month = String(value.getMonth() + 1).padStart(2, '0');
+                    const day = String(value.getDate()).padStart(2, '0');
+                    const hours = String(value.getHours()).padStart(2, '0');
+                    const minutes = String(value.getMinutes()).padStart(2, '0');
+                    return `${year}-${month}-${day}T${hours}:${minutes}`;
+                }
+            }
+        }
+        return value;
+    }
+
+    private isMeaningfulFilterRule(rule: Rule): boolean {
+        const operator = String(rule.operator ?? '=').trim().toLowerCase();
+        if (!String(rule.field ?? '').trim()) return false;
+        if (!this.operatorRequiresValue(operator)) return true;
+        const value = rule.value;
+        if (Array.isArray(value)) return value.length > 0;
+        return value !== undefined && value !== null && String(value).trim() !== '';
     }
 
     onMobileRowClick(payload: { row: TableRow; event: Event }): void {
@@ -256,6 +480,10 @@ export class RecordListComponent {
             field: this.normalizeSortField(this.sortField || fallbackField),
             direction: nextDirection
         });
+    }
+
+    trackByFilterRuleIndex(index: number): number {
+        return index;
     }
 
     private buildPageItems(currentPage: number, totalPages: number): Array<number | string> {

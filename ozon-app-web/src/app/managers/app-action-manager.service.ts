@@ -1,15 +1,16 @@
 import { Injectable } from '@angular/core';
 import { Subscription } from 'rxjs';
 import { FormioComponent } from '@formio/angular';
+import jsonLogic from 'json-logic-js';
 import { OzonApiService } from '../core/ozon-api.service';
 import { MainManagerService } from '../core/main-manager.service';
 import { AppManagerService } from './app-manager.service';
 import { AppTableManagerService } from './app-table-manager.service';
-import { AppFormioRendererService } from './app-formio-renderer.service';
+import { AppFormioRendererService, OZON_INLINE_ACTION_EVENT } from './app-formio-renderer.service';
 import { AppFormioBuilderService } from './app-formio-builder.service';
 import { requireResponseObject, ResponseObject, ResponseObjectData } from '../models/ozon.types';
 import {
-    ContextAction, FormNotification, MenuActionDescriptor, MenuButton, MenuCard, MenuDrillDownGroup
+    ButtonModalConfig, ContextAction, FormNotification, MenuActionDescriptor, MenuButton, MenuCard, MenuDrillDownGroup
 } from '../models/app.types';
 import { OzonFormBuilderHostComponent } from '../formio/ozon-form-builder-host.component';
 
@@ -26,6 +27,10 @@ export class AppActionManagerService {
     currentFormSubmitNextActionPath = '';
     currentFormAbandonActionPath = '';
     currentFormCancelButtonVisible = false;
+
+    confirmModalVisible = false;
+    confirmModalConfig: ButtonModalConfig | null = null;
+    private pendingModalButton: MenuButton | null = null;
 
     private currentListComponentType = '';
     private redirectingToLogin = false;
@@ -544,6 +549,44 @@ export class AppActionManagerService {
         });
     }
 
+    async downloadAttachment(fileUrl: string, filename = ''): Promise<void> {
+        if (!fileUrl) return;
+        this.setStatus(`Download "${filename || 'file'}"...`, false);
+        try {
+            await this.api.downloadAttachment(fileUrl, filename);
+            this.setStatus(`Scaricato: ${filename || 'file'}`, false);
+        } catch (error) {
+            this.setStatus(this.errorMessage(error), true);
+        }
+    }
+
+    async onFormCustomEvent(event: unknown): Promise<void> {
+        const button = this.toInlineActionButton(event);
+        if (!button) return;
+        if (button.modal) {
+            this.pendingModalButton = button;
+            this.confirmModalConfig = button.modal;
+            this.confirmModalVisible = true;
+            return;
+        }
+        await this.runTopMenuAction(button);
+    }
+
+    async confirmPendingModalAction(): Promise<void> {
+        const button = this.pendingModalButton;
+        this.confirmModalVisible = false;
+        this.confirmModalConfig = null;
+        this.pendingModalButton = null;
+        if (!button) return;
+        await this.runTopMenuAction(button);
+    }
+
+    cancelPendingModalAction(): void {
+        this.confirmModalVisible = false;
+        this.confirmModalConfig = null;
+        this.pendingModalButton = null;
+    }
+
     async resetNavigation(): Promise<void> {
         await this.withClickTransition(async () => {
             this.appManager.closeTopMenu();
@@ -642,6 +685,10 @@ export class AppActionManagerService {
             this.rebuildMenus();
             this.appManager.clearFormNotifications();
             this.setStatus(`Record salvato: ${recName}`, false);
+            if (this.builder.formEditorDesignContext && this.currentFormOriginPath) {
+                await this.navigateToPath(this.currentFormOriginPath, true);
+                return;
+            }
             if (this.currentFormSubmitNextActionPath) { await this.navigateToPath(this.currentFormSubmitNextActionPath, true); return; }
             if (!this.builder.formEditorDesignContext) {
                 const actionName = this.resolveCurrentActionName();
@@ -1093,6 +1140,209 @@ export class AppActionManagerService {
         };
     }
 
+    private toInlineActionButton(event: unknown): MenuButton | null {
+        if (!this.isRecord(event) || event['type'] !== OZON_INLINE_ACTION_EVENT) return null;
+        const component = this.asRecord(event['component']);
+        if (!component) return null;
+        const properties = this.renderer.readComponentProperties(component);
+        const actionType = this.normalizeMenuType(this.readFirstString(
+            component['btn_action_type'],
+            properties['btn_action_type'],
+            component['action_type'],
+            properties['action_type']
+        ));
+        if (actionType !== 'post') {
+            this.setStatus(`Azione inline non supportata: ${actionType || 'mancante'}`, true);
+            return null;
+        }
+        const eventData = this.asRecord(event['data']);
+        if (eventData) this.renderer.mergeSubmissionData(eventData);
+        const submissionData = this.renderer.formSubmission?.data && this.isRecord(this.renderer.formSubmission.data)
+            ? this.renderer.formSubmission.data
+            : (eventData ?? {});
+        const key = this.readFirstString(component['key'], 'inline_action');
+        const liveButtonValue = this.readLiveFormioComponentValue(key);
+        const actionPath = this.resolveInlineActionPostPath(component, submissionData, liveButtonValue);
+        if (!actionPath) {
+            this.setStatus(`url_action mancante per il pulsante "${this.readFirstString(component['label'], component['key']) || 'inline'}"`, true);
+            return null;
+        }
+        const label = this.readFirstString(component['label'], key);
+        return {
+            model: this.appManager.selectedModel,
+            key,
+            type: 'button',
+            label,
+            leftIcon: this.readFirstString(component['leftIcon'], component['rightIcon'], 'pi pi-play') || 'pi pi-play',
+            authtoken: this.appManager.baseToken,
+            req_id: this.uiReqId,
+            btn_action_type: 'post',
+            action_type: 'post',
+            url_action: actionPath,
+            builder: false,
+            mode: 'form',
+            content: actionPath,
+            menu_group: 'form',
+            menu_type: '',
+            is_admin: false,
+            skip_validation: component['showValidations'] === false,
+            next_action_path: this.normalizeNextActionRedirectCandidate(this.readFirstString(component['next_action_path'], properties['next_action_path'])),
+            modal: this.extractButtonModalConfig(component, properties)
+        };
+    }
+
+    private resolveInlineActionPostPath(component: Record<string, unknown>, data: Record<string, unknown>, liveValue: unknown = undefined): string {
+        const properties = this.renderer.readComponentProperties(component);
+        const key = this.readFirstString(component['key']);
+        const buttonValue = key ? this.readFirstString(data[key]) : '';
+        const configured = this.readFirstString(component['url_action'], properties['url_action'], component['url'], properties['url']);
+        const candidates = [
+            this.resolveInlineActionPathCandidate(this.readFirstString(liveValue), data),
+            this.resolveInlineActionPathCandidate(buttonValue, data),
+            this.resolveInlineLogicPath(component, data),
+            this.resolveInlineActionConfiguredPath(configured, data),
+            this.normalizeInlinePostPath(configured)
+        ];
+        return this.readFirstString(...candidates);
+    }
+
+    private readLiveFormioComponentValue(key: string): unknown {
+        const normalizedKey = this.readFirstString(key);
+        const formio = this._formioViewerGetter?.()?.formio as any;
+        if (!normalizedKey || !formio) return undefined;
+        const readValue = (component: any): unknown => {
+            if (!component) return undefined;
+            try {
+                if (typeof component.getValue === 'function') return component.getValue();
+            } catch { /* ignore live component read errors */ }
+            return component.dataValue;
+        };
+        try {
+            const direct = typeof formio.getComponent === 'function' ? formio.getComponent(normalizedKey) : null;
+            const value = readValue(direct);
+            if (value !== undefined && value !== null && value !== false) return value;
+        } catch { /* ignore live component lookup errors */ }
+        try {
+            let found: unknown = undefined;
+            if (typeof formio.everyComponent === 'function') {
+                formio.everyComponent((component: any) => {
+                    const componentKey = this.readFirstString(component?.component?.key, component?.key);
+                    if (componentKey !== normalizedKey) return;
+                    found = readValue(component);
+                    return false;
+                });
+            }
+            return found;
+        } catch { return undefined; }
+    }
+
+    private resolveInlineLogicPath(component: Record<string, unknown>, data: Record<string, unknown>): string {
+        const logicItems = Array.isArray(component['logic']) ? component['logic'] as unknown[] : [];
+        const context = this.buildInlineLogicContext(data);
+        for (const logic of logicItems) {
+            if (!this.isRecord(logic)) continue;
+            const trigger = this.asRecord(logic['trigger']);
+            if (!trigger || String(trigger['type'] ?? '').trim().toLowerCase() !== 'json') continue;
+            const json = trigger['json'];
+            let triggerResult: unknown;
+            try { triggerResult = jsonLogic.apply(json as any, context); } catch { continue; }
+            const actions = Array.isArray(logic['actions']) ? logic['actions'] as unknown[] : [];
+            for (const action of actions) {
+                if (!this.isRecord(action)) continue;
+                if (String(action['type'] ?? '').trim().toLowerCase() !== 'value') continue;
+                const actionPath = this.resolveInlineLogicActionPath(this.readFirstString(action['value']), triggerResult, context);
+                if (actionPath) return actionPath;
+            }
+        }
+        return '';
+    }
+
+    /**
+     * Supports two logic value-action formats for computing a button's POST url:
+     *   legacy: `value = result;` / `url_action`  -> use the trigger json result
+     *   modern: `url_action = {<json-logic>};`     -> evaluate the assigned json-logic here
+     */
+    private resolveInlineLogicActionPath(rawValue: string, triggerResult: unknown, context: Record<string, unknown>): string {
+        const value = this.readFirstString(rawValue);
+        if (!value) return '';
+        const assignment = value.match(/^url_action\s*=\s*([\s\S]+?);?\s*$/);
+        if (assignment) {
+            const rule = this.parseJsonMaybe(assignment[1]);
+            if (rule == null) return this.normalizeInlinePostPath(assignment[1].trim());
+            let computed: unknown;
+            try { computed = jsonLogic.apply(rule as any, context); } catch { return ''; }
+            return this.normalizeInlinePostPath(this.readFirstString(computed));
+        }
+        const normalized = value.replace(/\s+/g, ' ');
+        if (normalized === 'url_action' || normalized === 'value = result;' || normalized === 'value=result;') {
+            return this.normalizeInlinePostPath(this.readFirstString(triggerResult));
+        }
+        return '';
+    }
+
+    private extractButtonModalConfig(component: Record<string, unknown>, properties: Record<string, unknown>): ButtonModalConfig | undefined {
+        const title = this.readFirstString(properties['modal_title'], component['modal_title']);
+        const message = this.readFirstString(properties['modal_message'], component['modal_message']);
+        const confirmLabel = this.readFirstString(properties['btn_modal_label'], component['btn_modal_label']);
+        if (!title && !message) return undefined;
+        return {
+            title: title || 'Conferma',
+            message: message || 'Confermi l\'operazione?',
+            confirmLabel: confirmLabel || 'Conferma'
+        };
+    }
+
+    private buildInlineLogicContext(data: Record<string, unknown>): Record<string, unknown> {
+        const evalContext = this.asRecord(this.appManager.formioRenderOptions['evalContext']) ?? {};
+        const context = {
+            ...evalContext,
+            data,
+            form: data,
+            user: this.asRecord(evalContext['user']) ?? this.appManager.sessionUser,
+            session: this.asRecord(evalContext['session']) ?? this.appManager.sessionRecord,
+            is_admin: evalContext['is_admin'] ?? this.appManager.isAdminUser,
+            app: {
+                curr_model: this.appManager.selectedModel,
+                selected_model: this.appManager.selectedModel,
+                current_action: this.currentActionName
+            }
+        };
+        console.log('[json-logic] variabili disponibili (top-level keys):', Object.keys(context));
+        console.log('[json-logic] context completo:', context);
+        console.log('[json-logic] data/form:', context.data);
+        console.log('[json-logic] user:', context.user);
+        console.log('[json-logic] session:', context.session);
+        console.log('[json-logic] app:', context.app, 'is_admin:', context.is_admin);
+        return context;
+    }
+
+    private resolveInlineActionConfiguredPath(configured: string, data: Record<string, unknown>): string {
+        if (!configured) return '';
+        const fromData = this.renderer.resolvePath(data, configured);
+        return this.normalizeInlinePostPath(this.readFirstString(fromData));
+    }
+
+    private resolveInlineActionPathCandidate(candidate: string, data: Record<string, unknown>): string {
+        if (!candidate) return '';
+        const direct = this.normalizeInlinePostPath(candidate);
+        if (direct) return direct;
+        const fromData = this.renderer.resolvePath(data, candidate);
+        return this.normalizeInlinePostPath(this.readFirstString(fromData));
+    }
+
+    private normalizeInlinePostPath(candidate: string): string {
+        let raw = this.readFirstString(candidate);
+        if (!raw || /^https?:\/\//i.test(raw) || raw === 'url_action') return '';
+        raw = raw.replace(/^\/+/, '');
+        if (!raw) return '';
+        if (raw.startsWith('api/')) raw = raw.slice('api/'.length);
+        if (raw.startsWith('action/') || raw.startsWith('client/') || raw.startsWith('list/') || raw.startsWith('record/')) {
+            return this.normalizeActionUrl(`/${raw}`);
+        }
+        if (raw.includes('/')) return this.normalizeActionUrl(`/${raw}`);
+        return this.normalizeActionUrl(`/action/${raw}`);
+    }
+
     private resolveMenuButtonRoute(actionType: string, rawActionPath: string): { actionType: string; urlAction: string } {
         const normalizedType = this.normalizeMenuType(actionType);
         const normalizedPath = this.normalizeActionUrl(rawActionPath || '/');
@@ -1183,14 +1433,47 @@ export class AppActionManagerService {
         const pageContextId = this.pageContextId;
         const payload = this.renderer.normalizeCurrentSubmissionData();
         if (!payload || !this.isRecord(payload)) { this.setStatus('Nessun dato form disponibile per invocare l\'azione', true); return; }
-        if (!this.validateFormioSubmissionForSave(this._formioViewerGetter?.(), payload)) return;
+        if (!button.skip_validation && !this.validateFormioSubmissionForSave(this._formioViewerGetter?.(), payload)) return;
         const actionPath = this.getButtonActionPath(button);
-        if (!actionPath.startsWith('/action/')) { this.setStatus(`POST action non supportata: ${actionPath}`, true); return; }
+        if (!actionPath || actionPath === '/') { this.setStatus(`POST action non valida: ${actionPath || 'mancante'}`, true); return; }
+        // The Camunda gateway only needs process variables, not file binaries. base64 file blobs
+        // bloat the submission and trigger 413 Request Entity Too Large — strip them here.
+        const outboundPayload = actionPath.includes('/gateway/camunda/')
+            ? this.stripFileBlobs(payload) as Record<string, unknown>
+            : payload;
         this.setStatus(`Eseguo azione "${button.label}"...`, false);
         try {
-            const response = await this.api.postActionPath(actionPath, payload);
+            const response = await this.api.postActionPath(actionPath, outboundPayload);
+            if (!this.tryResponseObject(response)) {
+                this.appManager.clearFormNotifications();
+                this.setStatus(`Azione "${button.label}" eseguita`, false);
+                return;
+            }
             await this.applyInvokedActionResponse(response, button.next_action_path, pageContextId);
         } catch (error) { this.setStatus(this.errorMessage(error), true); }
+    }
+
+    private tryResponseObject(payload: unknown): ResponseObject | null {
+        try { return requireResponseObject(payload); } catch { return null; }
+    }
+
+    /**
+     * Remove heavy inline file contents (base64 / data: URLs) from a payload while keeping file
+     * metadata (name, size, type, storage). Used for Camunda gateway posts so attached files do
+     * not bloat the request body into a 413.
+     */
+    private stripFileBlobs(value: unknown): unknown {
+        if (Array.isArray(value)) return value.map(entry => this.stripFileBlobs(entry));
+        if (!this.isRecord(value)) return value;
+        const isFileEntry = typeof value['base64'] === 'string'
+            || (typeof value['url'] === 'string' && value['url'].startsWith('data:'));
+        const out: Record<string, unknown> = {};
+        for (const [key, entry] of Object.entries(value)) {
+            if (isFileEntry && key === 'base64') continue;
+            if (isFileEntry && key === 'url' && typeof entry === 'string' && entry.startsWith('data:')) continue;
+            out[key] = this.stripFileBlobs(entry);
+        }
+        return out;
     }
 
     private async applyInvokedActionResponse(response: unknown, fallbackNextActionPath = '', pageContextId = this.pageContextId): Promise<void> {
@@ -1198,12 +1481,7 @@ export class AppActionManagerService {
         const obj = requireResponseObject(response);
         if (obj.fail) { this.setStatus(obj.message || 'Errore', true); return; }
         const nextUrl = this.resolveRedirectUrl(obj.content);
-        if (nextUrl) {
-            const reload = this.mainManager.hardReloadToUrl(nextUrl);
-            if (reload.reloaded) return;
-            if (reload.blocked) { this.setStatus(`Redirect bloccato: origin non abilitata (${nextUrl})`, true); return; }
-            await this.navigateToPath(this.normalizeActionUrl(nextUrl), true); return;
-        }
+        if (nextUrl && await this.handleRedirectResponseTarget(nextUrl)) return;
         const mode = obj.content.mode.trim().toLowerCase();
         if (mode !== 'action') {
             await this.applyActionResponse(response, pageContextId); return;
@@ -1340,10 +1618,7 @@ export class AppActionManagerService {
             if (obj.fail) { this.setStatus(obj.message || 'Errore dal server', true); return; }
             const nextUrl = this.resolveRedirectUrl(obj.content);
             if (nextUrl && obj.content.mode === 'redirect') {
-                const reload = this.mainManager.hardReloadToUrl(nextUrl);
-                if (reload.reloaded) return;
-                if (reload.blocked) { this.setStatus(`Redirect bloccato: origin non abilitata (${nextUrl})`, true); return; }
-                await this.navigateToPath(this.normalizeActionUrl(nextUrl), true); return;
+                if (await this.handleRedirectResponseTarget(nextUrl)) return;
             }
             await this.applyActionResponse(response, pageContextId, { forceBootstrapListLoad: routeRequest.limit === 1 });
         } catch (error) { this.setStatus(this.errorMessage(error), true); }
@@ -1363,10 +1638,8 @@ export class AppActionManagerService {
             if (obj.fail) { this.setStatus(obj.message || 'Errore', true); return; }
             const nextUrl = this.resolveRedirectUrl(obj.content);
             const normalizedNextUrl = nextUrl ? this.normalizeActionUrl(nextUrl) : '';
-            if (normalizedNextUrl && !normalizedNextUrl.startsWith('/action/next_action')) {
-                const reload = this.mainManager.hardReloadToUrl(nextUrl);
-                if (reload.reloaded) return;
-                await this.navigateToPath(normalizedNextUrl, true); return;
+            if (nextUrl === '#' || (normalizedNextUrl && !normalizedNextUrl.startsWith('/action/next_action'))) {
+                if (await this.handleRedirectResponseTarget(nextUrl)) return;
             }
             await this.applyActionResponse(response, pageContextId, { formOriginPath });
             if (!this.isCurrentPageContext(pageContextId)) return;
@@ -1406,6 +1679,38 @@ export class AppActionManagerService {
             data?.['url'],
             data?.['location']
         );
+    }
+
+    private async handleRedirectResponseTarget(rawTarget: string): Promise<boolean> {
+        const target = this.readFirstString(rawTarget);
+        if (!target) return false;
+        if (target === '#') {
+            const currentPath = this.readCurrentBrowserPath();
+            const reload = this.mainManager.hardReloadToUrl(currentPath);
+            if (reload.blocked) this.setStatus(`Redirect bloccato: origin non abilitata (${currentPath})`, true);
+            return true;
+        }
+        const reload = this.mainManager.hardReloadToUrl(target);
+        if (reload.reloaded) return true;
+        if (reload.blocked) {
+            this.setStatus(`Redirect bloccato: origin non abilitata (${target})`, true);
+            return true;
+        }
+        await this.navigateToPath(this.normalizeRedirectNavigationPath(target), true);
+        return true;
+    }
+
+    private normalizeRedirectNavigationPath(target: string): string {
+        const raw = this.readFirstString(target);
+        if (/^https?:\/\//i.test(raw)) {
+            try {
+                const parsed = new URL(raw, typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
+                return this.normalizeActionUrl(`${parsed.pathname}${parsed.search || ''}`);
+            } catch {
+                return '/dashboard';
+            }
+        }
+        return this.normalizeActionUrl(raw);
     }
 
     private parseActionRoute(path: string): { name: string; recName: string; args: string[] } | null {
@@ -1492,10 +1797,7 @@ export class AppActionManagerService {
         if (mode === 'redirect') {
             const url = this.resolveRedirectUrl(content);
             if (url) {
-                const reload = this.mainManager.hardReloadToUrl(url);
-                if (reload.reloaded) return;
-                if (reload.blocked) { this.setStatus(`Redirect bloccato: origin non abilitata (${url})`, true); return; }
-                await this.navigateToPath(this.normalizeActionUrl(url), true); return;
+                if (await this.handleRedirectResponseTarget(url)) return;
             }
         }
         if (mode === 'action') {
@@ -1504,6 +1806,23 @@ export class AppActionManagerService {
             this.setStatus(msg, false); return;
         }
         this.setStatus(`Modalita azione non supportata: ${mode || 'unknown'}`, true);
+    }
+
+    private resolveModelName(content: ResponseObjectData, actionName: string): string {
+        if (typeof content.model === 'string' && content.model.trim()) {
+            return content.model.trim();
+        }
+        if (this.isRecord(content.fields) && typeof content.fields['model'] === 'string' && content.fields['model'].trim()) {
+            return content.fields['model'].trim();
+        }
+        const act = String(actionName || '').trim();
+        if (act.startsWith('list_')) {
+            return act.slice('list_'.length);
+        }
+        if (act.startsWith('form_')) {
+            return act.slice('form_'.length);
+        }
+        return '';
     }
 
     private async applyActionListResponse(content: ResponseObjectData, pageContextId = this.pageContextId, opt: { preserveTableStructure?: boolean } = {}): Promise<void> {
@@ -1519,10 +1838,16 @@ export class AppActionManagerService {
         this.tableManager.applyTableColumnsFromHeader(content.columns);
         rows.forEach(row => this.tableManager.appendRecordRow(row));
         this.tableManager.flushRows();
-        if (content.model) {
-            this.appManager.selectedModel = content.model;
-            this.tableManager.selectedModel = content.model;
-            this.renderer.selectedModel = content.model;
+        const modelName = this.resolveModelName(content, this.currentActionName);
+        if (modelName) {
+            this.appManager.selectedModel = modelName;
+            this.tableManager.selectedModel = modelName;
+            this.renderer.selectedModel = modelName;
+        }
+        this.tableManager.menuBaseQuery = content.query || null;
+        this.tableManager.menuBaseSort = content.sort || '';
+        if (content.sort) {
+            this.tableManager.order = content.sort;
         }
         this.renderer.formSubmission = null;
         this.resetContextActionState();
@@ -1623,7 +1948,7 @@ export class AppActionManagerService {
         this.renderer.beginFormViewerLoad();
         if (!this.isCurrentPageContext(pageContextId)) { this.renderer.cancelFormViewerLoad(); return; }
         const data = this.isRecord(content.data) ? content.data : {};
-        const model = content.model || this.tableManager.selectedModel || this.appManager.selectedModel;
+        const model = this.resolveModelName(content, this.currentActionName) || this.tableManager.selectedModel || this.appManager.selectedModel;
         if (!model) { this.renderer.cancelFormViewerLoad(); throw new Error('Model non trovato nella risposta'); }
         this.appManager.selectedModel = model;
         this.tableManager.selectedModel = model;
@@ -2111,23 +2436,32 @@ export class AppActionManagerService {
 
     private sanitizeFormEditorActionButtons(buttons: MenuButton[]): MenuButton[] {
         const result: MenuButton[] = [];
-        let hasRunnableSubmit = false;
+        let submitSource: MenuButton | undefined;
 
-        // Keep each payload context action distinct (Salva/Update/Copy/Delete each POST to its own
-        // url_action). Only drop Preview / Edit-Form (handled by the editor's built-in controls).
         for (const button of buttons.map(entry => this.normalizeCurrentFormActionButton(entry))) {
             if (this.isFormEditorPreviewButton(button) || this.isFormEditorSelfNavigationButton(button)) continue;
+            if (this.isPrimaryFormSubmitButton(button)) {
+                submitSource = this.preferFormEditorSubmitSource(submitSource, button);
+                continue;
+            }
             result.push(button);
-            if (this.isPrimaryFormSubmitButton(button)) hasRunnableSubmit = true;
         }
 
-        // Only synthesize a generic Save when the payload provides no runnable submit action.
-        if (!hasRunnableSubmit) {
-            const saveButton = this.buildFormEditorSaveButton();
-            if (saveButton) result.unshift(saveButton);
-        }
+        const saveButton = this.buildFormEditorSaveButton(submitSource);
+        if (saveButton) result.unshift(saveButton);
 
         return this.dedupeMenuButtons(result);
+    }
+
+    private preferFormEditorSubmitSource(current: MenuButton | undefined, candidate: MenuButton): MenuButton {
+        if (!current) return candidate;
+        if (this.isGenericSaveLabel(current) && !this.isGenericSaveLabel(candidate)) return candidate;
+        return current;
+    }
+
+    private isGenericSaveLabel(button: MenuButton): boolean {
+        const label = this.readFirstString(button.label, button.key).toLowerCase();
+        return ['salva', 'save'].includes(label);
     }
 
     private buildFormEditorSaveButton(source?: MenuButton): MenuButton | null {

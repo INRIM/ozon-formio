@@ -179,7 +179,7 @@
     (contextActionClick)="onContextActionClick($event)"
     (retryServerError)="retryServerError()"
     (rowClick)="onTableRowClick($event.row, $event.event)"
-    (rowDblClick)="onTableRowDblClick($event.row, $event.event)"
+    (desktopRowOpen)="onDesktopTableRowOpen($event.row, $event.event)"
     (selectionChange)="onTableSelectionChange($event)"
     (sortChange)="onListSortChange($event)"
     (pageChange)="onListPageChange($event)"
@@ -200,7 +200,7 @@
              (input)="updateFormEditorField('type', $any($event.target).value)">
 
       <div class="row">
-        <div class="col col-sm-4">
+        <div class="col col-sm-3">
           <div class="form-group">
             <label for="fe-title" class="control-label">Titolo<span class="h5 text-danger">*</span></label>
             <input type="text" class="form-control" id="fe-title" name="title"
@@ -209,7 +209,7 @@
                    (input)="updateFormEditorField('title', $any($event.target).value)">
           </div>
         </div>
-        <div class="col col-sm-4">
+        <div class="col col-sm-3">
           <div class="form-group">
             <label for="fe-rec_name" class="control-label">Name<span class="h5 text-danger">*</span></label>
             <input type="text" class="form-control" id="fe-rec_name" name="rec_name"
@@ -218,7 +218,7 @@
                    (input)="updateFormEditorField('rec_name', $any($event.target).value)">
           </div>
         </div>
-        <div class="col col-sm-3">
+        <div class="col col-sm-2">
           <div class="form-group">
             <label for="fe-data_model" class="control-label">Model</label>
             <select id="fe-data_model" name="data_model" class="form-control"
@@ -232,13 +232,24 @@
             <small class="form-text text-muted">Si: crea il model | No: solo view | ?Model_name: view alternativa</small>
           </div>
         </div>
-        <div class="col col-sm-1">
+        <div class="col col-sm-2">
+          <div class="form-group">
+            <label for="fe-create_menu_dashboard" class="control-label">Menu Dashboard</label>
+            <select id="fe-create_menu_dashboard" name="create_menu_dashboard" class="form-control"
+                    [value]="formEditorBooleanSelectValue('create_menu_dashboard')"
+                    (change)="updateFormEditorBooleanField('create_menu_dashboard', $any($event.target).value)">
+              <option value="0">No</option>
+              <option value="1">Si</option>
+            </select>
+          </div>
+        </div>
+        <div class="col col-sm-2">
           <div class="form-group">
             <label for="fe-sys" class="control-label">Sys</label>
             <select id="fe-sys" name="sys" class="form-control"
-                    [value]="formEditorData['sys'] ?? ''"
-                    (change)="updateFormEditorField('sys', $any($event.target).value)">
-              <option value="">No</option>
+                    [value]="formEditorBooleanSelectValue('sys')"
+                    (change)="updateFormEditorBooleanField('sys', $any($event.target).value)">
+              <option value="0">No</option>
               <option value="1">Si</option>
             </select>
           </div>
@@ -442,6 +453,23 @@
                 </div>
               </div>
             </div>
+
+            <div class="row mt-2 ozon-models-json-row">
+              <div class="col-sm-6">
+                <app-ozon-json-editor
+                  label="Abilitazione Modelli per Gruppo"
+                  [value]="formEditorJsonPropertyValue('models_groups')"
+                  (valueChange)="updateFormEditorJsonProperty('models_groups', $event)"
+                ></app-ozon-json-editor>
+              </div>
+              <div class="col-sm-6">
+                <app-ozon-json-editor
+                  label="Campi Modelli Oscurati"
+                  [value]="formEditorJsonPropertyValue('models_restricted_fields')"
+                  (valueChange)="updateFormEditorJsonProperty('models_restricted_fields', $event)"
+                ></app-ozon-json-editor>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -528,7 +556,7 @@
         <button type="button" class="btn-close flex-shrink-0" aria-label="Chiudi" (click)="dismissFormNotifications()"></button>
       </div>
     </div>
-    <div class="card-body ozon-form-viewer-card-body" [class.is-loading]="formViewerLoading" [attr.aria-busy]="formViewerLoading ? 'true' : null">
+    <div class="card-body ozon-form-viewer-card-body" [class.is-loading]="formViewerLoading" [attr.aria-busy]="formViewerLoading ? 'true' : null" (click)="onFormViewerClick($event)">
       <div class="ozon-form-placeholder" *ngIf="formViewerLoading" aria-live="polite" aria-busy="true">
         <div class="ozon-form-placeholder__header">
           <span class="ozon-form-skeleton ozon-form-skeleton--title"></span>
@@ -548,6 +576,7 @@
         [renderOptions]="formioRenderOptions"
         (ready)="onFormViewerReady()"
         (change)="onFormSubmissionChanged($event)"
+        (customEvent)="onFormCustomEvent($event)"
       ></formio>
     </div>
   </div>
@@ -558,4 +587,33 @@
       <span>Caricamento...</span>
     </div>
   </div>
+
+  <!-- Action confirmation modal -->
+  <p-dialog
+    [(visible)]="confirmModalVisible"
+    [modal]="true"
+    [responsive]="true"
+    [style]="{ width: '450px' }"
+    [draggable]="false"
+    [resizable]="false"
+  >
+    <ng-template pTemplate="header">
+      <span class="h5 mb-0">{{ confirmModalTitle }}</span>
+    </ng-template>
+    
+    <div class="py-2">
+      <p class="mb-0">{{ confirmModalMessage }}</p>
+    </div>
+
+    <ng-template pTemplate="footer">
+      <div class="d-flex justify-content-end gap-2">
+        <button type="button" class="btn btn-sm btn-outline-secondary" (click)="confirmModalCancel()">
+          Annulla
+        </button>
+        <button type="button" class="btn btn-sm btn-primary" (click)="confirmModalAccept()">
+          {{ confirmModalConfirmLabel }}
+        </button>
+      </div>
+    </ng-template>
+  </p-dialog>
 </div>

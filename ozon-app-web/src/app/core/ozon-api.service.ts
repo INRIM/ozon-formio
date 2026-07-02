@@ -465,26 +465,27 @@ export class OzonApiService {
             const basePayload = () => ({
                 order: '',
                 skip: parseInt(sp.get('skip') ?? '0', 10) || 0,
-                limit: parseInt(sp.get('limit') ?? '100', 10) || 100
+                limit: parseInt(sp.get('limit') ?? '100', 10) || 100,
+                stream: false
             });
 
             // /…/form?type=resource → POST {proxy}/list/component {query:{type:'resource'}}
             if (pathname.endsWith('/form') && sp.get('type') === 'resource') {
-                applyPost(toAbsolutePost('/list/component'), { ...basePayload(), query: { type: 'resource' } }, 'list');
+                applyPost(toAbsolutePost('/list/component?stream=false'), { ...basePayload(), query: { type: 'resource' } }, 'list');
                 return;
             }
 
             // /…/form/{model}/submission?… → POST {proxy}/list/{model}
             const mSub = pathname.match(/\/form\/([^/]+)\/submission$/);
             if (mSub) {
-                applyPost(toAbsolutePost(`/list/${mSub[1]}`), { ...basePayload(), query: {} }, 'submission');
+                applyPost(toAbsolutePost(`/list/${mSub[1]}?stream=false`), { ...basePayload(), query: {} }, 'submission');
                 return;
             }
 
             // /…/form/{model}?… → POST {proxy}/list/{model}
             const mForm = pathname.match(/\/form\/([^/]+)$/);
             if (mForm) {
-                applyPost(toAbsolutePost(`/list/${mForm[1]}`), { ...basePayload(), query: {} }, 'submission');
+                applyPost(toAbsolutePost(`/list/${mForm[1]}?stream=false`), { ...basePayload(), query: {} }, 'submission');
                 return;
             }
         } catch { }
@@ -658,6 +659,38 @@ export class OzonApiService {
             return OzonApiService.DEFAULT_SESSION_CACHE_TTL_MS;
         }
         return Math.floor(configured);
+    }
+
+    async downloadAttachment(fileUrl: string, filename = ''): Promise<void> {
+        const raw = String(fileUrl ?? '').trim();
+        if (!raw) throw new Error('URL allegato mancante');
+        const path = raw.startsWith('/client/attachment')
+            ? raw
+            : `/client/attachment/${raw.replace(/^\/+/, '')}`;
+        const response = await this.fetchRaw(path, { method: 'GET', redirect: 'follow' });
+        if (!response.ok) {
+            if (response.status === 401 || response.status === 403) this.unauthorizedSubject.next();
+            throw new Error(`Download fallito (${response.status})`);
+        }
+        const blob = await response.blob();
+        this.triggerBlobDownload(blob, filename || this.filenameFromPath(raw));
+    }
+
+    private filenameFromPath(path: string): string {
+        const segment = String(path ?? '').split('?')[0].split('/').filter(Boolean).pop() ?? '';
+        try { return decodeURIComponent(segment) || 'download'; } catch { return segment || 'download'; }
+    }
+
+    private triggerBlobDownload(blob: Blob, filename: string): void {
+        if (typeof document === 'undefined' || typeof URL === 'undefined') return;
+        const objectUrl = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = objectUrl;
+        anchor.download = filename || 'download';
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
     }
 
     private async fetchJson(path: string, opt?: any): Promise<any> {

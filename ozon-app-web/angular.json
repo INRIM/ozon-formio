@@ -33,9 +33,9 @@
               }
             ],
             "styles": [
-              "src/styles.scss",
               "node_modules/quill/dist/quill.snow.css",
-              "node_modules/@formio/js/dist/formio.full.min.css"
+              "node_modules/@formio/js/dist/formio.full.min.css",
+              "src/styles.scss"
             ],
             "scripts": []
           },

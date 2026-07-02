@@ -12,7 +12,7 @@ import {
     ListImportConfig,
     ListSearchSessionContext
 } from '../models/app.types';
-import { ListRequestPayload } from '../models/ozon.types';
+import { FastSearchPayload, ListRequestPayload } from '../models/ozon.types';
 
 interface GeneratedFile {
     blob: Blob;
@@ -668,6 +668,24 @@ export class RecordTransferToolsComponent {
         const query = this.isRecord(queryCandidate) ? this.cloneRecord(queryCandidate) : {};
         const order = this.readFirstString(context?.order, 'rec_name asc');
         const totalCount = Math.max(0, Number(context?.totalCount ?? 0));
+
+        if (filtered && context?.fastSearchActive && context?.actionName) {
+            const rows: Array<Record<string, unknown>> = [];
+            const fsPayload: FastSearchPayload = {
+                query_fields: [...(context.fastSearchQueryFields ?? [])],
+                order,
+                skip: 0,
+                limit: Math.max(totalCount, 1)
+            };
+            await this.api.filterFastSearch(
+                context.actionName,
+                fsPayload,
+                (item) => {
+                    if (this.isRecord(item)) rows.push(item);
+                }
+            );
+            return rows;
+        }
 
         if (context?.actionName) {
             const response = await this.api.getAction(context.actionName, {

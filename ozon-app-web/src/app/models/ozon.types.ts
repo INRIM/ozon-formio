@@ -34,6 +34,7 @@ export interface ResponseObjectData {
   can_create: boolean;
   model: string;
   query: Record<string, unknown>;
+  sort?: string;
   obfucated_fields: string[];
   editable_fields: string[];
   schema: unknown;
@@ -75,6 +76,7 @@ export interface ListRequestPayload {
 
 export interface FastSearchPayload {
   query_fields: Record<string, unknown>[];
+  query?: Record<string, unknown>;
   order?: string;
   skip?: number;
   limit?: number;

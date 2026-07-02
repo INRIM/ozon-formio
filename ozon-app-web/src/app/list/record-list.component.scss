@@ -139,6 +139,12 @@
   border-radius: 0.7rem;
 }
 
+.ozon-list-toolbar-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
 .ozon-gear-btn {
   line-height: 1;
   display: inline-flex;
@@ -146,8 +152,131 @@
   gap: 0.25rem;
 }
 
+.ozon-filter-btn {
+  position: relative;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  min-height: 1.95rem;
+}
+
+.ozon-filter-btn.has-filters {
+  border-color: var(--bs-primary);
+  color: var(--bs-primary);
+}
+
+.ozon-filter-count {
+  position: absolute;
+  top: -0.4rem;
+  right: -0.35rem;
+  min-width: 1rem;
+  height: 1rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: var(--bs-primary);
+  color: #fff;
+  font-size: 0.68rem;
+  line-height: 1rem;
+}
+
 .ozon-tools-panel {
   padding: 0;
+}
+
+.ozon-filter-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.85rem;
+  border: 1px solid var(--ozon-border);
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, var(--ozon-surface) 92%, white 8%);
+}
+
+.ozon-filter-panel__header,
+.ozon-filter-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.ozon-filter-title {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.ozon-filter-condition {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.ozon-filter-empty {
+  color: var(--ozon-muted);
+  font-size: 0.9rem;
+}
+
+.ozon-filter-rules {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.ozon-filter-rule {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1.3fr) minmax(8rem, 0.9fr) minmax(10rem, 1fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.ozon-filter-no-value {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.95rem;
+  color: var(--ozon-muted);
+}
+
+.ozon-filter-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+}
+
+.ozon-filter-query {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.ozon-filter-query__label {
+  font-size: 0.8rem;
+  color: var(--ozon-muted);
+}
+
+.ozon-filter-query__toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+
+  .pi { font-size: 0.72rem; }
+}
+
+.ozon-filter-query pre {
+  max-height: 9rem;
+  margin: 0;
+  overflow: auto;
+  padding: 0.6rem;
+  border: 1px solid var(--ozon-border);
+  border-radius: 0.4rem;
+  background: color-mix(in srgb, var(--ozon-surface) 86%, black 4%);
+  font-size: 0.78rem;
 }
 
 .ozon-table-infobar {
@@ -272,6 +401,10 @@
     flex-wrap: wrap;
   }
 
+  .ozon-filter-rule {
+    grid-template-columns: 1fr;
+  }
+
   .ozon-list-placeholder {
     padding: 0.85rem;
   }
@@ -281,3 +414,29 @@
     gap: 0.55rem;
   }
 }
+
+.ozon-filter-datepicker-wrapper {
+  width: 100%;
+  display: flex;
+
+  ::ng-deep {
+    p-datepicker {
+      width: 100%;
+    }
+    .p-datepicker {
+      width: 100%;
+    }
+    .p-datepicker-input,
+    .p-inputtext {
+      width: 100%;
+      padding: 0.25rem 0.5rem;
+      font-size: 0.875rem;
+      border-radius: 0.25rem;
+      border: 1px solid var(--ozon-border);
+      background: var(--ozon-surface);
+      color: inherit;
+      height: 31px;
+    }
+  }
+}
+

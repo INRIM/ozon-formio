@@ -29,6 +29,7 @@ export class AppManagerService {
     currentUserName = 'Utente';
     userAvatarUrl = '';
     isAdminUser = false;
+    isTechUser = false;
     builderFeatureEnabled = false;
     viewMode: AppViewMode = 'dashboard';
     builderEnabled = false;
@@ -44,7 +45,7 @@ export class AppManagerService {
     sessionAppSettings: Record<string, unknown> = {};
     sessionUser: Record<string, unknown> = {};
     sessionRecord: Record<string, unknown> = {};
-    formioRenderOptions: Record<string, unknown> = { evalContext: { user: {}, is_admin: false, session: { user: {} } } };
+    formioRenderOptions: Record<string, unknown> = { evalContext: { user: {}, is_admin: false, is_tech: false, session: { user: {} } } };
     userNameSource: 'default' | 'session' | 'layout' = 'default';
     initialBuilderPreference = false;
 
@@ -97,7 +98,7 @@ export class AppManagerService {
     }
 
     setBuilderEnabled(enabled: boolean, persist: boolean): void {
-        const canEnable = this.isAdminUser;
+        const canEnable = this.builderFeatureEnabled;
         this.builderEnabled = canEnable ? Boolean(enabled) : false;
         if (!this.builderEnabled) {
             this.openedNavMenuGroup = '';
@@ -133,7 +134,6 @@ export class AppManagerService {
             const session = this.extractSessionRecord(payload);
             if (!session) return;
 
-            const user = this.isRecord(session['user']) ? session['user'] : {};
             this.sessionLocale = this.resolveSessionLocale(session);
             this.sessionTimezone = this.resolveSessionTimezone(session);
             const sessionUserName = this.resolveSessionUserName(session);
@@ -141,9 +141,12 @@ export class AppManagerService {
                 this.currentUserName = sessionUserName;
                 this.userNameSource = 'session';
             }
-            this.userAvatarUrl = this.readFirstString(user['avatar'], this.userAvatarUrl);
+            const sessionUser = this.isRecord(session['user']) ? session['user'] : {};
+            const sessionUserData = this.isRecord(sessionUser['user_data']) ? sessionUser['user_data'] : {};
+            this.userAvatarUrl = this.readFirstString(sessionUserData['avatar_url'], this.userAvatarUrl);
             this.isAdminUser = this.resolveSessionAdminFlag(session);
-            this.builderFeatureEnabled = this.isAdminUser;
+            this.isTechUser = this.resolveSessionTechFlag(session);
+            this.builderFeatureEnabled = this.isAdminUser || this.isTechUser;
             this.sessionAppSettings = this.extractSessionSettings(session);
             this.sessionRecord = { ...session };
             this.sessionUser = this.buildSessionUserContext(session);
@@ -154,6 +157,7 @@ export class AppManagerService {
             this.sessionLocale = 'it';
             this.sessionTimezone = '';
             this.isAdminUser = false;
+            this.isTechUser = false;
             this.builderFeatureEnabled = false;
             this.sessionUser = {};
             this.sessionRecord = {};
@@ -201,6 +205,7 @@ export class AppManagerService {
         this.sessionLocale = 'it';
         this.sessionTimezone = '';
         this.isAdminUser = false;
+        this.isTechUser = false;
         this.builderFeatureEnabled = false;
         this.sessionUser = {};
         this.sessionRecord = {};
@@ -382,13 +387,18 @@ export class AppManagerService {
         const userObj = this.isRecord(session['user']) ? session['user'] : {};
         const userGroups = Array.isArray(userObj['groups']) ? userObj['groups'] as unknown[] : [];
         const allGroups = [...topGroups, ...userGroups];
-        console.log('[admin] is_admin=%s groups=%o', session['is_admin'], allGroups);
-        const result = allGroups.some(g => {
+        return allGroups.some(g => {
             const name = typeof g === 'string' ? g : (this.isRecord(g) ? String((g as Record<string, unknown>)['name'] ?? '') : '');
             return name === 'Admins' || name === '/Admins';
         });
-        console.log('[admin] resolveSessionAdminFlag=%s', result);
-        return result;
+    }
+
+    private resolveSessionTechFlag(session: Record<string, unknown>): boolean {
+        if (this.toOptionalBooleanFlag(session['is_tech']) === true) return true;
+        const userObj = this.isRecord(session['user']) ? session['user'] : {};
+        if (this.toOptionalBooleanFlag(userObj['is_tech']) === true) return true;
+        const userData = this.isRecord(userObj['user_data']) ? userObj['user_data'] : {};
+        return this.toOptionalBooleanFlag(userData['is_tech']) === true;
     }
 
     private resolveSessionLocale(session: Record<string, unknown>): string {
@@ -453,7 +463,8 @@ export class AppManagerService {
         const user = nestedUser ? { ...nestedUser } : { ...sessionUser };
         const promotedKeys = [
             'uid', 'user_name', 'username', 'name', 'full_name', 'display_name',
-            'divisione_code', 'allowed_users', 'groups', 'avatar',
+            'divisione_code', 'allowed_users', 'groups', 'avatar', 'avatar_url', 'avartar_url',
+            'is_tech',
             'locale', 'lang', 'language', 'user_locale',
             'tz', 'timezone'
         ];
@@ -472,9 +483,11 @@ export class AppManagerService {
     private refreshFormioRenderOptions(): void {
         const user = { ...this.sessionUser };
         if (!Object.prototype.hasOwnProperty.call(user, 'is_admin')) user['is_admin'] = this.isAdminUser;
+        if (!Object.prototype.hasOwnProperty.call(user, 'is_tech')) user['is_tech'] = this.isTechUser;
         const session: Record<string, unknown> = { ...this.sessionRecord };
         if (!Object.prototype.hasOwnProperty.call(session, 'is_admin')) session['is_admin'] = this.isAdminUser;
-        this.formioRenderOptions = { evalContext: { user, is_admin: this.isAdminUser, session } };
+        if (!Object.prototype.hasOwnProperty.call(session, 'is_tech')) session['is_tech'] = this.isTechUser;
+        this.formioRenderOptions = { evalContext: { user, is_admin: this.isAdminUser, is_tech: this.isTechUser, session } };
     }
 
     private scoreSessionRecord(record: Record<string, unknown>): number {

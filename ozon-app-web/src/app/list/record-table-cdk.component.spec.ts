@@ -41,4 +41,16 @@ describe('RecordTableCdkComponent', () => {
 
     expect(clickSpy).toHaveBeenCalled();
   });
+
+  it('should keep checkbox selection separate from row click', () => {
+    const clickSpy = spyOn(component.rowClick, 'emit');
+    const selectionSpy = spyOn(component.selectionChange, 'emit');
+
+    fixture.detectChanges();
+    const checkbox = fixture.debugElement.queryAll(By.css('input[data-row-select]'))[1].nativeElement as HTMLInputElement;
+    checkbox.click();
+
+    expect(selectionSpy).toHaveBeenCalledOnceWith([component.rows[0]]);
+    expect(clickSpy).not.toHaveBeenCalled();
+  });
 });

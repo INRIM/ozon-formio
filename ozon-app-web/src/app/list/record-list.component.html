@@ -1,232 +1,385 @@
 <section class="card ozon-workspace-card">
-  <div class="card-body">
+    <div class="card-body">
 
-    <!-- Title -->
-    <div class="ozon-workspace-title mb-2">{{ dashboardTitle }}</div>
+        <!-- Title -->
+        <div class="ozon-workspace-title mb-2">{{ dashboardTitle }}</div>
 
-    <!-- Toolbar: gear LEFT · action buttons RIGHT -->
-    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
-      <div>
-        <button
-          *ngIf="isAdmin && hasTransferTools"
-          class="btn btn-sm btn-outline-secondary ozon-gear-btn"
-          type="button"
-          (click)="toggleGear()"
-          [class.active]="gearOpen"
-          title="Strumenti di import/export"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" aria-hidden="true">
-            <path d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311c.446.82.023 1.841-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/>
-          </svg>
+        <!-- Toolbar: gear LEFT · action buttons RIGHT -->
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+            <div class="ozon-list-toolbar-left">
+                <button
+                        *ngIf="isAdmin && hasTransferTools"
+                        class="btn btn-sm btn-outline-secondary ozon-gear-btn"
+                        type="button"
+                        (click)="toggleGear()"
+                        [class.active]="gearOpen"
+                        title="Strumenti di import/export"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor"
+                         viewBox="0 0 16 16" aria-hidden="true">
+                        <path d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.17c-1.283-.698-2.686.705-1.987 1.987l.169.311c.446.82.023 1.841-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1a1.464 1.464 0 0 1 .872 2.105l-.17.31c-.698 1.283.705 2.686 1.987 1.987l.311-.169a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.17c1.283.698 2.686-.705 1.987-1.987l-.169-.311a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.17-.31c.698-1.283-.705-2.686-1.987-1.987l-.311.169a1.464 1.464 0 0 1-2.105-.872zM8 10.93a2.929 2.929 0 1 1 0-5.86 2.929 2.929 0 0 1 0 5.858z"/>
+                    </svg>
+                </button>
+                <button
+                        class="btn btn-sm btn-outline-secondary ozon-filter-btn"
+                        type="button"
+                        (click)="toggleFilters()"
+                        [class.active]="filterOpen"
+                        [class.has-filters]="hasActiveFilters"
+                        [attr.aria-expanded]="filterOpen"
+                        title="Filtri"
+                >
+                    <i class="pi pi-search" aria-hidden="true"></i>
+                    <span class="ozon-filter-count" *ngIf="filterCount">{{ filterCount }}</span>
+                </button>
+            </div>
+            <div class="d-flex flex-wrap gap-2">
+                <!-- Static actions (shown when no context_actions override) -->
+                <ng-container *ngIf="showStaticActionButtons">
+                    <div class="d-grid">
+                        <button class="btn btn-success" type="button" [disabled]="!canOpenRecord"
+                                (click)="openRecord.emit()">
+                            Apri record
+                        </button>
+                    </div>
+                    <div class="d-grid">
+                        <button class="btn btn-primary" type="button" [disabled]="!canOpenNewRecord"
+                                (click)="openNewRecord.emit()">
+                            Nuovo record
+                        </button>
+                    </div>
+                    <div class="d-grid" *ngIf="canDeleteRecord">
+                        <button class="btn btn-danger" type="button" (click)="deleteRecord.emit()">
+                            Elimina
+                        </button>
+                    </div>
+                </ng-container>
+
+                <!-- Dynamic context_actions from backend -->
+                <ng-container *ngIf="contextActions.length">
+                    <div class="d-grid" *ngFor="let action of contextActions">
+                        <button
+                                [class]="contextActionBtnClass(action)"
+                                type="button"
+                                (click)="contextActionClick.emit(action)"
+                        >
+                            <i *ngIf="action.button_icon" [class]="action.button_icon" aria-hidden="true"></i>
+                            {{ action.label }}
+                        </button>
+                    </div>
+                </ng-container>
+            </div>
+        </div>
+
+        <!-- Import/export tools panel (gear toggle) -->
+        <div *ngIf="gearOpen" class="ozon-tools-panel mb-2">
+            <app-record-transfer-tools
+                    [exportConfig]="exportConfig"
+                    [importConfig]="importConfig"
+                    [searchContext]="searchContext"
+                    (importBusyChange)="importBusyChange.emit($event)"
+                    (importFinished)="importFinished.emit()"
+            ></app-record-transfer-tools>
+        </div>
+
+        <!-- Filters panel -->
+        <div *ngIf="filterOpen" class="ozon-filter-panel mb-2">
+            <div class="ozon-filter-panel__header">
+                <div class="ozon-filter-title">Filtri</div>
+                <div class="ozon-filter-condition">
+                    <label class="form-label mb-0" for="ozon-filter-condition">Combina</label>
+                    <select
+                            id="ozon-filter-condition"
+                            class="form-select form-select-sm"
+                            [ngModel]="filterCondition"
+                            (ngModelChange)="onFilterConditionChange($event)"
+                    >
+                        <option value="and">AND</option>
+                        <option value="or">OR</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="ozon-filter-empty" *ngIf="!directFilterRules.length">
+                Nessun filtro attivo
+            </div>
+
+            <div class="ozon-filter-rules" *ngIf="directFilterRules.length">
+                <div class="ozon-filter-rule"
+                     *ngFor="let rule of directFilterRules; let i = index; trackBy: trackByFilterRuleIndex">
+                    <select
+                            class="form-select form-select-sm ozon-filter-field"
+                            [ngModel]="rule.field"
+                            (ngModelChange)="onFilterRuleFieldChange(i, $event)"
+                            [attr.aria-label]="'Campo filtro ' + (i + 1)"
+                    >
+                        <option *ngFor="let field of filterFieldOptions" [ngValue]="field.field">{{ field.title }}
+                        </option>
+                    </select>
+
+                    <select
+                            class="form-select form-select-sm ozon-filter-operator"
+                            [ngModel]="rule.operator || '='"
+                            (ngModelChange)="onFilterRuleOperatorChange(i, $event)"
+                            [attr.aria-label]="'Operatore filtro ' + (i + 1)"
+                    >
+                        <option *ngFor="let operator of filterOperatorOptions(rule.field || '')"
+                                [ngValue]="operator.value">
+                            {{ operator.label }}
+                        </option>
+                    </select>
+
+                    <select
+                            *ngIf="operatorRequiresValue(rule.operator) && filterFieldType(rule.field || '') === 'boolean'; else scalarFilterValue"
+                            class="form-select form-select-sm ozon-filter-value"
+                            [ngModel]="rule.value === false ? false : true"
+                            (ngModelChange)="onFilterRuleValueChange(i, $event)"
+                            [attr.aria-label]="'Valore filtro ' + (i + 1)"
+                    >
+                        <option [ngValue]="true">true</option>
+                        <option [ngValue]="false">false</option>
+                    </select>
+
+                    <ng-template #scalarFilterValue>
+                        <ng-container *ngIf="operatorRequiresValue(rule.operator)">
+                            <p-datepicker
+                                    *ngIf="filterFieldType(rule.field || '') === 'datetime' || filterFieldType(rule.field || '') === 'date'; else standardInput"
+                                    class="ozon-filter-datepicker-wrapper"
+                                    styleClass="w-100"
+                                    [ngModel]="toDateValue(rule.value)"
+                                    (ngModelChange)="onFilterRuleValueChange(i, $event)"
+                                    [showTime]="filterFieldType(rule.field || '') === 'datetime'"
+                                    [hourFormat]="'24'"
+                                    [showIcon]="true"
+                                    [fluid]="true"
+                                    [appendTo]="'body'"
+                                    [placeholder]="filterFieldType(rule.field || '') === 'datetime' ? 'Scegli data e ora' : 'Scegli data'"
+                                    [attr.aria-label]="'Valore filtro ' + (i + 1)"
+                            ></p-datepicker>
+                            <ng-template #standardInput>
+                                <input
+                                        class="form-control form-control-sm ozon-filter-value"
+                                        [type]="filterValueInputType(rule.field || '')"
+                                        [value]="rule.value ?? ''"
+                                        (change)="onFilterRuleValueChange(i, $any($event.target).value)"
+                                        [attr.aria-label]="'Valore filtro ' + (i + 1)"
+                                />
+                            </ng-template>
+                        </ng-container>
+                        <span class="ozon-filter-no-value" *ngIf="!operatorRequiresValue(rule.operator)">-</span>
+                    </ng-template>
+
+                    <button
+                            class="btn btn-sm btn-outline-secondary ozon-filter-remove"
+                            type="button"
+                            (click)="removeFilterRule(i)"
+                            [attr.aria-label]="'Rimuovi filtro ' + (i + 1)"
+                    >
+                        <i class="pi pi-times" aria-hidden="true"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="ozon-filter-actions">
+                <button class="btn btn-sm btn-outline-secondary" type="button" (click)="addFilterRule()">Aggiungi
+                </button>
+                <button class="btn btn-sm btn-outline-secondary" type="button" (click)="resetFilters()"
+                        [disabled]="!directFilterRules.length">Reimposta
+                </button>
+                <button class="btn btn-sm btn-primary" type="button" (click)="applyFilters()">Applica</button>
+                <button
+                        type="button"
+                        class="btn btn-sm btn-outline-secondary ozon-filter-query__toggle"
+                        (click)="toggleMongoQuery()"
+                        [attr.aria-expanded]="showMongoQuery"
+                >
+                    <i class="pi" [ngClass]="showMongoQuery ? 'pi-eye-slash' : 'pi-eye'" aria-hidden="true"></i>
+                    <!--          <span>{{ showMongoQuery ? 'Nascondi query MongoDB' : 'Mostra query MongoDB' }}</span>-->
+                </button>
+            </div>
+
+            <div class="ozon-filter-query">
+
+                <pre *ngIf="showMongoQuery" class="ozon-filter-query__preview">{{ filterPreview }}</pre>
+            </div>
+        </div>
+
+        <!-- Fast search -->
+        <div class="ozon-fast-search-shell" *ngIf="showFastSearchShell">
+            <div class="ozon-fast-search-header">
+                <div class="ozon-fast-search-title">
+                    Ricerca Veloce
+                    <button
+                            *ngIf="isMobile"
+                            class="ozon-fast-search-toggle btn btn-sm btn-outline-secondary ms-2"
+                            type="button"
+                            (click)="toggleFastSearch()"
+                            [attr.aria-expanded]="!fastSearchCollapsed"
+                    >{{ fastSearchCollapsed ? '▸' : '▾' }}
+                    </button>
+                </div>
+                <button class="ozon-fast-search-reset" *ngIf="showFastSearchForm && !fastSearchCollapsed" type="button"
+                        (click)="fastSearchReset.emit()">Reimposta
+                </button>
+            </div>
+            <ng-container *ngIf="!fastSearchCollapsed">
+                <div class="ozon-fast-search-placeholder" *ngIf="fastSearchLoading" aria-live="polite" aria-busy="true">
+                    <div class="ozon-fast-search-placeholder__row" *ngFor="let row of fastSearchPlaceholderRows">
+                        <span class="ozon-skeleton ozon-skeleton--label"></span>
+                        <span class="ozon-skeleton ozon-skeleton--control"></span>
+                    </div>
+                </div>
+                <div class="ozon-fast-search-form" *ngIf="showFastSearchForm"
+                     (keydown)="fastSearchKeydown.emit($event)">
+                    <formio
+                            [form]="fastSearchFormSchema"
+                            [submission]="fastSearchSubmission"
+                            [renderOptions]="formioRenderOptions || undefined"
+                            (change)="fastSearchFormChange.emit($event)"
+                            (submit)="fastSearchSearch.emit()"
+                    ></formio>
+                </div>
+                <div class="d-grid d-lg-none" *ngIf="showFastSearchForm">
+                    <button class="btn btn-primary btn-sm" type="button" (click)="fastSearchSearch.emit()">Cerca
+                    </button>
+                </div>
+            </ng-container>
+        </div>
+
+        <!-- Above-table info bar: selection LEFT · stream counters RIGHT -->
+        <div class="ozon-table-infobar mb-1">
+            <div class="small text-muted">{{ selectionInfo }}</div>
+            <div class="small text-muted text-end">Stream: {{ streamCount }} | Totale: {{ totalRecords }} |
+                Limit: {{ limit }}
+            </div>
+        </div>
+
+        <div class="ozon-mobile-sort mb-3" *ngIf="isMobile && tableColumns.length && !showTablePlaceholder">
+            <div class="flex-grow-1">
+                <label class="form-label mb-1">Ordina per</label>
+                <select class="form-select form-select-sm" [ngModel]="sortField"
+                        (ngModelChange)="onMobileSortFieldChange($event)">
+                    <option *ngFor="let column of sortFieldOptions"
+                            [ngValue]="column.field === '__rec_name' ? 'rec_name' : column.field">
+                        {{ column.title }}
+                    </option>
+                </select>
+            </div>
+            <div class="d-grid">
+                <button class="btn btn-outline-secondary btn-sm" type="button" (click)="toggleMobileSortDirection()">
+                    {{ sortDirection === 'asc' ? 'Asc' : 'Desc' }}
+                </button>
+            </div>
+        </div>
+
+        <div class="ozon-list-placeholder mb-3" *ngIf="showTablePlaceholder" aria-live="polite" aria-busy="true">
+            <div class="ozon-list-placeholder__header">
+                <span class="ozon-skeleton ozon-skeleton--title"></span>
+                <span class="ozon-list-placeholder__message">{{ listPlaceholderMessage }}</span>
+            </div>
+            <div class="ozon-list-placeholder__table">
+                <div class="ozon-list-placeholder__row ozon-list-placeholder__row--head">
+                    <span class="ozon-skeleton ozon-skeleton--cell"
+                          *ngFor="let column of tablePlaceholderColumns"></span>
+                </div>
+                <div class="ozon-list-placeholder__row" *ngFor="let row of tablePlaceholderRows">
+                    <span class="ozon-skeleton ozon-skeleton--cell"
+                          *ngFor="let column of tablePlaceholderColumns"></span>
+                </div>
+            </div>
+        </div>
+
+        <div *ngIf="showTableWarning" class="text-danger text-center py-2">
+            Header `X-Columns` mancante o non valido
+        </div>
+
+        <app-record-table-cdk
+                *ngIf="showDesktopTable"
+                [columns]="tableColumns"
+                [rows]="tableRows"
+                [selectedRows]="selectedRows"
+                [selectedRecordName]="selectedRecordName"
+                [sortField]="sortField"
+                [sortDirection]="sortDirection"
+                [showCopyAction]="showTableRowCopyAction"
+                [showRemoveAction]="showTableRowRemoveAction"
+                [displayCell]="displayCell"
+                (rowClick)="desktopRowOpen.emit($event)"
+                (selectionChange)="selectionChange.emit($event)"
+                (sortChange)="sortChange.emit($event)"
+                (rowReorder)="rowReorder.emit($event)"
+                (copyRow)="copyRow.emit($event)"
+                (removeRow)="removeRow.emit($event)"
+        ></app-record-table-cdk>
+
+        <app-record-cards
+                *ngIf="showMobileCards"
+                [columns]="tableColumns"
+                [rows]="tableRows"
+                [selectedRows]="selectedRows"
+                [selectedRecordName]="selectedRecordName"
+                [showCopyAction]="showTableRowCopyAction"
+                [showRemoveAction]="showTableRowRemoveAction"
+                [displayCell]="displayCell"
+                (rowClick)="onMobileRowClick($event)"
+                (selectionChange)="selectionChange.emit($event)"
+                (copyRow)="copyRow.emit($event)"
+                (removeRow)="removeRow.emit($event)"
+        ></app-record-cards>
+
+        <div class="ozon-list-footer mt-3">
+            <div class="small text-muted">
+                Mostra {{ pageStart }} - {{ pageEnd }} di {{ totalRecords }}
+            </div>
+            <div class="ozon-list-footer__actions">
+                <label class="ozon-list-footer__size">
+                    <span>Righe</span>
+                    <select class="form-select form-select-sm" [ngModel]="pageSize"
+                            (ngModelChange)="onPageSizeChanged($event)">
+                        <option *ngFor="let option of pageSizeOptions" [ngValue]="option">{{ option }}</option>
+                    </select>
+                </label>
+
+                <div class="ozon-list-pager">
+                    <button class="btn btn-sm btn-outline-secondary" type="button" [disabled]="currentPage <= 1"
+                            (click)="firstPage()">
+                        «
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" type="button" [disabled]="currentPage <= 1"
+                            (click)="previousPage()">
+                        ‹
+                    </button>
+                    <ng-container *ngFor="let page of pageItems">
+                        <button
+                                *ngIf="page !== '…'"
+                                class="btn btn-sm"
+                                type="button"
+                                [class.btn-primary]="page === currentPage"
+                                [class.btn-outline-secondary]="page !== currentPage"
+                                (click)="goToPage(page)"
+                        >
+                            {{ page }}
+                        </button>
+                        <span *ngIf="page === '…'" class="ozon-list-pager__ellipsis">…</span>
+                    </ng-container>
+                    <button class="btn btn-sm btn-outline-secondary" type="button"
+                            [disabled]="currentPage >= totalPages" (click)="nextPage()">
+                        ›
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" type="button"
+                            [disabled]="currentPage >= totalPages" (click)="lastPage()">
+                        »
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="small mt-2" [class.text-danger]="statusError" [class.text-success]="!statusError">
+            {{ statusText }}
+        </div>
+        <button *ngIf="serverErrorRetryVisible" class="btn btn-sm btn-outline-secondary mt-2" type="button"
+                (click)="retryServerError.emit()">
+            Riprova
         </button>
-      </div>
-      <div class="d-flex flex-wrap gap-2">
-        <!-- Static actions (shown when no context_actions override) -->
-        <ng-container *ngIf="showStaticActionButtons">
-          <div class="d-grid">
-            <button class="btn btn-success" type="button" [disabled]="!canOpenRecord" (click)="openRecord.emit()">
-              Apri record
-            </button>
-          </div>
-          <div class="d-grid">
-            <button class="btn btn-primary" type="button" [disabled]="!canOpenNewRecord" (click)="openNewRecord.emit()">
-              Nuovo record
-            </button>
-          </div>
-          <div class="d-grid" *ngIf="canDeleteRecord">
-            <button class="btn btn-danger" type="button" (click)="deleteRecord.emit()">
-              Elimina
-            </button>
-          </div>
-        </ng-container>
-
-        <!-- Dynamic context_actions from backend -->
-        <ng-container *ngIf="contextActions.length">
-          <div class="d-grid" *ngFor="let action of contextActions">
-            <button
-              [class]="contextActionBtnClass(action)"
-              type="button"
-              (click)="contextActionClick.emit(action)"
-            >
-              <i *ngIf="action.button_icon" [class]="action.button_icon" aria-hidden="true"></i>
-              {{ action.label }}
-            </button>
-          </div>
-        </ng-container>
-      </div>
     </div>
-
-    <!-- Import/export tools panel (gear toggle) -->
-    <div *ngIf="gearOpen" class="ozon-tools-panel mb-2">
-      <app-record-transfer-tools
-        [exportConfig]="exportConfig"
-        [importConfig]="importConfig"
-        [searchContext]="searchContext"
-        (importBusyChange)="importBusyChange.emit($event)"
-        (importFinished)="importFinished.emit()"
-      ></app-record-transfer-tools>
-    </div>
-
-    <!-- Fast search -->
-    <div class="ozon-fast-search-shell" *ngIf="showFastSearchShell">
-      <div class="ozon-fast-search-header">
-        <div class="ozon-fast-search-title">
-          Ricerca Veloce
-          <button
-            *ngIf="isMobile"
-            class="ozon-fast-search-toggle btn btn-sm btn-outline-secondary ms-2"
-            type="button"
-            (click)="toggleFastSearch()"
-            [attr.aria-expanded]="!fastSearchCollapsed"
-          >{{ fastSearchCollapsed ? '▸' : '▾' }}</button>
-        </div>
-        <button class="ozon-fast-search-reset" *ngIf="showFastSearchForm && !fastSearchCollapsed" type="button" (click)="fastSearchReset.emit()">Reimposta</button>
-      </div>
-      <ng-container *ngIf="!fastSearchCollapsed">
-        <div class="ozon-fast-search-placeholder" *ngIf="fastSearchLoading" aria-live="polite" aria-busy="true">
-          <div class="ozon-fast-search-placeholder__row" *ngFor="let row of fastSearchPlaceholderRows">
-            <span class="ozon-skeleton ozon-skeleton--label"></span>
-            <span class="ozon-skeleton ozon-skeleton--control"></span>
-          </div>
-        </div>
-        <div class="ozon-fast-search-form" *ngIf="showFastSearchForm" (keydown)="fastSearchKeydown.emit($event)">
-          <formio
-            [form]="fastSearchFormSchema"
-            [submission]="fastSearchSubmission"
-            [renderOptions]="formioRenderOptions || undefined"
-            (change)="fastSearchFormChange.emit($event)"
-            (submit)="fastSearchSearch.emit()"
-          ></formio>
-        </div>
-        <div class="d-grid d-lg-none" *ngIf="showFastSearchForm">
-          <button class="btn btn-primary btn-sm" type="button" (click)="fastSearchSearch.emit()">Cerca</button>
-        </div>
-      </ng-container>
-    </div>
-
-    <!-- Above-table info bar: selection LEFT · stream counters RIGHT -->
-    <div class="ozon-table-infobar mb-1">
-      <div class="small text-muted">{{ selectionInfo }}</div>
-      <div class="small text-muted text-end">Stream: {{ streamCount }} | Totale: {{ totalRecords }} | Limit: {{ limit }}</div>
-    </div>
-
-    <div class="ozon-mobile-sort mb-3" *ngIf="isMobile && tableColumns.length && !showTablePlaceholder">
-      <div class="flex-grow-1">
-        <label class="form-label mb-1">Ordina per</label>
-        <select class="form-select form-select-sm" [ngModel]="sortField" (ngModelChange)="onMobileSortFieldChange($event)">
-          <option *ngFor="let column of sortFieldOptions" [ngValue]="column.field === '__rec_name' ? 'rec_name' : column.field">
-            {{ column.title }}
-          </option>
-        </select>
-      </div>
-      <div class="d-grid">
-        <button class="btn btn-outline-secondary btn-sm" type="button" (click)="toggleMobileSortDirection()">
-          {{ sortDirection === 'asc' ? 'Asc' : 'Desc' }}
-        </button>
-      </div>
-    </div>
-
-    <div class="ozon-list-placeholder mb-3" *ngIf="showTablePlaceholder" aria-live="polite" aria-busy="true">
-      <div class="ozon-list-placeholder__header">
-        <span class="ozon-skeleton ozon-skeleton--title"></span>
-        <span class="ozon-list-placeholder__message">{{ listPlaceholderMessage }}</span>
-      </div>
-      <div class="ozon-list-placeholder__table">
-        <div class="ozon-list-placeholder__row ozon-list-placeholder__row--head">
-          <span class="ozon-skeleton ozon-skeleton--cell" *ngFor="let column of tablePlaceholderColumns"></span>
-        </div>
-        <div class="ozon-list-placeholder__row" *ngFor="let row of tablePlaceholderRows">
-          <span class="ozon-skeleton ozon-skeleton--cell" *ngFor="let column of tablePlaceholderColumns"></span>
-        </div>
-      </div>
-    </div>
-
-    <div *ngIf="showTableWarning" class="text-danger text-center py-2">
-      Header `X-Columns` mancante o non valido
-    </div>
-
-    <app-record-table-cdk
-      *ngIf="showDesktopTable"
-      [columns]="tableColumns"
-      [rows]="tableRows"
-      [selectedRows]="selectedRows"
-      [selectedRecordName]="selectedRecordName"
-      [sortField]="sortField"
-      [sortDirection]="sortDirection"
-      [showCopyAction]="showTableRowCopyAction"
-      [showRemoveAction]="showTableRowRemoveAction"
-      [displayCell]="displayCell"
-      (rowClick)="rowClick.emit($event)"
-      (rowDblClick)="rowDblClick.emit($event)"
-      (selectionChange)="selectionChange.emit($event)"
-      (sortChange)="sortChange.emit($event)"
-      (rowReorder)="rowReorder.emit($event)"
-      (copyRow)="copyRow.emit($event)"
-      (removeRow)="removeRow.emit($event)"
-    ></app-record-table-cdk>
-
-    <app-record-cards
-      *ngIf="showMobileCards"
-      [columns]="tableColumns"
-      [rows]="tableRows"
-      [selectedRows]="selectedRows"
-      [selectedRecordName]="selectedRecordName"
-      [showCopyAction]="showTableRowCopyAction"
-      [showRemoveAction]="showTableRowRemoveAction"
-      [displayCell]="displayCell"
-      (rowClick)="onMobileRowClick($event)"
-      (selectionChange)="selectionChange.emit($event)"
-      (copyRow)="copyRow.emit($event)"
-      (removeRow)="removeRow.emit($event)"
-    ></app-record-cards>
-
-    <div class="ozon-list-footer mt-3">
-      <div class="small text-muted">
-        Mostra {{ pageStart }} - {{ pageEnd }} di {{ totalRecords }}
-      </div>
-      <div class="ozon-list-footer__actions">
-        <label class="ozon-list-footer__size">
-          <span>Righe</span>
-          <select class="form-select form-select-sm" [ngModel]="pageSize" (ngModelChange)="onPageSizeChanged($event)">
-            <option *ngFor="let option of pageSizeOptions" [ngValue]="option">{{ option }}</option>
-          </select>
-        </label>
-
-        <div class="ozon-list-pager">
-          <button class="btn btn-sm btn-outline-secondary" type="button" [disabled]="currentPage <= 1" (click)="firstPage()">
-            «
-          </button>
-          <button class="btn btn-sm btn-outline-secondary" type="button" [disabled]="currentPage <= 1" (click)="previousPage()">
-            ‹
-          </button>
-          <ng-container *ngFor="let page of pageItems">
-            <button
-              *ngIf="page !== '…'"
-              class="btn btn-sm"
-              type="button"
-              [class.btn-primary]="page === currentPage"
-              [class.btn-outline-secondary]="page !== currentPage"
-              (click)="goToPage(page)"
-            >
-              {{ page }}
-            </button>
-            <span *ngIf="page === '…'" class="ozon-list-pager__ellipsis">…</span>
-          </ng-container>
-          <button class="btn btn-sm btn-outline-secondary" type="button" [disabled]="currentPage >= totalPages" (click)="nextPage()">
-            ›
-          </button>
-          <button class="btn btn-sm btn-outline-secondary" type="button" [disabled]="currentPage >= totalPages" (click)="lastPage()">
-            »
-          </button>
-        </div>
-      </div>
-    </div>
-
-    <div class="small mt-2" [class.text-danger]="statusError" [class.text-success]="!statusError">
-      {{ statusText }}
-    </div>
-    <button *ngIf="serverErrorRetryVisible" class="btn btn-sm btn-outline-secondary mt-2" type="button" (click)="retryServerError.emit()">
-      Riprova
-    </button>
-  </div>
 </section>

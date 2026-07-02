@@ -4,8 +4,10 @@ import { FormsModule } from '@angular/forms';
 import { FormioComponent, FormioModule } from '@formio/angular';
 import { EditorModule } from 'primeng/editor';
 import { InputSwitchModule } from 'primeng/inputswitch';
+import { DialogModule } from 'primeng/dialog';
 import { FORMIO_BUILDER_EXTENSIONS, FormioBuilderExtension } from './formio/formio-builder-config';
 import { OzonFormBuilderHostComponent } from './formio/ozon-form-builder-host.component';
+import { OzonJsonEditorComponent } from './shared/ozon-json-editor.component';
 import { RecordListComponent } from './list/record-list.component';
 import { AppThemeService } from './managers/app-theme.service';
 import { AppManagerService } from './managers/app-manager.service';
@@ -13,13 +15,16 @@ import { AppTableManagerService } from './managers/app-table-manager.service';
 import { AppFormioRendererService } from './managers/app-formio-renderer.service';
 import { AppFormioBuilderService } from './managers/app-formio-builder.service';
 import { AppActionManagerService } from './managers/app-action-manager.service';
-import { ContextAction, ListPageChange, ListSortChange, TableColumn, TableRow, MenuButton, MenuCard, MenuDrillDownGroup } from './models/app.types';
+import {
+    ContextAction, ListPageChange, ListSortChange, QueryBuilderConfig, RuleSet,
+    TableColumn, TableRow, MenuButton, MenuCard, MenuDrillDownGroup
+} from './models/app.types';
 import { GlobalErrorStateService } from './core/global-error-state.service';
 
 @Component({
     selector: 'app-root',
     standalone: true,
-    imports: [CommonModule, FormsModule, FormioModule, InputSwitchModule, EditorModule, OzonFormBuilderHostComponent, RecordListComponent],
+    imports: [CommonModule, FormsModule, FormioModule, InputSwitchModule, EditorModule, DialogModule, OzonFormBuilderHostComponent, OzonJsonEditorComponent, RecordListComponent],
     templateUrl: './app.component.html',
     styleUrl: './app.component.scss',
     providers: [AppThemeService, AppManagerService, AppTableManagerService, AppFormioRendererService, AppFormioBuilderService, AppActionManagerService]
@@ -45,8 +50,55 @@ export class AppComponent implements OnInit, OnDestroy {
         this.appManager.initializeBuilderPreference();
         this.builder.setFormBuilderExtensions(this.formBuilderExtensions);
         this.actionManager.setFormioViewerGetter(() => this.formioViewer);
+        this.renderer.setLogicEvalContextProvider(() => {
+            const ec = (this.appManager.formioRenderOptions['evalContext'] ?? {}) as Record<string, unknown>;
+            return {
+                user: ec['user'] ?? this.appManager.sessionUser,
+                session: ec['session'] ?? this.appManager.sessionRecord,
+                is_admin: ec['is_admin'] ?? this.appManager.isAdminUser,
+                is_tech: ec['is_tech'] ?? this.appManager.isTechUser,
+                app: {
+                    curr_model: this.appManager.selectedModel,
+                    selected_model: this.appManager.selectedModel,
+                    current_action: this.actionManager.currentActionName
+                }
+            };
+        });
         this.actionManager.initSubscriptions();
         void this.actionManager.initializeApplication();
+        this.installLogicVarsDebugHelper();
+    }
+
+    /** DEBUG: call `ozonLogicVars()` in the browser console to dump the variables
+     *  available in form JSON logic (data/form/user/session/is_admin/app). */
+    private installLogicVarsDebugHelper(): void {
+        if (typeof window === 'undefined') return;
+        (window as unknown as Record<string, unknown>)['ozonLogicVars'] = () => {
+            const formio = this.formioViewer?.formio as any;
+            const data = formio?.submission?.data ?? formio?.data ?? this.formSubmission?.data ?? {};
+            const evalContext = (this.formioRenderOptions?.['evalContext'] ?? {}) as Record<string, unknown>;
+            const vars = {
+                data,
+                form: data,
+                user: evalContext['user'],
+                session: evalContext['session'],
+                is_admin: evalContext['is_admin'],
+                is_tech: evalContext['is_tech'],
+                app: { curr_model: this.selectedModel, selected_model: this.selectedModel, current_action: this.actionManager.currentActionName },
+                evalContext
+            };
+            console.log('[ozonLogicVars] variabili JSON logic disponibili:', vars);
+            console.log('[ozonLogicVars] data/form keys:', Object.keys(data));
+            console.log('[ozonLogicVars] esempi: { var: "form.rec_name" }, { var: "user.uid" }, { var: "is_admin" }, { var: "app.curr_model" }');
+            return vars;
+        };
+    }
+
+    private logicVarsHelperAnnounced = false;
+    private announceLogicVarsHelper(): void {
+        if (this.logicVarsHelperAnnounced || typeof window === 'undefined') return;
+        this.logicVarsHelperAnnounced = true;
+        console.log('[ozonLogicVars] helper pronto: digita  ozonLogicVars()  in console mentre un form e aperto.');
     }
 
     ngOnDestroy(): void {
@@ -74,6 +126,7 @@ export class AppComponent implements OnInit, OnDestroy {
     set selectedModel(v: string) { this.appManager.selectedModel = v; }
     get userMenuOpen(): boolean { return this.appManager.userMenuOpen; }
     get isAdminUser(): boolean { return this.appManager.isAdminUser; }
+    get isTechUser(): boolean { return this.appManager.isTechUser; }
     get userAvatarUrl(): string { return this.appManager.userAvatarUrl; }
     get appLogoUrl(): string { return this.appManager.appLogoUrl; }
     get activeDashboardGroup(): string { return this.appManager.activeDashboardGroup; }
@@ -95,7 +148,7 @@ export class AppComponent implements OnInit, OnDestroy {
         const text = this.brandTitle.replace(/[^A-Za-z0-9 ]+/g, ' ').split(/\s+/).map(w => w.trim()).filter(Boolean).slice(0, 2).map(w => w.charAt(0).toUpperCase()).join('');
         return text || 'LOGO';
     }
-    get showBuilderToggle(): boolean { return this.appManager.isAdminUser; }
+    get showBuilderToggle(): boolean { return this.appManager.builderFeatureEnabled; }
     get viewMode(): 'dashboard' | 'list' | 'form' { return this.appManager.viewMode; }
     get isDashboardPage(): boolean { return this.appManager.viewMode === 'dashboard'; }
     get isListPage(): boolean { return this.appManager.viewMode === 'list'; }
@@ -184,6 +237,9 @@ export class AppComponent implements OnInit, OnDestroy {
     get tableExtraColumnCount(): number { return this.tableManager.tableExtraColumnCount; }
     get showTableRowCopyAction(): boolean { return this.tableManager.showTableRowCopyAction; }
     get showTableRowRemoveAction(): boolean { return this.tableManager.showTableRowRemoveAction; }
+    get listFilterConfig(): QueryBuilderConfig { return this.tableManager.queryBuilderConfig; }
+    get listFilterRules(): RuleSet { return this.tableManager.queryBuilderRules; }
+    get listFilterPreview(): string { return this.tableManager.queryText; }
     readonly recordDisplayCell = (row: TableRow, field: string): string => this.tableManager.displayCell(row, field);
 
     displayCell(row: TableRow, field: string): string { return this.tableManager.displayCell(row, field); }
@@ -202,6 +258,14 @@ export class AppComponent implements OnInit, OnDestroy {
     onTableRowClick(row: TableRow, event: Event): void {
         this.tableManager.onTableRowClick(row, event, () => this.actionManager.rebuildMenus());
     }
+    async onDesktopTableRowOpen(row: TableRow, event: Event): Promise<void> {
+        return this.tableManager.onTableRowOpen(
+            row,
+            event,
+            () => this.actionManager.rebuildMenus(),
+            () => this.actionManager.openRecordFromListSelection()
+        );
+    }
     async onTableRowDblClick(row: TableRow, event: Event): Promise<void> {
         return this.tableManager.onTableRowDblClick(row, event, () => this.actionManager.rebuildMenus(), () => this.actionManager.openRecordFromListSelection());
     }
@@ -210,6 +274,17 @@ export class AppComponent implements OnInit, OnDestroy {
     }
     onFilterChanged(): void {
         this.tableManager.onFilterChanged(() => { void this.actionManager.loadRecords(); });
+    }
+    onListFilterRulesChange(rules: RuleSet): void {
+        this.tableManager.setQueryBuilderRules(rules);
+    }
+    async applyListFilters(): Promise<void> {
+        this.tableManager.applyQueryBuilderFilters();
+        await this.actionManager.loadRecords(false);
+    }
+    async resetListFilters(): Promise<void> {
+        this.tableManager.resetQueryBuilderFilters();
+        await this.actionManager.loadRecords(false);
     }
     onRowReorder(event: unknown): void {
         this.tableManager.onRowReorder(event, (m, e) => this.appManager.setStatus(m, e));
@@ -275,6 +350,29 @@ export class AppComponent implements OnInit, OnDestroy {
     async onFormSubmissionChanged(event: unknown): Promise<void> {
         return this.renderer.onFormSubmissionChanged(event, (m, e) => this.appManager.setStatus(m, e));
     }
+    async onFormCustomEvent(event: unknown): Promise<void> {
+        return this.actionManager.onFormCustomEvent(event);
+    }
+
+    /** Delegated download for file-component links rendered by ozonFileTemplate. */
+    onFormViewerClick(event: MouseEvent): void {
+        const anchor = (event.target as HTMLElement | null)?.closest?.('.ozon-file-download') as HTMLElement | null;
+        if (!anchor) return;
+        event.preventDefault();
+        const fileUrl = anchor.getAttribute('data-file-url') ?? '';
+        const fileName = anchor.getAttribute('data-file-name') ?? '';
+        if (fileUrl) void this.actionManager.downloadAttachment(fileUrl, fileName);
+    }
+
+    // --- Confirm modal (button modal config) ---
+
+    get confirmModalVisible(): boolean { return this.actionManager.confirmModalVisible; }
+    set confirmModalVisible(value: boolean) { if (!value) this.actionManager.cancelPendingModalAction(); }
+    get confirmModalTitle(): string { return this.actionManager.confirmModalConfig?.title ?? ''; }
+    get confirmModalMessage(): string { return this.actionManager.confirmModalConfig?.message ?? ''; }
+    get confirmModalConfirmLabel(): string { return this.actionManager.confirmModalConfig?.confirmLabel ?? 'Conferma'; }
+    async confirmModalAccept(): Promise<void> { return this.actionManager.confirmPendingModalAction(); }
+    confirmModalCancel(): void { this.actionManager.cancelPendingModalAction(); }
 
     // --- Formio Builder ---
 
@@ -297,7 +395,10 @@ export class AppComponent implements OnInit, OnDestroy {
     get formBuilderConfig(): Record<string, unknown> { return this.builder.formBuilderConfig; }
     get formBuilderRebuild$() { return this.builder.formBuilderRebuild$; }
 
-    onBuilderSwitchChanged(enabled: boolean): void { this.builder.onBuilderSwitchChanged(enabled); }
+    onBuilderSwitchChanged(enabled: boolean): void {
+        this.builder.onBuilderSwitchChanged(enabled);
+        if (enabled) this.announceLogicVarsHelper();
+    }
     enableFormBuilderMode(): void { this.builder.enableFormBuilderMode((m, e) => this.appManager.setStatus(m, e)); }
     openFormEditorInline(): void { this.builder.openFormEditorInline(); }
     onFormBuilderChanged(event: unknown): void {
@@ -305,7 +406,12 @@ export class AppComponent implements OnInit, OnDestroy {
     }
     setFormEditorActiveTab(tab: 'builder' | 'print' | 'config'): void { this.builder.setFormEditorActiveTab(tab); }
     updateFormEditorField(field: string, value: unknown): void { this.builder.updateFormEditorField(field, value); }
+    formEditorBooleanSelectValue(field: string, defaultValue = '0'): string { return this.builder.formEditorBooleanSelectValue(field, defaultValue); }
+    updateFormEditorBooleanField(field: string, value: unknown): void { this.builder.updateFormEditorBooleanField(field, value); }
     updateFormEditorProperty(property: string, value: unknown): void { this.builder.updateFormEditorProperty(property, value); }
+    formEditorJsonPropertyValue(property: string): string { return this.builder.formEditorJsonPropertyValue(property); }
+    updateFormEditorJsonProperty(property: string, value: unknown): void { this.builder.updateFormEditorJsonProperty(property, value); }
+    formEditorJsonPropertyInvalid(property: string): boolean { return this.builder.formEditorJsonPropertyInvalid(property); }
     previewFormEditor(): void { this.builder.previewFormEditor((m, e) => this.appManager.setStatus(m, e)); }
     disableFormBuilderMode(): void { this.builder.disableFormBuilderMode((m, e) => this.appManager.setStatus(m, e)); }
 }

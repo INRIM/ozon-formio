@@ -85,6 +85,14 @@ export interface MenuButton {
     menu_type?: string;
     is_admin?: boolean;
     next_action_path?: string;
+    skip_validation?: boolean;
+    modal?: ButtonModalConfig;
+}
+
+export interface ButtonModalConfig {
+    title: string;
+    message: string;
+    confirmLabel: string;
 }
 
 export interface MenuCard {

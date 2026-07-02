@@ -65,12 +65,12 @@ function createBuiltinBuilderConfig(): Record<string, unknown> {
           }
         },
         button: {
-          title: 'Button',
+          title: 'Pulsante',
           icon: 'stop',
           group: 'basic',
           weight: 6,
           schema: {
-            label: 'Button',
+            label: 'Pulsante',
             showValidations: false,
             theme: 'warning',
             block: true,
@@ -87,18 +87,17 @@ function createBuiltinBuilderConfig(): Record<string, unknown> {
           }
         },
         buttonalert: {
-          title: 'Button Alert',
+          title: 'Pulsante Alert',
           icon: 'window-maximize',
           group: 'basic',
           weight: 10,
           schema: {
-            label: 'Button Alert',
+            label: 'Pulsante Alert',
             showValidations: false,
             theme: 'warning',
             rightIcon: 'it-external-link',
             customClass: 'btn-outline-primary',
             tableView: false,
-            modalEdit: true,
             key: 'buttonAlert',
             properties: {
               modal_title: 'Alert Title',
@@ -137,8 +136,336 @@ function createBuiltinBuilderConfig(): Record<string, unknown> {
             input: true
           }
         },
+        file: {
+          title: 'File',
+          icon: 'file',
+          group: 'basic',
+          weight: 90,
+          schema: {
+            label: 'File',
+            tableView: false,
+            key: 'file',
+            type: 'file',
+            input: true
+          }
+        },
+        processPanel: {
+          title: 'Process Panel',
+          icon: 'cogs',
+          group: 'basic',
+          weight: 91,
+          schema: {
+            label: 'Panel',
+            collapsible: false,
+            hideLabel: true,
+            key: 'panel',
+            type: 'panel',
+            input: false,
+            tableView: false,
+            components: [
+              {
+                label: 'Columns',
+                columns: [
+                  {
+                    components: [
+                      {
+                        label: 'Process ID',
+                        applyMaskOn: 'change',
+                        tableView: true,
+                        validateWhenHidden: false,
+                        key: 'process_id',
+                        type: 'textfield',
+                        input: true,
+                        'widget.type': 'input'
+                      }
+                    ],
+                    width: 6,
+                    offset: 0,
+                    push: 0,
+                    pull: 0,
+                    size: 'md',
+                    currentWidth: 6
+                  },
+                  {
+                    components: [
+                      {
+                        label: 'Avvia Processo',
+                        block: true,
+                        leftIcon: 'it-settings',
+                        customClass: 'btn-outline-primary',
+                        tableView: false,
+                        key: 'process_start',
+                        properties: {
+                          btn_action_type: 'post',
+                          url_action: 'gateway/camunda/start/Test_Process?update_data=True'
+                        },
+                        logic: [
+                          {
+                            name: 'check',
+                            trigger: {
+                              type: 'json',
+                              json: {
+                                '!=': [
+                                  { var: 'data.stato' },
+                                  'nuova'
+                                ]
+                              }
+                            },
+                            actions: [
+                              {
+                                name: 'show',
+                                type: 'property',
+                                property: {
+                                  label: 'Hidden',
+                                  value: 'hidden',
+                                  type: 'boolean'
+                                },
+                                state: true
+                              }
+                            ]
+                          }
+                        ],
+                        type: 'button',
+                        saveOnEnter: false,
+                        input: true,
+                        hideOnChildrenHidden: false
+                      },
+                      {
+                        label: 'Assegnato a',
+                        widget: 'choicesjs',
+                        tableView: true,
+                        dataSrc: 'resource',
+                        data: {
+                          resource: 'User'
+                        },
+                        idPath: 'rec_name',
+                        template: '<span>{{ item.data.full_name }}</span>',
+                        validateWhenHidden: false,
+                        key: 'assignee',
+                        properties: {
+                          readonly: 'y'
+                        },
+                        type: 'select',
+                        noRefreshOnScroll: false,
+                        addResource: false,
+                        reference: false,
+                        input: true
+                      }
+                    ],
+                    width: 6,
+                    offset: 0,
+                    push: 0,
+                    pull: 0,
+                    size: 'md',
+                    currentWidth: 6
+                  }
+                ],
+                key: 'columns1',
+                type: 'columns',
+                input: false,
+                tableView: false
+              },
+              {
+                label: 'Columns',
+                columns: [
+                  {
+                    components: [
+                      {
+                        label: 'Completa Task',
+                        block: true,
+                        leftIcon: 'it-check-circle',
+                        customClass: 'btn-outline-primary',
+                        hidden: true,
+                        tableView: false,
+                        key: 'process_complete',
+                        properties: {
+                          btn_action_type: 'post',
+                          url_action: 'gateway/camunda/complete?update_data=true'
+                        },
+                        logic: [
+                          {
+                            name: 'check',
+                            trigger: {
+                              type: 'json',
+                              json: {
+                                and: [
+                                  {
+                                    '==': [
+                                      { var: 'data.stato' },
+                                      'nuova'
+                                    ]
+                                  },
+                                  {
+                                    '!==': [
+                                      { var: 'data.process_id' },
+                                      false
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            actions: [
+                              {
+                                name: 'hide',
+                                type: 'property',
+                                property: {
+                                  label: 'Hidden',
+                                  value: 'hidden',
+                                  type: 'boolean'
+                                },
+                                state: false
+                              }
+                            ]
+                          }
+                        ],
+                        type: 'button',
+                        saveOnEnter: false,
+                        input: true,
+                        hideOnChildrenHidden: false
+                      }
+                    ],
+                    width: 4,
+                    offset: 0,
+                    push: 0,
+                    pull: 0,
+                    size: 'md',
+                    currentWidth: 4
+                  },
+                  {
+                    components: [
+                      {
+                        label: 'Approva',
+                        theme: 'success',
+                        size: 'sm',
+                        block: true,
+                        leftIcon: 'it-check',
+                        hidden: true,
+                        tableView: true,
+                        key: 'process_approve',
+                        properties: {
+                          btn_action_type: 'post',
+                          url_action: 'gateway/camunda/action/approved'
+                        },
+                        logic: [
+                          {
+                            name: 'check',
+                            trigger: {
+                              type: 'json',
+                              json: {
+                                and: [
+                                  {
+                                    '==': [
+                                      { var: 'data.stato' },
+                                      'inCorso'
+                                    ]
+                                  },
+                                  {
+                                    '==': [
+                                      { var: 'user.uid' },
+                                      { var: 'data.assignee' }
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            actions: [
+                              {
+                                name: 'show',
+                                type: 'property',
+                                property: {
+                                  label: 'Hidden',
+                                  value: 'hidden',
+                                  type: 'boolean'
+                                },
+                                state: false
+                              }
+                            ]
+                          }
+                        ],
+                        type: 'button',
+                        saveOnEnter: false,
+                        input: true,
+                        hideOnChildrenHidden: false
+                      }
+                    ],
+                    width: 4,
+                    offset: 0,
+                    push: 0,
+                    pull: 0,
+                    size: 'md',
+                    currentWidth: 4
+                  },
+                  {
+                    components: [
+                      {
+                        label: 'Rifiuta',
+                        theme: 'danger',
+                        block: true,
+                        leftIcon: 'it-close',
+                        hidden: true,
+                        tableView: true,
+                        key: 'process_refuse',
+                        properties: {
+                          btn_action_type: 'post',
+                          url_action: 'gateway/camunda/action/refused'
+                        },
+                        logic: [
+                          {
+                            name: 'check',
+                            trigger: {
+                              type: 'json',
+                              json: {
+                                and: [
+                                  {
+                                    '==': [
+                                      { var: 'data.stato' },
+                                      'inCorso'
+                                    ]
+                                  },
+                                  {
+                                    '==': [
+                                      { var: 'user.uid' },
+                                      { var: 'data.assignee' }
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            actions: [
+                              {
+                                name: 'hide',
+                                type: 'property',
+                                property: {
+                                  label: 'Hidden',
+                                  value: 'hidden',
+                                  type: 'boolean'
+                                },
+                                state: false
+                              }
+                            ]
+                          }
+                        ],
+                        type: 'button',
+                        saveOnEnter: false,
+                        input: true,
+                        hideOnChildrenHidden: false
+                      }
+                    ],
+                    size: 'md',
+                    width: 4,
+                    currentWidth: 4
+                  }
+                ],
+                key: 'columns2',
+                type: 'columns',
+                input: false,
+                tableView: false
+              }
+            ]
+          }
+        },
         buttondelete: {
-          title: 'Button Delete Record',
+          title: 'Pulsante Elimina Record',
           icon: 'trash',
           group: 'basic',
           weight: 10,
@@ -150,8 +477,8 @@ function createBuiltinBuilderConfig(): Record<string, unknown> {
             rightIcon: 'it-delete',
             customClass: 'btn-danger',
             tableView: false,
-            modalEdit: true,
             key: 'elimina',
+            clearOnHide: false,
             properties: {
               modal_title: 'Attenzione',
               modal_message: 'Vuoi veramente eliminare il record?',
@@ -168,9 +495,9 @@ function createBuiltinBuilderConfig(): Record<string, unknown> {
                     '!': [
                       {
                         and: [
-                          { var: ['form.rec_name', false] },
-                          { in: [{ var: 'user.uid' }, { var: 'user.allowed_users' }] },
-                          { '==': [{ var: 'form.deleted' }, 0] }
+                          { var: 'data.rec_name' },
+                          { in: [{ var: 'user.uid' }, { var: 'session.user_data.allowed_users' }] },
+                          { '==': [{ var: 'data.deleted' }, 0] }
                         ]
                       }
                     ]
@@ -194,14 +521,14 @@ function createBuiltinBuilderConfig(): Record<string, unknown> {
                 trigger: {
                   type: 'json',
                   json: {
-                    cat: ['/action/delete_', { var: 'form.data_model' }, '/', { var: 'form.rec_name' }]
+                    cat: ['/action/delete_', { var: 'app.curr_model' }, '/', { var: 'data.rec_name' }]
                   }
                 },
                 actions: [
                   {
                     name: 'update value',
                     type: 'value',
-                    value: 'url_action'
+                    value: 'value = result;'
                   }
                 ]
               }
@@ -430,7 +757,7 @@ function createBuiltinBuilderConfig(): Record<string, unknown> {
                       {
                         name: 'set value',
                         type: 'value',
-                        value: 'url_action'
+                        value: 'value = result;'
                       }
                     ]
                   }
@@ -512,7 +839,7 @@ function createBuiltinBuilderConfig(): Record<string, unknown> {
                       {
                         name: 'set value',
                         type: 'value',
-                        value: 'url_action'
+                        value: 'value = result;'
                       }
                     ]
                   }
@@ -534,6 +861,131 @@ function createBuiltinBuilderConfig(): Record<string, unknown> {
                 input: true
               }
             ]
+          }
+        }
+      }
+    },
+    process: {
+      title: 'Process',
+      weight: 35,
+      default: false,
+      components: {
+        process_id: {
+          title: 'Process ID',
+          icon: 'external-link',
+          group: 'basic',
+          schema: {
+            label: 'Process ID',
+            key: 'process_id',
+            type: 'textfield',
+            input: true,
+            hidden: false,
+            tableView: true
+          }
+        },
+        assignee: {
+          title: 'Assegnee',
+          icon: 'external-link',
+          group: 'basic',
+          schema: {
+            label: 'Assegnee',
+            key: 'assignee',
+            type: 'textfield',
+            input: true,
+            hidden: false,
+            tableView: true
+          }
+        },
+        process_start: {
+          title: 'Avvia Processo',
+          icon: 'play',
+          group: 'process',
+          weight: 0,
+          schema: {
+            label: 'Avvia Processo',
+            showValidations: false,
+            theme: 'primary',
+            block: true,
+            customClass: 'btn-outline-primary',
+            leftIcon: 'it-settings',
+            tableView: false,
+            key: 'process_start',
+            properties: {
+              btn_action_type: 'post',
+              url_action: 'gateway/camunda/start/PROCESS_KEY'
+            },
+            type: 'button',
+            input: true,
+            hideOnChildrenHidden: false
+          }
+        },
+        process_complete: {
+          title: 'Completa Task',
+          icon: 'check',
+          group: 'process',
+          weight: 10,
+          schema: {
+            label: 'Completa Task',
+            showValidations: false,
+            theme: 'primary',
+            block: true,
+            customClass: 'btn-outline-primary',
+            leftIcon: 'it-check-circle',
+            tableView: false,
+            key: 'process_complete',
+            properties: {
+              btn_action_type: 'post',
+              url_action: 'gateway/camunda/complete'
+            },
+            type: 'button',
+            input: true,
+            hideOnChildrenHidden: false
+          }
+        },
+        process_approve: {
+          title: 'Approva Task',
+          icon: 'thumbs-up',
+          group: 'process',
+          weight: 20,
+          schema: {
+            label: 'Approva',
+            showValidations: false,
+            theme: 'success',
+            block: true,
+            customClass: 'btn-outline-success',
+            leftIcon: 'it-check',
+            tableView: false,
+            key: 'process_approve',
+            properties: {
+              btn_action_type: 'post',
+              url_action: 'gateway/camunda/action/approved'
+            },
+            type: 'button',
+            input: true,
+            hideOnChildrenHidden: false
+          }
+        },
+        process_refuse: {
+          title: 'Rifiuta Task',
+          icon: 'thumbs-down',
+          group: 'process',
+          weight: 30,
+          schema: {
+            label: 'Rifiuta',
+            showValidations: false,
+            theme: 'danger',
+            block: true,
+            customClass: 'btn-outline-danger',
+            leftIcon: 'it-close',
+            tableView: false,
+            key: 'process_refuse',
+            properties: {
+              btn_action_type: 'post',
+              url_action: 'gateway/camunda/action/refused'
+            },
+            type: 'button',
+            input: true,
+            hideOnChildrenHidden: false
           }
         }
       }

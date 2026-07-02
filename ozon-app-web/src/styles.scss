@@ -742,3 +742,66 @@ body {
     border-color: #9fc8ef !important;
   }
 }
+
+/* -------------------------------------------------------------------------
+   File upload — Bootstrap Italia v2 widget for the Form.io file component.
+   Markup comes from ozon-file-template.ts (uses BI's own `.upload-file-list`
+   classes, styled by bootstrap-italia). Here we only style the compact
+   browse/drop button and the per-row delete control.
+   ------------------------------------------------------------------------- */
+.formio-component-file .ozon-file {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+
+  .upload-file-list { margin: 0; }
+
+  .upload-file {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .upload-file-weight { color: var(--ozon-muted, #5a6772); font-size: 0.85em; }
+
+  .ozon-file-remove {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+    &:hover { opacity: 0.7; }
+  }
+
+  .ozon-file-drop {
+    display: inline-flex;
+    align-self: flex-start;
+  }
+
+  .ozon-file-browse {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.45rem 0.9rem;
+    border: 1px solid var(--bs-primary, #06c);
+    border-radius: 0.4rem;
+    color: var(--bs-primary, #06c);
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+
+    &:hover { background: var(--bs-primary, #06c); color: #fff; }
+  }
+
+  .fileSelector.fileDragOver .ozon-file-browse,
+  .ozon-file-drop.fileDragOver .ozon-file-browse {
+    background: var(--bs-primary, #06c);
+    color: #fff;
+  }
+
+  .loader-wrapper { display: none; }
+}

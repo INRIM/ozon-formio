@@ -1359,6 +1359,156 @@ describe('AppComponent', () => {
     expect(app.selectedRecordName).toBe('mail_template');
   });
 
+  it('should hard reload process post actions to ResponseObject next_action_url when mode is redirect', async () => {
+    apiMock.postActionPath.and.resolveTo(makeResponse({
+      mode: 'redirect',
+      next_action_url: '/action/list_test_request'
+    }));
+    mainManagerMock.hardReloadToUrl.and.returnValue({
+      reloaded: true,
+      blocked: false,
+      targetUrl: 'http://localhost:4200/action/list_test_request'
+    });
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    const button = {
+      model: 'test_request',
+      key: 'process_complete',
+      type: 'button',
+      label: 'Completa Task',
+      leftIcon: 'it-check-circle',
+      authtoken: 'token',
+      req_id: 'req',
+      btn_action_type: 'post',
+      action_type: 'post',
+      url_action: '/gateway/camunda/complete?update_data=true',
+      builder: false,
+      mode: 'form',
+      content: '/gateway/camunda/complete?update_data=true',
+      is_admin: false,
+      skip_validation: true
+    };
+
+    app.appManager.selectedModel = 'test_request';
+    app.renderer.formSubmission = { data: { rec_name: 'test_request.1', process_id: 'PID-1' } };
+
+    await app.actionManager.runTopMenuAction(button);
+
+    expect(apiMock.postActionPath).toHaveBeenCalledWith(
+      '/gateway/camunda/complete?update_data=true',
+      jasmine.objectContaining({ rec_name: 'test_request.1', process_id: 'PID-1' })
+    );
+    expect(mainManagerMock.hardReloadToUrl).toHaveBeenCalledWith('/action/list_test_request');
+    expect(apiMock.getAction).not.toHaveBeenCalledWith('list_test_request', jasmine.anything());
+  });
+
+  it('should hard reload the current page when process redirect next_action_url is hash', async () => {
+    apiMock.postActionPath.and.resolveTo(makeResponse({
+      mode: 'redirect',
+      next_action_url: '#'
+    }));
+    mainManagerMock.hardReloadToUrl.and.returnValue({
+      reloaded: true,
+      blocked: false,
+      targetUrl: 'http://localhost:4200/action/form_test_request/test_request.1'
+    });
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    const originalPath = `${window.location.pathname}${window.location.search}`;
+    const button = {
+      model: 'test_request',
+      key: 'process_start',
+      type: 'button',
+      label: 'Avvia Processo',
+      leftIcon: 'it-settings',
+      authtoken: 'token',
+      req_id: 'req',
+      btn_action_type: 'post',
+      action_type: 'post',
+      url_action: '/gateway/camunda/start/Test_Process?update_data=True',
+      builder: false,
+      mode: 'form',
+      content: '/gateway/camunda/start/Test_Process?update_data=True',
+      is_admin: false,
+      skip_validation: true
+    };
+
+    try {
+      window.history.replaceState({}, '', '/action/form_test_request/test_request.1');
+      app.appManager.selectedModel = 'test_request';
+      app.renderer.formSubmission = { data: { rec_name: 'test_request.1' } };
+
+      await app.actionManager.runTopMenuAction(button);
+
+      expect(mainManagerMock.hardReloadToUrl).toHaveBeenCalledWith('/action/form_test_request/test_request.1');
+    } finally {
+      window.history.replaceState({}, '', originalPath || '/');
+    }
+  });
+
+  it('should post inline Formio action buttons to the resolved url_action', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.appManager.selectedModel = 'calendar';
+    const validateSpy = jasmine.createSpy('validate').and.returnValue([{ message: 'required' }]);
+    app.actionManager.setFormioViewerGetter(() => ({
+      formio: {
+        validate: validateSpy,
+        checkValidity: jasmine.createSpy('checkValidity'),
+        getComponent: jasmine.createSpy('getComponent').and.returnValue({ getValue: () => undefined })
+      }
+    } as any));
+
+    await app.onFormCustomEvent({
+      type: 'ozonInlineAction',
+      component: {
+        type: 'button',
+        key: 'esegui',
+        label: 'esegui',
+        showValidations: false,
+        properties: {
+          btn_action_type: 'post',
+          url_action: 'url_action'
+        },
+        logic: [
+          {
+            name: 'compute delete url',
+            trigger: {
+              type: 'json',
+              json: {
+                cat: ['/client/run/calendar_tasks/', { var: 'data.rec_name' }]
+              }
+            },
+            actions: [
+              {
+                name: 'update value',
+                type: 'value',
+                value: 'url_action'
+              }
+            ]
+          }
+        ]
+      },
+      data: {
+        rec_name: 'TASK-1',
+        tipo: 'task',
+        deleted: 0
+      }
+    });
+
+    expect(validateSpy).not.toHaveBeenCalled();
+    expect(apiMock.postActionPath).toHaveBeenCalledWith(
+      '/client/run/calendar_tasks/TASK-1',
+      jasmine.objectContaining({
+        rec_name: 'TASK-1',
+        tipo: 'task',
+        deleted: 0
+      })
+    );
+  });
+
   it('should ignore next_action path hints and hard reload using canonical redirect path', async () => {
     apiMock.getNextAction.and.resolveTo(makeResponse({
       mode: 'redirect',
@@ -1665,6 +1815,157 @@ describe('AppComponent', () => {
     expect(buttons.map((button: any) => button.label)).toEqual(['Aggiorna']);
     expect(buttons[0].action_type).toBe('save');
     expect(buttons[0].url_action).toBe('');
+  });
+
+  it('should bind boolean form editor selects for sys and dashboard menu', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.appManager.viewMode = 'form';
+    app.appManager.selectedModel = 'component';
+    app.tableManager.selectedRecordName = 'FORM-1';
+    app.renderer.formSchema = { display: 'form', components: [] };
+    app.renderer.formSubmission = {
+      data: {
+        rec_name: 'FORM-1',
+        title: 'Form 1',
+        sys: false,
+        create_menu_dashboard: true
+      }
+    };
+    app.builder.builderEligibleCurrentForm = true;
+    app.builder.formEditorExplicitlyOpened = true;
+
+    fixture.detectChanges();
+
+    const sysSelect = fixture.nativeElement.querySelector('#fe-sys') as HTMLSelectElement;
+    const dashboardSelect = fixture.nativeElement.querySelector('#fe-create_menu_dashboard') as HTMLSelectElement;
+
+    expect(sysSelect.value).toBe('0');
+    expect(dashboardSelect.value).toBe('1');
+
+    app.updateFormEditorBooleanField('sys', '1');
+    app.updateFormEditorBooleanField('create_menu_dashboard', '0');
+
+    expect(app.formEditorData.sys).toBeTrue();
+    expect(app.formEditorData.create_menu_dashboard).toBeFalse();
+  });
+
+  it('should expose models JSON rules fields as lightweight JSON editors in form editor settings', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.appManager.viewMode = 'form';
+    app.appManager.selectedModel = 'component';
+    app.tableManager.selectedRecordName = 'FORM-1';
+    app.renderer.formSchema = { display: 'form', components: [] };
+    app.renderer.formSubmission = {
+      data: {
+        rec_name: 'FORM-1',
+        title: 'Form 1',
+        properties: {
+          models_groups: [{ model: 'request', groups: ['admin'] }]
+        }
+      }
+    };
+    app.builder.builderEligibleCurrentForm = true;
+    app.builder.formEditorExplicitlyOpened = true;
+    app.builder.formEditorActiveTab = 'config';
+
+    fixture.detectChanges();
+
+    const jsonRow = fixture.nativeElement.querySelector('.ozon-models-json-row') as HTMLElement;
+    const columns = jsonRow.querySelectorAll('.col-sm-6');
+    const editors = jsonRow.querySelectorAll('app-ozon-json-editor');
+
+    expect(jsonRow).not.toBeNull();
+    expect(columns.length).toBe(2);
+    expect(editors.length).toBe(2);
+    expect(app.formEditorJsonPropertyValue('models_groups')).toContain('"model": "request"');
+    expect(app.formEditorJsonPropertyInvalid('models_groups')).toBeFalse();
+
+    app.updateFormEditorJsonProperty('models_restricted_fields', '[{"model":"request","fields":["secret"]}]');
+
+    expect(app.formEditorProperties['models_restricted_fields']).toBe('[{"model":"request","fields":["secret"]}]');
+    expect(app.formEditorJsonPropertyInvalid('models_restricted_fields')).toBeFalse();
+
+    app.updateFormEditorJsonProperty('models_groups', '[invalid]');
+
+    expect(app.formEditorJsonPropertyInvalid('models_groups')).toBeTrue();
+  });
+
+  it('should save the form editor payload and return to the origin list', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.appManager.viewMode = 'form';
+    app.appManager.selectedModel = 'component';
+    app.tableManager.selectedRecordName = 'FORM-1';
+    app.renderer.formSchema = { display: 'form', components: [] };
+    app.renderer.rawFormSchema = app.renderer.formSchema;
+    app.renderer.formSubmission = {
+      data: {
+        rec_name: 'FORM-1',
+        title: 'Form 1',
+        sys: false,
+        create_menu_dashboard: true
+      }
+    };
+    app.renderer.markFormDataReadyForBuilder();
+    app.builder.formEditorDesignContext = true;
+    app.actionManager.currentFormOriginPath = '/action/list_component';
+    const navigateSpy = spyOn(app.actionManager as any, 'navigateToPath').and.resolveTo();
+
+    await app.saveCurrentRecord();
+
+    expect(apiMock.updateRecord).toHaveBeenCalledWith('component', 'FORM-1', jasmine.objectContaining({
+      rec_name: 'FORM-1',
+      sys: false,
+      create_menu_dashboard: true
+    }));
+    expect(navigateSpy).toHaveBeenCalledWith('/action/list_component', true);
+    expect(apiMock.postActionPath).not.toHaveBeenCalled();
+  });
+
+  it('should save the form editor payload from draft when Form.io live schema is temporarily unreadable', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.appManager.viewMode = 'form';
+    app.appManager.selectedModel = 'component';
+    app.renderer.formSchema = { display: 'form', components: [] };
+    app.renderer.rawFormSchema = app.renderer.formSchema;
+    app.renderer.formSubmission = {
+      data: {
+        rec_name: 'FORM-NEW',
+        title: 'Form new',
+        sys: false,
+        create_menu_dashboard: true
+      }
+    };
+    app.renderer.markFormDataReadyForBuilder();
+    app.builder.formEditorDesignContext = true;
+    app.builder.builderSchemaDraft = {
+      display: 'form',
+      components: [
+        { type: 'textfield', key: 'field_a', label: 'Field A', input: true },
+        { type: 'textfield', key: 'field_b', label: 'Field B', input: true }
+      ]
+    };
+    app.actionManager.currentFormOriginPath = '/action/list_component';
+    const navigateSpy = spyOn(app.actionManager as any, 'navigateToPath').and.resolveTo();
+    const activeBuilderHost = {
+      getLiveSchema: () => {
+        throw new TypeError(`Cannot read properties of undefined (reading 'element')`);
+      }
+    };
+
+    await app.actionManager.saveCurrentRecord(activeBuilderHost as any, undefined);
+
+    expect(apiMock.updateRecord).toHaveBeenCalledWith('component', 'FORM-NEW', jasmine.objectContaining({
+      rec_name: 'FORM-NEW',
+      components: [
+        { type: 'textfield', key: 'field_a', label: 'Field A', input: true },
+        { type: 'textfield', key: 'field_b', label: 'Field B', input: true }
+      ]
+    }));
+    expect(navigateSpy).toHaveBeenCalledWith('/action/list_component', true);
   });
 
   it('should load dashboard cards only from mode card payload', async () => {
@@ -2191,6 +2492,45 @@ describe('AppComponent', () => {
     expect(app.appManager.currentUserName).toBe('Giulia Verdi');
   });
 
+  it('should use session user_data avatar_url before the current avatar fallback', async () => {
+    apiMock.getSession.and.resolveTo({
+      content: {
+        data: {
+          user: {
+            avatar: '/avatar/fallback.png',
+            user_data: {
+              uid: 'mrossi',
+              avatar_url: '/avatar/mario.png'
+            }
+          }
+        }
+      }
+    });
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+
+    await app.appManager.loadSession();
+    expect(app.appManager.userAvatarUrl).toBe('/avatar/mario.png');
+
+    apiMock.getSession.and.resolveTo({
+      content: {
+        data: {
+          user: {
+            avatar: '/avatar/fallback.png',
+            user_data: {
+              uid: 'mrossi'
+            }
+          }
+        }
+      }
+    });
+
+    await app.appManager.loadSession();
+
+    expect(app.appManager.userAvatarUrl).toBe('/avatar/mario.png');
+  });
+
   it('should enable builder toggle for admin users from session.is_admin', async () => {
     apiMock.getSession.and.resolveTo({
       content: {
@@ -2210,12 +2550,36 @@ describe('AppComponent', () => {
     expect(app.showBuilderToggle).toBeTrue();
   });
 
+  it('should enable builder toggle for tech users from session.is_tech', async () => {
+    apiMock.getSession.and.resolveTo({
+      content: {
+        data: {
+          name: 'Mario Rossi',
+          is_admin: false,
+          is_tech: true
+        }
+      }
+    });
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+
+    await app.appManager.loadSession();
+    app.onBuilderSwitchChanged(true);
+
+    expect(app.isAdminUser).toBeFalse();
+    expect(app.isTechUser).toBeTrue();
+    expect(app.showBuilderToggle).toBeTrue();
+    expect(app.builderEnabled).toBeTrue();
+  });
+
   it('should hide builder toggle when session.is_admin is false', async () => {
     apiMock.getSession.and.resolveTo({
       content: {
         data: {
           name: 'Mario Rossi',
           is_admin: false,
+          is_tech: false,
           user: {
             user_type: 'admin'
           }
@@ -2906,6 +3270,73 @@ describe('AppComponent', () => {
     expect(app.displayCell(app.tableRows[0], 'country')).toBe('Italia');
   });
 
+  it('should render resource select labels in list table using component template', async () => {
+    apiMock.streamList.and.callFake(async (model: string, payload: ListRequestPayload, onItem: (item: unknown) => void, _onMeta, options) => {
+      expect(model).toBe('auth.user');
+      expect(payload).toEqual(jasmine.objectContaining({
+        query: {},
+        skip: 0,
+        limit: 1000,
+        order: 'rec_name asc'
+      }));
+      expect(options).toEqual({ stream: false });
+      onItem({
+        rec_name: 'a.gerace',
+        data: {
+          rec_name: 'a.gerace',
+          full_name: 'Antonio Gerace'
+        }
+      });
+      return {
+        result: {
+          count: 1,
+          totalCount: 1,
+          contentType: 'application/json',
+          order: '',
+          skip: '0',
+          limit: '1000',
+          columnsRaw: '',
+          columns: null
+        },
+        payloadLabel: 'default',
+        retries: 0
+      };
+    });
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+
+    await app.actionManager.applyActionResponse(makeResponse({
+      mode: 'list',
+      model: 'task',
+      columns: { rec_name: 'Record', owner: 'Owner' },
+      total_count: 1,
+      schema: {
+        components: [
+          {
+            type: 'select',
+            key: 'owner',
+            dataSrc: 'resource',
+            data: { resource: 'auth.user' },
+            idPath: 'rec_name',
+            template: '<span>{{ item.data.full_name }}</span>'
+          }
+        ]
+      },
+      data: [
+        {
+          rec_name: 'TASK-1',
+          owner: 'a.gerace'
+        }
+      ]
+    }));
+
+    await app.tableManager.warmTableCellRenderers(app.tableManager.allRows);
+
+    expect(apiMock.streamList).toHaveBeenCalled();
+    expect(app.displayCell(app.tableRows[0], 'owner')).toBe('Antonio Gerace');
+  });
+
   it('should fallback to model schema to render select labels in action lists without inline schema', async () => {
     apiMock.getRecordSchema.and.resolveTo(makeResponse({ mode: 'form', schema: {
       components: [
@@ -3105,10 +3536,18 @@ describe('AppComponent', () => {
     expect(apiMock.streamList).toHaveBeenCalled();
   });
 
-  it('should ignore deprecated table filter text when building server-side query payload', async () => {
+  it('should merge table search filter text when building server-side query payload', async () => {
     apiMock.streamList.and.callFake(async (_model, payload, _onItem, _onMeta) => {
       expect(payload.query).toEqual({
-        stato: 'APERTO'
+        $and: [
+          { stato: 'APERTO' },
+          {
+            $or: [
+              { rec_name: { $regex: 'alpha', $options: 'i' } },
+              { titolo: { $regex: 'alpha', $options: 'i' } }
+            ]
+          }
+        ]
       });
       return {
         result: {
@@ -3145,6 +3584,46 @@ describe('AppComponent', () => {
     app.filterText = 'alpha';
 
     await app.actionManager.loadRecords();
+
+    expect(apiMock.streamList).toHaveBeenCalled();
+  });
+
+  it('should apply list filter rules as Mongo-compatible query payload', async () => {
+    apiMock.streamList.and.callFake(async (_model, payload, _onItem, _onMeta) => {
+      expect(payload.query).toEqual({
+        $and: [
+          { status: { $regex: 'cons', $options: 'i' } },
+          { qty: { $gte: 2 } }
+        ]
+      });
+      return {
+        result: {
+          count: 0,
+          totalCount: 0,
+          contentType: 'application/x-ndjson',
+          order: '',
+          skip: '0',
+          limit: '20',
+          columnsRaw: '',
+          columns: null
+        },
+        payloadLabel: 'default',
+        retries: 0
+      };
+    });
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.selectedModel = 'anagrafica';
+
+    app.onListFilterRulesChange({
+      condition: 'and',
+      rules: [
+        { field: 'status', operator: 'contains', value: 'cons' },
+        { field: 'qty', operator: '>=', value: 2 }
+      ]
+    });
+    await app.applyListFilters();
 
     expect(apiMock.streamList).toHaveBeenCalled();
   });
@@ -3837,6 +4316,7 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
     app.appManager.isAdminUser = true;
+    app.appManager.builderFeatureEnabled = true;
     app.appManager.setBuilderEnabled(true, false);
     app.appManager.selectedModel = 'component';
     app.tableManager.selectedModel = 'component';
@@ -3859,6 +4339,59 @@ describe('AppComponent', () => {
         title: 'Demo'
       })
     });
+  });
+
+  it('should fallback to fields.model or action name for selectedModel if content.model is empty', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    app.appManager.selectedModel = 'previous_model';
+
+    apiMock.getAction.and.resolveTo(makeResponse({
+      mode: 'list',
+      model: '',
+      title: 'Test Request List',
+      fields: { action_name: 'list_test_request', model: 'test_request' },
+      columns: { rec_name: 'Record' },
+      data: [{ rec_name: 'TR-1' }]
+    }));
+
+    await app.actionManager['runActionRoute']('/action/list_test_request');
+
+    expect(app.appManager.selectedModel).toBe('test_request');
+    expect(app.tableManager.selectedModel).toBe('test_request');
+    expect(app.renderer.selectedModel).toBe('test_request');
+
+    apiMock.getAction.and.resolveTo(makeResponse({
+      mode: 'list',
+      model: '',
+      title: 'Test Request List',
+      fields: { action_name: 'list_test_request' },
+      columns: { rec_name: 'Record' },
+      data: [{ rec_name: 'TR-2' }]
+    }));
+
+    await app.actionManager['runActionRoute']('/action/list_test_request');
+    expect(app.appManager.selectedModel).toBe('test_request');
+  });
+
+  it('should extract fields from row.data inside buildTableRenderSubmission', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    const rows = [
+      {
+        rec_name: 'row-1',
+        data: {
+          persona: 'Rossi Mario',
+          stato: 'nuovo'
+        }
+      }
+    ];
+    const result = app.tableManager['buildTableRenderSubmission'](rows);
+    expect(result).toEqual(jasmine.objectContaining({
+      rec_name: 'row-1',
+      persona: 'Rossi Mario',
+      stato: 'nuovo'
+    }));
   });
 
   describe('requireResponseObject', () => {

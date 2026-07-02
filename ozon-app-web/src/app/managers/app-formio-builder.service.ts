@@ -69,7 +69,7 @@ export class AppFormioBuilderService {
     }
 
     get canOpenFormEditor(): boolean {
-        return this.builderEnabled && this.appManager.isAdminUser && Boolean(this.renderer.formSchema) && !this.isFormEditorPage;
+        return this.builderEnabled && this.appManager.builderFeatureEnabled && Boolean(this.renderer.formSchema) && !this.isFormEditorPage;
     }
 
     get canPreviewFormEditor(): boolean {
@@ -83,7 +83,14 @@ export class AppFormioBuilderService {
 
     get formEditorProperties(): Record<string, unknown> {
         const p = this.formEditorData['properties'];
-        return this.isRecord(p) ? p : {};
+        if (this.isRecord(p)) return p;
+        if (typeof p === 'string' && p.trim()) {
+            try {
+                const parsed = JSON.parse(p.replace(/'/g, '"'));
+                if (this.isRecord(parsed)) return parsed;
+            } catch {}
+        }
+        return {};
     }
 
     isRecord(v: unknown): v is Record<string, unknown> { return !!v && typeof v === 'object' && !Array.isArray(v); }
@@ -98,7 +105,7 @@ export class AppFormioBuilderService {
     }
 
     private shouldRestoreBuilderMode(): boolean {
-        return this.builderEnabled && this.appManager.isAdminUser && this.builderModePreferred;
+        return this.builderEnabled && this.appManager.builderFeatureEnabled && this.builderModePreferred;
     }
 
     onBuilderSwitchChanged(enabled: boolean): void {
@@ -107,7 +114,7 @@ export class AppFormioBuilderService {
     }
 
     setBuilderEnabled(enabled: boolean, persist: boolean): void {
-        const canEnable = this.appManager.isAdminUser;
+        const canEnable = this.appManager.builderFeatureEnabled;
         const nextEnabled = canEnable ? Boolean(enabled) : false;
         this.appManager.setBuilderEnabled(nextEnabled, persist);
         if (!nextEnabled) {
@@ -148,9 +155,64 @@ export class AppFormioBuilderService {
         }
     }
 
+    formEditorBooleanSelectValue(key: string, defaultValue = '0'): string {
+        const data = this.formEditorData;
+        if (!Object.prototype.hasOwnProperty.call(data, key)) return defaultValue;
+        const value = data[key];
+        if (typeof value === 'boolean') return value ? '1' : '0';
+        if (typeof value === 'number') return value > 0 ? '1' : '0';
+        if (typeof value === 'string') {
+            const normalized = value.trim().toLowerCase();
+            if (['1', 'true', 'yes', 'si', 'sì', 'on'].includes(normalized)) return '1';
+            if (['0', 'false', 'no', 'off', ''].includes(normalized)) return '0';
+        }
+        return value ? '1' : '0';
+    }
+
+    updateFormEditorBooleanField(key: string, value: unknown): void {
+        this.updateFormEditorField(key, this.toBooleanFlag(value));
+    }
+
     updateFormEditorProperty(key: string, value: unknown): void {
         const currentProps = this.formEditorProperties;
-        this.updateFormEditorField('properties', { ...currentProps, [key]: value });
+        const nextProps = { ...currentProps, [key]: value };
+        
+        if (!this.renderer.formSubmission) this.renderer.formSubmission = { data: {} };
+        const data: Record<string, unknown> = { ...this.renderer.formSubmission.data, properties: nextProps };
+        
+        if (key === 'query') {
+            data['queryformeditable'] = value;
+        } else if (key === 'orderby' || key === 'Orderby') {
+            data['sort'] = value;
+        }
+        
+        this.renderer.formSubmission.data = data;
+    }
+
+    formEditorJsonPropertyValue(key: string): string {
+        const value = this.formEditorProperties[key];
+        if (value == null) return '';
+        if (typeof value === 'string') return value;
+        try {
+            return JSON.stringify(value, null, 2);
+        } catch {
+            return String(value);
+        }
+    }
+
+    updateFormEditorJsonProperty(key: string, value: unknown): void {
+        this.updateFormEditorProperty(key, typeof value === 'string' ? value : String(value ?? ''));
+    }
+
+    formEditorJsonPropertyInvalid(key: string): boolean {
+        const value = this.formEditorJsonPropertyValue(key).trim();
+        if (!value) return false;
+        try {
+            JSON.parse(value);
+            return false;
+        } catch {
+            return true;
+        }
     }
 
     openFormEditorInline(): void {
@@ -193,7 +255,12 @@ export class AppFormioBuilderService {
 
     syncBuilderSchemaFromLiveInstance(activeBuilderHost?: OzonFormBuilderHostComponent): void {
         if (!this.builderSchemaDraft) return;
-        const liveSchema = activeBuilderHost?.getLiveSchema();
+        let liveSchema: Record<string, unknown> | null = null;
+        try {
+            liveSchema = activeBuilderHost?.getLiveSchema() ?? null;
+        } catch {
+            liveSchema = null;
+        }
         if (!liveSchema) { console.debug('[builder] syncBuilderSchemaFromLiveInstance: no live instance available'); return; }
         const liveComponents = Array.isArray(liveSchema['components']) ? liveSchema['components'] as unknown[] : [];
         const draftComponents = Array.isArray(this.builderSchemaDraft['components']) ? this.builderSchemaDraft['components'] as unknown[] : [];
@@ -268,7 +335,7 @@ export class AppFormioBuilderService {
     }
 
     warmFormBuilderConfig(): void {
-        if (!this.appManager.isAdminUser || !this.builderEnabled || !this.builderEligibleCurrentForm) return;
+        if (!this.appManager.builderFeatureEnabled || !this.builderEnabled || !this.builderEligibleCurrentForm) return;
         void this.refreshFormBuilderConfigForCurrentForm();
     }
 
@@ -285,6 +352,17 @@ export class AppFormioBuilderService {
         if (!model || model === 'no_model') return '';
         if (model.startsWith('?')) model = model.slice(1).trim();
         return model;
+    }
+
+    private toBooleanFlag(value: unknown): boolean {
+        if (typeof value === 'boolean') return value;
+        if (typeof value === 'number') return value > 0;
+        if (typeof value === 'string') {
+            const normalized = value.trim().toLowerCase();
+            if (['1', 'true', 'yes', 'si', 'sì', 'on'].includes(normalized)) return true;
+            if (['0', 'false', 'no', 'off', ''].includes(normalized)) return false;
+        }
+        return Boolean(value);
     }
 
     private async loadParentModelBuilderComponents(model: string): Promise<Record<string, unknown> | null> {

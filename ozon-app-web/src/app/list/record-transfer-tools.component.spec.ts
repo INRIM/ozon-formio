@@ -58,8 +58,10 @@ describe('RecordTransferToolsComponent', () => {
       'importClean',
       'updateRecord',
       'streamList',
-      'deleteAction'
+      'deleteAction',
+      'filterFastSearch'
     ]);
+    apiMock.filterFastSearch.and.resolveTo({ count: 0, totalCount: 0, contentType: 'application/json', data: [] } as any);
     apiMock.getAction.and.resolveTo({ data: [] });
     apiMock.getRecordSchema.and.resolveTo({ components: [] });
     apiMock.importData.and.resolveTo({ status: 'ok', rec_name: 'row-1' });
@@ -168,6 +170,48 @@ describe('RecordTransferToolsComponent', () => {
       skip: 0,
       limit: 1
     }));
+    expect((component as any).saveGeneratedFile).toHaveBeenCalled();
+  });
+
+  it('should export filtered rows through the fast search endpoint if fast search is active', async () => {
+    apiMock.filterFastSearch.and.callFake(async (actionName: string, payload: any, onItem: (item: unknown) => void) => {
+      onItem({ rec_name: 'fs-row-1', title: 'FS Demo' });
+      return { count: 1, totalCount: 1, contentType: 'application/json', data: [] } as any;
+    });
+    component.exportConfig = {
+      visible: true,
+      model: 'component.demo',
+      searchModel: 'demo.model',
+      parent: '',
+      hideAll: true,
+      xlsFilteredLabel: 'XLS',
+      csvFilteredLabel: 'CSV',
+      jsonFilteredLabel: 'JSON'
+    };
+    component.searchContext = {
+      searchModel: 'demo.model',
+      dataModel: 'component.demo',
+      actionName: 'list_component_demo',
+      baseQuery: {},
+      currentQuery: {},
+      order: 'rec_name asc',
+      totalCount: 1,
+      fastSearchActive: true,
+      fastSearchFormModel: 'fs-form',
+      fastSearchDataModel: 'demo.model',
+      fastSearchQueryFields: [{ name: 'name', value: 'foo' }],
+      fastSearchFormData: { name: 'foo' }
+    };
+    spyOn<any>(component, 'saveGeneratedFile');
+
+    await component.exportFiltered('json');
+
+    expect(apiMock.filterFastSearch).toHaveBeenCalledWith('list_component_demo', jasmine.objectContaining({
+      query_fields: [{ name: 'name', value: 'foo' }],
+      order: 'rec_name asc',
+      skip: 0,
+      limit: 1
+    }), jasmine.any(Function));
     expect((component as any).saveGeneratedFile).toHaveBeenCalled();
   });
 

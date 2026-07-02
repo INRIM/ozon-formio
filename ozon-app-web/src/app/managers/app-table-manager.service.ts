@@ -64,11 +64,22 @@ export class AppTableManagerService {
     private pendingReloadRequested = false;
     private pendingReloadPreservePaginatorState = false;
     listQuerySeed: Record<string, unknown> | null = null;
+    menuBaseQuery: Record<string, unknown> | null = null;
+    menuBaseSort = '';
     private tableRenderSchema: Record<string, unknown> | null = null;
     private tableCellRenderers = new Map<string, (value: unknown) => string>();
     private tableFieldRendererCache = new Map<string, ((value: unknown) => string) | null>();
 
-    rawFormSchema: Record<string, unknown> | null = null;
+    private _rawFormSchema: Record<string, unknown> | null = null;
+    get rawFormSchema(): Record<string, unknown> | null {
+        return this._rawFormSchema;
+    }
+    set rawFormSchema(val: Record<string, unknown> | null) {
+        this._rawFormSchema = val;
+        if (this.tableColumns && this.tableColumns.length) {
+            this.syncQueryBuilderFields(this.tableColumns);
+        }
+    }
     rawFormSchemaModel = '';
     listExportConfig: ListExportConfig = {
         visible: false,
@@ -168,6 +179,12 @@ export class AppTableManagerService {
 
     setQueryMode(mode: QueryMode): void { this.queryMode = mode; }
 
+    setQueryBuilderRules(rules: RuleSet): void {
+        this.queryMode = 'builder';
+        this.queryBuilderRules = this.cloneRuleSet(rules);
+        this.onQueryBuilderChanged();
+    }
+
     onQueryBuilderChanged(): void {
         if (this.queryMode !== 'builder') return;
         const query = this.queryBuilderToBackend(this.queryBuilderRules);
@@ -177,6 +194,20 @@ export class AppTableManagerService {
     resetQueryBuilderRules(): void {
         this.queryBuilderRules = { condition: 'and', rules: [] };
         this.onQueryBuilderChanged();
+    }
+
+    applyQueryBuilderFilters(): void {
+        this.queryMode = 'builder';
+        this.onQueryBuilderChanged();
+        this.skip = 0;
+        this.currentPageIndex = 0;
+    }
+
+    resetQueryBuilderFilters(): void {
+        this.queryMode = 'builder';
+        this.skip = 0;
+        this.currentPageIndex = 0;
+        this.resetQueryBuilderRules();
     }
 
     onFilterChanged(refreshFn: () => void): void {
@@ -222,17 +253,19 @@ export class AppTableManagerService {
 
     onTableRowClick(row: TableRow, event: Event, rebuildMenusFn: () => void): void {
         if (this.isIgnoredRowInteractionTarget(event)) return;
-        this.selectedRecordName = String(row.__rec_name ?? '');
-        this.selectedRows = [row];
+        this.selectSingleRow(row);
         rebuildMenusFn();
     }
 
-    async onTableRowDblClick(row: TableRow, event: Event, rebuildMenusFn: () => void, openRecordFn: () => Promise<void>): Promise<void> {
+    async onTableRowOpen(row: TableRow, event: Event, rebuildMenusFn: () => void, openRecordFn: () => Promise<void>): Promise<void> {
         if (this.isIgnoredRowInteractionTarget(event)) return;
-        this.selectedRecordName = String(row.__rec_name ?? '');
-        this.selectedRows = [row];
+        this.selectSingleRow(row);
         rebuildMenusFn();
         await openRecordFn();
+    }
+
+    async onTableRowDblClick(row: TableRow, event: Event, rebuildMenusFn: () => void, openRecordFn: () => Promise<void>): Promise<void> {
+        await this.onTableRowOpen(row, event, rebuildMenusFn, openRecordFn);
     }
 
     onTableSelectionChange(value: unknown, rebuildMenusFn: () => void): void {
@@ -274,6 +307,8 @@ export class AppTableManagerService {
         this.currentPageIndex = 0;
         this.tableTotalRecords = 0;
         this.listQuerySeed = null;
+        this.menuBaseQuery = null;
+        this.menuBaseSort = '';
         this.clearTableCellRenderers();
         this.lastQuerySignature = '';
         this.remoteSelectCache.clear();
@@ -295,26 +330,39 @@ export class AppTableManagerService {
     }
 
     parseQueryInput(setStatusFn: (m: string, e: boolean) => void): Record<string, unknown> | null {
+        let userQuery: Record<string, unknown> | null = null;
         if (this.queryMode === 'builder') {
             try {
                 const query = this.queryBuilderToBackend(this.queryBuilderRules);
                 this.queryText = JSON.stringify(query, null, 2);
-                return this.mergeMongoQueries([this.listQuerySeed, query].filter((entry): entry is Record<string, unknown> => Boolean(entry && Object.keys(entry).length)));
+                userQuery = query;
             } catch (e) {
                 setStatusFn(this.errorMessage(e), true);
                 return null;
             }
+        } else {
+            const raw = (this.queryText || '').trim();
+            if (raw) {
+                try {
+                    const p = JSON.parse(raw);
+                    if (!p || typeof p !== 'object' || Array.isArray(p)) throw new Error('Query JSON deve essere un oggetto');
+                    userQuery = p as Record<string, unknown>;
+                } catch (e) {
+                    setStatusFn(this.errorMessage(e), true);
+                    return null;
+                }
+            }
         }
-        const raw = (this.queryText || '').trim();
-        if (!raw) return this.mergeMongoQueries([this.listQuerySeed].filter((entry): entry is Record<string, unknown> => Boolean(entry && Object.keys(entry).length)));
-        try {
-            const p = JSON.parse(raw);
-            if (!p || typeof p !== 'object' || Array.isArray(p)) throw new Error('Query JSON deve essere un oggetto');
-            return this.mergeMongoQueries([this.listQuerySeed, p as Record<string, unknown>].filter((entry): entry is Record<string, unknown> => Boolean(entry && Object.keys(entry).length)));
-        } catch (e) {
-            setStatusFn(this.errorMessage(e), true);
-            return null;
-        }
+
+        const searchQuery = this.buildSearchQuery(this.filterText);
+
+        const queriesToMerge: Record<string, unknown>[] = [];
+        if (this.menuBaseQuery) queriesToMerge.push(this.menuBaseQuery);
+        if (this.listQuerySeed) queriesToMerge.push(this.listQuerySeed);
+        if (userQuery) queriesToMerge.push(userQuery);
+        if (searchQuery) queriesToMerge.push(searchQuery);
+
+        return this.mergeMongoQueries(queriesToMerge);
     }
 
     buildListPayload(): ListRequestPayload {
@@ -327,8 +375,17 @@ export class AppTableManagerService {
     }
 
     buildFastSearchPayload(): FastSearchPayload {
+        const queriesToMerge: Record<string, unknown>[] = [];
+        if (this.menuBaseQuery) queriesToMerge.push(this.menuBaseQuery);
+        if (this.listQuerySeed) queriesToMerge.push(this.listQuerySeed);
+        const searchQuery = this.buildSearchQuery(this.filterText);
+        if (searchQuery) queriesToMerge.push(searchQuery);
+
+        const mergedQuery = this.mergeMongoQueries(queriesToMerge);
+
         return {
             query_fields: [...this.fastSearchQueryFields],
+            query: Object.keys(mergedQuery).length ? mergedQuery : undefined,
             order: (this.order || 'rec_name asc').trim() || 'rec_name asc',
             skip: Number.isFinite(this.skip) && this.skip >= 0 ? this.skip : 0,
             limit: Number.isFinite(this.limit) && this.limit > 0 ? this.limit : 20
@@ -934,6 +991,7 @@ export class AppTableManagerService {
             return revision;
         }
         this.applyTableCellRendererSchema(this.cloneSchema(schema), revision, false);
+        this.tableRenderLoading = Boolean(rows.length);
         return revision;
     }
 
@@ -944,12 +1002,13 @@ export class AppTableManagerService {
             return;
         }
         const sampleSubmission = this.buildTableRenderSubmission(rows);
-        if (!sampleSubmission) return;
         let renderSchema = this.cloneSchema(schema);
-        try {
-            renderSchema = await this.hydrateRemoteSelectSchema(renderSchema, sampleSubmission);
-        } catch {
-            // Fallback: keep raw schema if remote select hydration fails.
+        if (sampleSubmission) {
+            try {
+                renderSchema = await this.hydrateRemoteSelectSchema(renderSchema, sampleSubmission);
+            } catch {
+                // Fallback: keep raw schema if remote select hydration fails.
+            }
         }
         this.applyTableCellRendererSchema(renderSchema, revision, true);
     }
@@ -1169,9 +1228,24 @@ export class AppTableManagerService {
         const hydrated = this.cloneSchema(schema);
         const formKey = this.resolveSchemaFormKey(hydrated, formModel);
         this.normalizeFormTableComponents(hydrated);
-        this.normalizeFormWysiwygComponents(hydrated);
+        this.normalizeFormWysiwygComponents(hydrated, sub);
 
         for (const comp of this.findSelectComponents(hydrated)) {
+            const resourcePayload = this.extractResourceSelectPayload(comp);
+            if (resourcePayload) {
+                try {
+                    const resourceOptions = await this.fetchResourceSelectOptions(comp, resourcePayload);
+                    const selectedOptions = this.extractSubmissionSelectOptions(comp, sub);
+                    this.applyRemoteSelectValues(comp, this.mergeSelectValues(resourceOptions, selectedOptions));
+                } catch (error) {
+                    const selectedOptions = this.extractSubmissionSelectOptions(comp, sub);
+                    this.applyRemoteSelectValues(comp, selectedOptions);
+                    console.error('Resource select fetch failed', error);
+                }
+                this.ensureSelectTemplate(comp);
+                continue;
+            }
+
             const payload = this.extractRemoteSelectPayload(comp, formKey);
             if (payload) {
                 try {
@@ -1218,8 +1292,38 @@ export class AppTableManagerService {
         return '';
     }
 
+    readFirstNumber(...candidates: unknown[]): number | null {
+        for (const entry of candidates) {
+            if (typeof entry === 'number' && Number.isFinite(entry)) return entry;
+            if (typeof entry === 'string') {
+                const parsed = Number(entry.trim());
+                if (Number.isFinite(parsed)) return parsed;
+            }
+        }
+        return null;
+    }
+
     cloneSchema(s: Record<string, unknown>): Record<string, unknown> {
         return typeof structuredClone === 'function' ? structuredClone(s) : JSON.parse(JSON.stringify(s));
+    }
+
+    private cloneRuleSet(rules: RuleSet): RuleSet {
+        const condition = String(rules?.condition ?? 'and').toLowerCase() === 'or' ? 'or' : 'and';
+        const entries = Array.isArray(rules?.rules) ? rules.rules : [];
+        return {
+            condition,
+            rules: entries
+                .map(entry => {
+                    if (entry && Array.isArray((entry as RuleSet).rules)) return this.cloneRuleSet(entry as RuleSet);
+                    const rule = entry as Rule;
+                    return {
+                        field: rule?.field,
+                        operator: rule?.operator,
+                        value: rule?.value
+                    };
+                })
+                .filter(entry => Boolean(entry))
+        };
     }
 
     toDisplayValue(v: unknown): string {
@@ -1516,6 +1620,11 @@ export class AppTableManagerService {
         return Boolean(target?.closest('button, input, label, select, textarea, a, [data-row-action], [data-row-select], [data-row-handle]'));
     }
 
+    private selectSingleRow(row: TableRow): void {
+        this.selectedRecordName = String(row.__rec_name ?? '');
+        this.selectedRows = [row];
+    }
+
     private syncPrimeSortFromOrder(orderValue: unknown): void {
         const raw = String(orderValue ?? '').trim();
         if (!raw) return;
@@ -1675,23 +1784,74 @@ export class AppTableManagerService {
 
     private syncQueryBuilderFields(columns: TableColumn[]): void {
         const fields: QueryBuilderConfig['fields'] = {};
+        const compMap = this.getModelSchemaComponentMap();
         columns.filter(c => c.field !== '__rowid' && c.field !== '__rec_name').forEach(c => {
-            fields[c.field] = { name: c.title || c.field, type: this.detectQueryFieldType(c.field) };
+            const comp = compMap.get(c.field);
+            const compLabel = comp && typeof comp['label'] === 'string' ? comp['label'].trim() : '';
+            const name = c.title && c.title !== c.field ? c.title : (compLabel || c.title || c.field);
+            fields[c.field] = { name, type: this.detectQueryFieldType(c.field) };
         });
         if (!fields['rec_name']) fields['rec_name'] = { name: 'Record', type: 'string' };
         this.queryBuilderConfig = { ...this.queryBuilderConfig, fields };
         this.pruneInvalidRules(this.queryBuilderRules, new Set(Object.keys(fields)));
     }
 
+    private getModelSchemaComponentMap(): Map<string, Record<string, unknown>> {
+        const map = new Map<string, Record<string, unknown>>();
+        if (!this._rawFormSchema) return map;
+        const comps = Array.isArray(this._rawFormSchema['components'])
+            ? (this._rawFormSchema['components'] as unknown[])
+            : Array.isArray(this._rawFormSchema) ? (this._rawFormSchema as unknown[]) : [];
+        this.collectFormioComponents(comps, map);
+        return map;
+    }
+
+    private mapComponentTypeToFieldType(type: string): string {
+        const t = String(type ?? '').trim().toLowerCase();
+        switch (t) {
+            case 'number':
+            case 'currency':
+                return 'number';
+            case 'checkbox':
+                return 'boolean';
+            case 'datetime':
+                return 'datetime';
+            case 'date':
+                return 'date';
+            case 'time':
+                return 'time';
+            default:
+                return 'string';
+        }
+    }
+
     private detectQueryFieldType(field: string): string {
+        const compMap = this.getModelSchemaComponentMap();
+        const comp = compMap.get(field);
+        if (comp && comp['type']) {
+            return this.mapComponentTypeToFieldType(String(comp['type']));
+        }
         for (const row of this.allRows) {
             const value = this.resolveFieldValue(row, field);
             if (value == null) continue;
             if (typeof value === 'number') return 'number';
             if (typeof value === 'boolean') return 'boolean';
+            if (typeof value === 'string') {
+                if (!value.trim()) continue;
+                return this.detectStringTemporalType(value) || 'string';
+            }
             return 'string';
         }
         return 'string';
+    }
+
+    private detectStringTemporalType(value: string): 'datetime' | 'date' | '' {
+        const v = String(value ?? '').trim();
+        if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(v)) return 'datetime';
+        if (/^\d{2}\/\d{2}\/\d{4}[ T]\d{2}:\d{2}/.test(v)) return 'datetime';
+        if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return 'date';
+        if (/^\d{2}\/\d{2}\/\d{4}$/.test(v)) return 'date';
+        return '';
     }
 
     private pruneInvalidRules(ruleset: RuleSet, allowedFields: Set<string>): void {
@@ -1952,12 +2112,15 @@ export class AppTableManagerService {
         const maxRows = Math.min(rows.length, 64);
         for (let index = 0; index < maxRows; index += 1) {
             const row = rows[index];
-            Object.entries(row).forEach(([field, value]) => {
-                if (field.startsWith('__')) return;
-                if (value === undefined || value === null) return;
-                if (Object.prototype.hasOwnProperty.call(sample, field)) return;
-                sample[field] = value;
-            });
+            const contexts = this.resolveRowValueContexts(row as TableRow);
+            for (const context of contexts) {
+                Object.entries(context).forEach(([field, value]) => {
+                    if (field.startsWith('__')) return;
+                    if (value === undefined || value === null) return;
+                    if (Object.prototype.hasOwnProperty.call(sample, field)) return;
+                    sample[field] = value;
+                });
+            }
         }
         return Object.keys(sample).length ? sample : null;
     }
@@ -1974,18 +2137,50 @@ export class AppTableManagerService {
         visit(schema);
     }
 
-    private normalizeFormWysiwygComponents(schema: Record<string, unknown>): void {
+    private normalizeFormWysiwygComponents(schema: Record<string, unknown>, submissionData: Record<string, unknown> | null = null): void {
         const visit = (node: unknown): void => {
             if (Array.isArray(node)) { node.forEach(visit); return; }
             if (!this.isRecord(node)) return;
             const key = String(node['key'] ?? '').trim().toLowerCase();
             const type = String(node['type'] ?? '').trim().toLowerCase();
-            const props = this.readComponentProperties(node);
-            const editorFlag = this.readFirstString(node['editor'], props['editor']).toLowerCase();
-            if (key === 'content' && type === 'textarea' && editorFlag === 'active') { node['editor'] = 'ckeditor'; node['wysiwyg'] = true; }
+            if (type === 'content' && this.isActiveWysiwygEditor(node)) {
+                this.activateContentWysiwygEditor(node, submissionData);
+            } else if (key === 'content' && type === 'textarea' && this.isActiveWysiwygEditor(node)) {
+                node['editor'] = 'quill';
+                node['wysiwyg'] = true;
+            }
             Object.values(node).forEach(visit);
         };
         visit(schema);
+    }
+
+    private isActiveWysiwygEditor(component: Record<string, unknown>): boolean {
+        const props = this.readComponentProperties(component);
+        return this.readFirstString(component['editor'], props['editor']).toLowerCase() === 'active';
+    }
+
+    private activateContentWysiwygEditor(component: Record<string, unknown>, submissionData: Record<string, unknown> | null = null): void {
+        const html = typeof component['html'] === 'string' ? component['html'] : '';
+        const key = String(component['key'] ?? '').trim();
+        component['type'] = 'textarea';
+        component['input'] = true;
+        component['editor'] = 'quill';
+        component['wysiwyg'] = true;
+        component['inputFormat'] = 'html';
+        component['tableView'] = false;
+        if (html && component['defaultValue'] == null) component['defaultValue'] = html;
+        if (html && key && submissionData && this.isBlankSubmissionValue(submissionData[key])) {
+            submissionData[key] = html;
+        }
+        delete component['html'];
+    }
+
+    private isBlankSubmissionValue(value: unknown): boolean {
+        if (value == null) return true;
+        if (typeof value === 'string') return !value.trim();
+        if (Array.isArray(value)) return value.length === 0;
+        if (this.isRecord(value)) return Object.keys(value).length === 0;
+        return false;
     }
 
     private appendCustomClass(source: unknown, className: string): string {
@@ -2014,6 +2209,7 @@ export class AppTableManagerService {
         const currModel = String(formKey || this.selectedModel || '').trim();
         const url = this.readFirstString(data['url'], comp['url'], this.readPropertyValue(props, ['url']));
         const src = this.readFirstString(comp['dataSrc'], props['src'], url ? 'url' : '');
+        if (src === 'resource') return null;
         const hasInlineValues = (Array.isArray(data['values']) && (data['values'] as unknown[]).length > 0) || (Array.isArray(comp['values']) && (comp['values'] as unknown[]).length > 0);
         if (src === 'values' || (!url && !src && hasInlineValues)) return null;
         const hasAbsoluteRemoteUrl = /^https?:\/\//i.test(url);
@@ -2049,6 +2245,36 @@ export class AppTableManagerService {
         return payload;
     }
 
+    private extractResourceSelectPayload(comp: Record<string, unknown>): { model: string; payload: ListRequestPayload } | null {
+        const data = this.isRecord(comp['data']) ? comp['data'] : {};
+        const props = this.readComponentProperties(comp);
+        const src = this.readFirstString(comp['dataSrc'], props['src']);
+        if (src !== 'resource') return null;
+
+        const model = this.readFirstString(data['resource'], comp['resource'], props['resource']);
+        if (!model) return null;
+
+        return {
+            model,
+            payload: {
+                query: this.normalizeResourceSelectQuery(data['query'], props['query'], data['filter'], props['filter']),
+                skip: 0,
+                limit: this.readFirstNumber(data['limit'], props['limit']) ?? 1000,
+                order: this.readFirstString(data['order'], props['order']) || 'rec_name asc'
+            }
+        };
+    }
+
+    private normalizeResourceSelectQuery(...candidates: unknown[]): Record<string, unknown> {
+        for (const candidate of candidates) {
+            if (!candidate) continue;
+            if (this.isRecord(candidate)) return candidate;
+            const parsed = this.parseJsonMaybe(candidate);
+            if (this.isRecord(parsed)) return parsed;
+        }
+        return {};
+    }
+
     private normalizeRemoteHeaders(raw: unknown): Array<{ key: string; value: string }> {
         if (!Array.isArray(raw)) return [];
         const headers: Array<{ key: string; value: string }> = [];
@@ -2078,6 +2304,24 @@ export class AppTableManagerService {
             .then((response: unknown) => this.normalizeRemoteSelectResponse(response, comp))
             .then((options: SelectValueOption[]) => { this.remoteSelectCache.set(cacheKey, options); return options; })
             .finally(() => { this.remoteSelectInflight.delete(cacheKey); });
+        this.remoteSelectInflight.set(cacheKey, request);
+        return request;
+    }
+
+    private async fetchResourceSelectOptions(comp: Record<string, unknown>, payload: { model: string; payload: ListRequestPayload }): Promise<SelectValueOption[]> {
+        const cacheKey = `resource:${this.stableStringify(payload)}`;
+        const cached = this.remoteSelectCache.get(cacheKey);
+        if (cached) return cached;
+        const inflight = this.remoteSelectInflight.get(cacheKey);
+        if (inflight) return inflight;
+        const options: SelectValueOption[] = [];
+        const request = this.api.streamList(payload.model, payload.payload, (item: unknown) => {
+            const option = this.toSelectValueOption(item, comp);
+            if (option) options.push(option);
+        }, undefined, { stream: false }).then(() => {
+            this.remoteSelectCache.set(cacheKey, options);
+            return options;
+        }).finally(() => { this.remoteSelectInflight.delete(cacheKey); });
         this.remoteSelectInflight.set(cacheKey, request);
         return request;
     }
@@ -2180,7 +2424,32 @@ export class AppTableManagerService {
     }
 
     private toSelectValueOption(e: unknown, component?: Record<string, unknown>): SelectValueOption | null {
-        return mapSelectValueOption(e, this.buildSelectOptionMappingConfig(component));
+        const option = mapSelectValueOption(e, this.buildSelectOptionMappingConfig(component));
+        if (!option || !component) return option;
+        const templatedLabel = this.renderSelectTemplateLabel(component, option);
+        if (templatedLabel) option.label = templatedLabel;
+        return option;
+    }
+
+    private renderSelectTemplateLabel(component: Record<string, unknown>, option: SelectValueOption): string {
+        const template = this.readFirstString(component['template']);
+        if (!template || !template.includes('{{')) return '';
+        const rendered = template.replace(/{{\s*([^}]+?)\s*}}/g, (_match, expression: string) => {
+            const value = this.resolveSelectTemplateExpression(String(expression), option);
+            return value == null ? '' : this.toDisplayValue(value);
+        });
+        return rendered.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+
+    private resolveSelectTemplateExpression(expression: string, option: SelectValueOption): unknown {
+        const normalized = expression
+            .replace(/\|\s*[^|]+$/g, '')
+            .replace(/\?\./g, '.')
+            .trim();
+        if (!normalized || normalized === 'item') return option.label || option.value;
+        if (!normalized.startsWith('item.')) return undefined;
+        const path = normalized.slice('item.'.length);
+        return this.resolvePath(option as unknown as Record<string, unknown>, path);
     }
 
     private computeRecordName(rec: Record<string, unknown>, idx: number): string {

@@ -9,6 +9,8 @@ import {
 import { SelectValueOption } from '../models/app.types';
 import { ListRequestPayload, RemoteSelectRequestPayload, requireResponseObject } from '../models/ozon.types';
 
+export const OZON_INLINE_ACTION_EVENT = 'ozonInlineAction';
+
 @Injectable()
 export class AppFormioRendererService {
     formSchema: Record<string, unknown> | null = null;
@@ -26,7 +28,8 @@ export class AppFormioRendererService {
 
     pendingHydrationPromise: Promise<void> | null = null;
     private isRefreshingDependentSelects = false;
-    private remoteSelectCache = new Map<string, SelectValueOption[]>();
+    private static readonly REMOTE_SELECT_CACHE_TTL_MS = 5 * 60 * 1000;
+    private remoteSelectCache = new Map<string, { value: SelectValueOption[]; expiresAt: number }>();
     private remoteSelectInflight = new Map<string, Promise<SelectValueOption[]>>();
     private pendingPostRenderHydration: {
         requestId: number;
@@ -120,6 +123,7 @@ export class AppFormioRendererService {
             });
         }
         this.normalizeMultipleSubmissionFields(normalized, schema);
+        this.normalizeFileSubmissionFields(normalized, schema);
         return normalized;
     }
 
@@ -135,8 +139,11 @@ export class AppFormioRendererService {
         const hydrated = this.cloneSchema(schema);
         const formKey = String(hydrated['key'] || hydrated['name'] || hydrated['path'] || this.selectedModel || '').trim();
         this.normalizeFormTableComponents(hydrated);
-        this.normalizeFormWysiwygComponents(hydrated);
+        this.normalizeFormWysiwygComponents(hydrated, sub);
+        this.normalizeFormContentComponents(hydrated);
         this.normalizeInteractiveSchemaComponents(hydrated);
+        this.normalizeFormJsonEditorComponents(hydrated);
+        this.stripClobberingDefaultsForSavedValues(hydrated, sub);
 
         for (const comp of this.findSelectComponents(hydrated)) {
             const resourcePayload = this.extractResourceSelectPayload(comp, formKey);
@@ -188,8 +195,11 @@ export class AppFormioRendererService {
         const hydrated = this.cloneSchema(schema);
         const formKey = String(hydrated['key'] || hydrated['name'] || hydrated['path'] || this.selectedModel || '').trim();
         this.normalizeFormTableComponents(hydrated);
-        this.normalizeFormWysiwygComponents(hydrated);
+        this.normalizeFormWysiwygComponents(hydrated, sub);
+        this.normalizeFormContentComponents(hydrated);
         this.normalizeInteractiveSchemaComponents(hydrated);
+        this.normalizeFormJsonEditorComponents(hydrated);
+        this.stripClobberingDefaultsForSavedValues(hydrated, sub);
 
         for (const comp of this.findSelectComponents(hydrated)) {
             const resourcePayload = this.extractResourceSelectPayload(comp, formKey);
@@ -221,6 +231,10 @@ export class AppFormioRendererService {
         if (!this.formSchema) return;
         const schema = this.formSchema;
         const formKey = String(schema['key'] || schema['name'] || schema['path'] || this.selectedModel || '').trim();
+        // Prefer the live submission over the snapshot captured at schedule time: values set
+        // client-side after render (customDefaultValue/logic) live here, and we must keep their
+        // option so the post-fetch schema swap doesn't drop the selected value.
+        const effectiveSub = this.isRecord(this.formSubmission?.data) ? this.formSubmission!.data : sub;
         let changed = false;
         for (const comp of this.findSelectComponents(schema)) {
             if (!this.isCurrentFormAsyncContext(contextId, schema)) return;
@@ -229,12 +243,12 @@ export class AppFormioRendererService {
                 try {
                     const resourceOptions = await this.fetchResourceSelectOptions(comp, resourcePayload);
                     if (!this.isCurrentFormAsyncContext(contextId, schema)) return;
-                    const selectedOptions = this.extractSubmissionSelectOptions(comp, sub);
+                    const selectedOptions = this.extractSubmissionSelectOptions(comp, effectiveSub);
                     this.applyRemoteSelectValues(comp, this.mergeSelectValues(resourceOptions, selectedOptions));
                     changed = true;
                 } catch (error) {
                     if (!this.isCurrentFormAsyncContext(contextId, schema)) return;
-                    const selectedOptions = this.extractSubmissionSelectOptions(comp, sub);
+                    const selectedOptions = this.extractSubmissionSelectOptions(comp, effectiveSub);
                     this.applyRemoteSelectValues(comp, selectedOptions);
                     console.error('Remote select fetch failed', error);
                 }
@@ -246,12 +260,12 @@ export class AppFormioRendererService {
             try {
                 const remoteOptions = await this.fetchRemoteSelectOptions(comp, payload);
                 if (!this.isCurrentFormAsyncContext(contextId, schema)) return;
-                const selectedOptions = this.extractSubmissionSelectOptions(comp, sub);
+                const selectedOptions = this.extractSubmissionSelectOptions(comp, effectiveSub);
                 this.applyRemoteSelectValues(comp, this.mergeSelectValues(remoteOptions, selectedOptions));
                 changed = true;
             } catch (error) {
                 if (!this.isCurrentFormAsyncContext(contextId, schema)) return;
-                const selectedOptions = this.extractSubmissionSelectOptions(comp, sub);
+                const selectedOptions = this.extractSubmissionSelectOptions(comp, effectiveSub);
                 this.applyRemoteSelectValues(comp, selectedOptions);
                 console.error('Remote select fetch failed', error);
             }
@@ -267,9 +281,10 @@ export class AppFormioRendererService {
         const schema = this.formSchema;
         if (!schema || !this.schemaHasRemoteSelectHydrationTargets(schema)) {
             this.pendingHydrationPromise = Promise.resolve();
-            this.formDataReady = true;
             return this.pendingHydrationPromise;
         }
+        this.formViewerLoading = true;
+        this.formDataReady = false;
         let resolve!: () => void;
         let reject!: (reason?: unknown) => void;
         const promise = new Promise<void>((res, rej) => {
@@ -305,9 +320,10 @@ export class AppFormioRendererService {
     }
 
     async onFormViewerReady(): Promise<void> {
-        this.formViewerLoading = false;
+        // Keep the loader up through remote-select hydration: only flip ready/loading once the
+        // selects have finished (or there's nothing to hydrate / the context is stale).
         const scheduled = this.pendingPostRenderHydration;
-        if (!scheduled) { this.formDataReady = true; return; }
+        if (!scheduled) { this.formDataReady = true; this.formViewerLoading = false; return; }
         if (!this.isCurrentFormAsyncContext(scheduled.contextId, this.formSchema)) {
             scheduled.resolve();
             if (this.pendingPostRenderHydration?.requestId === scheduled.requestId) {
@@ -315,6 +331,7 @@ export class AppFormioRendererService {
             }
             this.pendingHydrationPromise = null;
             this.formDataReady = true;
+            this.formViewerLoading = false;
             return;
         }
         if (this.activePostRenderHydrationRequestId === scheduled.requestId && this.activePostRenderHydrationPromise) {
@@ -336,6 +353,7 @@ export class AppFormioRendererService {
                 }
                 this.activePostRenderHydrationPromise = null;
                 this.formDataReady = true;
+                this.formViewerLoading = false;
             });
         return this.activePostRenderHydrationPromise;
     }
@@ -396,7 +414,8 @@ export class AppFormioRendererService {
         this.rawFormSchema = null;
         this.rawFormSchemaModel = '';
         this.formViewerLoading = false;
-        this.remoteSelectCache.clear();
+        // Keep the remote-select value cache across forms (TTL-expired): avoids re-fetching the
+        // same options on every navigation/re-render. Only drop in-flight requests for the old form.
         this.remoteSelectInflight.clear();
     }
 
@@ -454,6 +473,87 @@ export class AppFormioRendererService {
         }
         if (this.isRecord(value) && !Object.keys(value).length) return [];
         return value;
+    }
+
+    private normalizeFileSubmissionFields(submission: Record<string, unknown>, schema: Record<string, unknown> | null = null): void {
+        const effectiveSchema = this.resolveSubmissionNormalizationSchema(schema);
+        if (!effectiveSchema) return;
+        this.collectFileComponentKeys(effectiveSchema).forEach((key) => {
+            if (!Object.prototype.hasOwnProperty.call(submission, key)) return;
+            submission[key] = this.coerceFileSubmissionValue(submission[key]);
+        });
+    }
+
+    private collectFileComponentKeys(schema: Record<string, unknown>): string[] {
+        if (!Array.isArray(schema['components'])) return [];
+        const keys = new Set<string>();
+        formioEachComponent(schema['components'] as any[], (component: Record<string, unknown>) => {
+            if (!this.isRecord(component)) return false;
+            const key = String(component['key'] ?? '').trim();
+            if (!key || String(component['type'] ?? '').trim().toLowerCase() !== 'file' || component['input'] === false) return false;
+            keys.add(key);
+            return false;
+        }, true);
+        return [...keys];
+    }
+
+    private coerceFileSubmissionValue(value: unknown): unknown[] {
+        const entries = Array.isArray(value) ? value : (value == null ? [] : [value]);
+        return entries.map(entry => this.normalizeFileEntry(entry)).filter((entry): entry is Record<string, unknown> => Boolean(entry));
+    }
+
+    private normalizeFileEntry(entry: unknown): Record<string, unknown> | null {
+        if (!this.isRecord(entry)) return null;
+        const normalized: Record<string, unknown> = { ...entry };
+        const name = this.readFirstString(normalized['name'], normalized['filename'], normalized['originalName'], normalized['original_name']);
+        const type = this.readFirstString(normalized['type'], normalized['content_type'], normalized['contentType']);
+        const base64 = this.readFirstString(normalized['base64']);
+        const url = this.readFirstString(normalized['url']);
+
+        if (name) {
+            normalized['name'] = name;
+            normalized['originalName'] = this.readFirstString(normalized['originalName'], name);
+        }
+        if (type) normalized['type'] = type;
+        if (base64) {
+            normalized['storage'] = 'base64';
+            normalized['url'] = base64.startsWith('data:')
+                ? base64
+                : `data:${type || 'application/octet-stream'};base64,${base64}`;
+            if (!Number.isFinite(Number(normalized['size']))) {
+                normalized['size'] = this.computeBase64ByteSize(base64);
+            }
+        } else if (url && !/^(https?:)?\/\//i.test(url) && !url.startsWith('data:')) {
+            normalized['url'] = this.normalizeBackendFileUrl(url);
+        }
+        return normalized;
+    }
+
+    private normalizeBackendFileUrl(value: string): string {
+        const raw = value.trim();
+        if (!raw) return raw;
+        if (raw.startsWith('/api/client/attachment/')) {
+            return raw.split('/').map((segment, index) => {
+                if (index === 0) return '';
+                return encodeURIComponent(decodeURIComponent(segment));
+            }).join('/');
+        }
+        const path = raw.startsWith('/client/attachment/')
+            ? raw
+            : `/client/attachment/${raw.replace(/^\/+/, '')}`;
+        const encodedPath = path.split('/').map((segment, index) => {
+            if (index === 0) return '';
+            return encodeURIComponent(decodeURIComponent(segment));
+        }).join('/');
+        return this.api.resolveApiUrl(encodedPath);
+    }
+
+    private computeBase64ByteSize(value: string): number {
+        const raw = value.includes(',') ? value.slice(value.indexOf(',') + 1) : value;
+        const normalized = raw.replace(/\s/g, '');
+        if (!normalized) return 0;
+        const padding = normalized.endsWith('==') ? 2 : (normalized.endsWith('=') ? 1 : 0);
+        return Math.max(0, Math.floor((normalized.length * 3) / 4) - padding);
     }
 
     resolvePath(src: Record<string, unknown>, path: string): unknown {
@@ -689,15 +789,84 @@ export class AppFormioRendererService {
         visit(schema);
     }
 
-    private normalizeFormWysiwygComponents(schema: Record<string, unknown>): void {
+    private normalizeFormWysiwygComponents(schema: Record<string, unknown>, submissionData: Record<string, unknown> | null = null): void {
         const visit = (node: unknown): void => {
             if (Array.isArray(node)) { node.forEach(visit); return; }
             if (!this.isRecord(node)) return;
             const key = String(node['key'] ?? '').trim().toLowerCase();
             const type = String(node['type'] ?? '').trim().toLowerCase();
-            const props = this.readComponentProperties(node);
-            const editorFlag = this.readFirstString(node['editor'], props['editor']).toLowerCase();
-            if (key === 'content' && type === 'textarea' && editorFlag === 'active') { node['editor'] = 'ckeditor'; node['wysiwyg'] = true; }
+            if (type === 'content' && this.isActiveWysiwygEditor(node)) {
+                this.activateContentWysiwygEditor(node, submissionData);
+            } else if (key === 'content' && type === 'textarea' && this.isActiveWysiwygEditor(node)) {
+                node['editor'] = 'quill';
+                node['wysiwyg'] = true;
+            }
+            Object.values(node).forEach(visit);
+        };
+        visit(schema);
+    }
+
+    private normalizeFormJsonEditorComponents(schema: Record<string, unknown>): void {
+        const visit = (node: unknown): void => {
+            if (Array.isArray(node)) { node.forEach(visit); return; }
+            if (!this.isRecord(node)) return;
+            const type = String(node['type'] ?? '').trim().toLowerCase();
+            if (type === 'textarea' && this.isActiveJsonEditor(node)) {
+                node['type'] = 'ozonjsoneditor';
+                node['input'] = true;
+                node['tableView'] = false;
+                node['customClass'] = this.appendCustomClass(node['customClass'], 'ozon-formio-json-editor-field');
+            }
+            Object.values(node).forEach(visit);
+        };
+        visit(schema);
+    }
+
+    private isActiveJsonEditor(component: Record<string, unknown>): boolean {
+        const props = this.readComponentProperties(component);
+        const raw = props['jeditor'] ?? component['jeditor'];
+        if (raw === true) return true;
+        return ['y', 'yes', 'true', '1'].includes(String(raw ?? '').trim().toLowerCase());
+    }
+
+    private isActiveWysiwygEditor(component: Record<string, unknown>): boolean {
+        const props = this.readComponentProperties(component);
+        return this.readFirstString(component['editor'], props['editor']).toLowerCase() === 'active';
+    }
+
+    private activateContentWysiwygEditor(component: Record<string, unknown>, submissionData: Record<string, unknown> | null = null): void {
+        const html = typeof component['html'] === 'string' ? component['html'] : '';
+        const key = String(component['key'] ?? '').trim();
+        component['type'] = 'textarea';
+        component['input'] = true;
+        component['editor'] = 'quill';
+        component['wysiwyg'] = true;
+        component['inputFormat'] = 'html';
+        component['tableView'] = false;
+        if (html && component['defaultValue'] == null) component['defaultValue'] = html;
+        if (html && key && submissionData && this.isBlankSubmissionValue(submissionData[key])) {
+            submissionData[key] = html;
+        }
+        delete component['html'];
+    }
+
+    /**
+     * Content/HTMLElement components interpolate their markup against Formio's
+     * `data` namespace (submission data), not `form`. Backend schemas author
+     * placeholders as `{{ form.path }}`, so rewrite the `form.` prefix to `data.`
+     * inside each `{{ }}` block, letting Formio resolve live submission values.
+     */
+    private normalizeFormContentComponents(schema: Record<string, unknown>): void {
+        const rewrite = (markup: string): string =>
+            markup.replace(/\{\{([\s\S]*?)\}\}/g, (_full, expr: string) => `{{${expr.replace(/\bform\./g, 'data.')}}}`);
+        const visit = (node: unknown): void => {
+            if (Array.isArray(node)) { node.forEach(visit); return; }
+            if (!this.isRecord(node)) return;
+            const type = String(node['type'] ?? '').trim().toLowerCase();
+            const field = type === 'content' ? 'html' : (type === 'htmlelement' ? 'content' : '');
+            if (field && typeof node[field] === 'string' && (node[field] as string).includes('form.')) {
+                node[field] = rewrite(node[field] as string);
+            }
             Object.values(node).forEach(visit);
         };
         visit(schema);
@@ -707,11 +876,89 @@ export class AppFormioRendererService {
         const visit = (node: unknown): void => {
             if (Array.isArray(node)) { node.forEach(visit); return; }
             if (!this.isRecord(node)) return;
+            this.aliasFormVarsToDataInLogic(node);
             this.normalizeReadonlyComponent(node);
+            this.normalizeFileComponent(node);
+            this.normalizeNativeSubmitButtonComponent(node);
+            this.normalizeInlineActionButtonComponent(node);
             this.normalizeOutlineButtonComponent(node);
             Object.values(node).forEach(visit);
         };
         visit(schema);
+    }
+
+    /**
+     * A `customDefaultValue` (e.g. `value = value || user.uid`) is evaluated at component init,
+     * BEFORE the loaded submission is bound — so `value` is empty and it sets a default that then
+     * clobbers the saved value through the change-merge. Defaults must only fill blanks, so when
+     * the submission already holds a non-blank value for a field, drop its customDefaultValue.
+     */
+    private stripClobberingDefaultsForSavedValues(schema: Record<string, unknown>, sub: Record<string, unknown> | null): void {
+        if (!this.isRecord(sub)) return;
+        const visit = (node: unknown): void => {
+            if (Array.isArray(node)) { node.forEach(visit); return; }
+            if (!this.isRecord(node)) return;
+            const key = String(node['key'] ?? '').trim();
+            if (key && node['input'] !== false && !this.isBlankSubmissionValue(sub[key])) {
+                delete node['customDefaultValue'];
+            }
+            Object.values(node).forEach(visit);
+        };
+        visit(schema);
+    }
+
+    private logicEvalContextProvider?: () => Record<string, unknown>;
+    setLogicEvalContextProvider(fn: () => Record<string, unknown>): void { this.logicEvalContextProvider = fn; }
+
+    /**
+     * Form.io native `logic[].trigger` json conditionals run with a fixed context of only
+     * `{ data, row, form, _ }` (see FormioUtils.checkJsonConditional) — `user`, `session`,
+     * `is_admin`, `app` are NOT available, and `form` is the form *schema*, not the data.
+     * So at render we normalize each logic/conditional json:
+     *   - `{ "var": "form.x" }`   -> `{ "var": "data.x" }`            (keep dynamic, reads submission)
+     *   - `{ "var": "user.x" }` / `session.*` / `is_admin` / `app.*` -> baked literal value
+     * user/session/is_admin/app are constant for the render, so baking them as literals makes
+     * authored logic work without patching Form.io or polluting submission data.
+     */
+    private aliasFormVarsToDataInLogic(component: Record<string, unknown>): void {
+        const ctx = this.logicEvalContextProvider?.() ?? {};
+        const refPath = (ref: unknown): { path: string; def: unknown; hasDef: boolean } | null => {
+            if (typeof ref === 'string') return { path: ref, def: undefined, hasDef: false };
+            if (Array.isArray(ref) && typeof ref[0] === 'string') return { path: ref[0], def: ref[1], hasDef: ref.length > 1 };
+            return null;
+        };
+        const transform = (node: unknown): unknown => {
+            if (Array.isArray(node)) return node.map(transform);
+            if (!this.isRecord(node)) return node;
+            const keys = Object.keys(node);
+            if (keys.length === 1 && keys[0] === 'var') {
+                const info = refPath(node['var']);
+                if (info) {
+                    if (info.path.startsWith('form.')) {
+                        const dataPath = `data.${info.path.slice(5)}`;
+                        return info.hasDef ? { var: [dataPath, info.def] } : { var: dataPath };
+                    }
+                    const root = info.path.split('.')[0];
+                    if (root === 'user' || root === 'session' || root === 'app' || info.path === 'is_admin') {
+                        const resolved = info.path === 'is_admin' ? ctx['is_admin'] : this.resolvePath(ctx, info.path);
+                        if ((resolved === undefined || resolved === null) && info.hasDef) return info.def;
+                        return resolved ?? null;
+                    }
+                }
+                return node;
+            }
+            const out: Record<string, unknown> = {};
+            for (const [key, value] of Object.entries(node)) out[key] = transform(value);
+            return out;
+        };
+        const logic = Array.isArray(component['logic']) ? component['logic'] : [];
+        for (const item of logic) {
+            if (!this.isRecord(item)) continue;
+            const trigger = this.isRecord(item['trigger']) ? item['trigger'] : null;
+            if (trigger && this.isRecord(trigger['json'])) trigger['json'] = transform(trigger['json']);
+        }
+        const conditional = this.isRecord(component['conditional']) ? component['conditional'] : null;
+        if (conditional && this.isRecord(conditional['json'])) conditional['json'] = transform(conditional['json']);
     }
 
     private normalizeReadonlyComponent(component: Record<string, unknown>): void {
@@ -730,6 +977,45 @@ export class AppFormioRendererService {
         component['searchEnabled'] = false;
         component['removeItemButton'] = false;
         component['customClass'] = this.appendCustomClass(component['customClass'], 'ozon-select-readonly');
+    }
+
+    /**
+     * Style file fields as the Bootstrap Italia v2 upload widget and keep them usable: forcing
+     * `multiple` leaves the browse/drop area visible even when files already exist, so users can
+     * add and remove files in both phases. readonly stays gated by normalizeReadonlyComponent,
+     * which disables the component (Form.io then hides add/remove).
+     */
+    private normalizeFileComponent(component: Record<string, unknown>): void {
+        if (String(component['type'] ?? '').trim().toLowerCase() !== 'file') return;
+        if (typeof component['multiple'] !== 'boolean') component['multiple'] = true;
+        component['customClass'] = this.appendCustomClass(component['customClass'], 'ozon-file-upload');
+    }
+
+    private normalizeNativeSubmitButtonComponent(component: Record<string, unknown>): void {
+        const type = String(component['type'] ?? '').trim().toLowerCase();
+        const key = String(component['key'] ?? '').trim().toLowerCase();
+        if (type !== 'button' || key !== 'submit') return;
+        component['customClass'] = this.appendCustomClass(component['customClass'], 'ozon-native-submit');
+    }
+
+    private normalizeInlineActionButtonComponent(component: Record<string, unknown>): void {
+        const type = String(component['type'] ?? '').trim().toLowerCase();
+        const key = String(component['key'] ?? '').trim().toLowerCase();
+        if (type !== 'button' || key === 'submit') return;
+        const properties = this.readComponentProperties(component);
+        const hasActionConfig = this.readFirstString(component['url_action'], properties['url_action'])
+            || this.readFirstString(component['btn_action_type'], properties['btn_action_type']);
+        if (!hasActionConfig) return;
+        component['action'] = 'event';
+        component['event'] = OZON_INLINE_ACTION_EVENT;
+        // `modalEdit` is Form.io's builder-only "edit in modal" flag; at render it draws a
+        // "Click to set value" wrapper. We drive confirmation via properties.modal_*, so strip it.
+        delete component['modalEdit'];
+        // These buttons carry a computed `url_action` value set by an always-true `value` logic
+        // action. With the default clearOnHide, hiding the button clears that value, which the
+        // logic immediately re-sets -> change -> re-eval -> flicker loop. Keep the value on hide.
+        component['clearOnHide'] = false;
+        component['customClass'] = this.appendCustomClass(component['customClass'], 'ozon-inline-action');
     }
 
     private normalizeOutlineButtonComponent(component: Record<string, unknown>): void {
@@ -850,15 +1136,26 @@ export class AppFormioRendererService {
         try { const parsed = JSON.parse(text); return this.isRecord(parsed) ? parsed : null; } catch { return null; }
     }
 
+    private getCachedSelectOptions(cacheKey: string): SelectValueOption[] | null {
+        const entry = this.remoteSelectCache.get(cacheKey);
+        if (!entry) return null;
+        if (entry.expiresAt <= Date.now()) { this.remoteSelectCache.delete(cacheKey); return null; }
+        return entry.value;
+    }
+
+    private setCachedSelectOptions(cacheKey: string, value: SelectValueOption[]): void {
+        this.remoteSelectCache.set(cacheKey, { value, expiresAt: Date.now() + AppFormioRendererService.REMOTE_SELECT_CACHE_TTL_MS });
+    }
+
     private async fetchRemoteSelectOptions(comp: Record<string, unknown>, payload: RemoteSelectRequestPayload): Promise<SelectValueOption[]> {
         const cacheKey = this.stableStringify(payload);
-        const cached = this.remoteSelectCache.get(cacheKey);
+        const cached = this.getCachedSelectOptions(cacheKey);
         if (cached) return cached;
         const inflight = this.remoteSelectInflight.get(cacheKey);
         if (inflight) return inflight;
         const request = this.api.getRemoteSelect(payload)
             .then((response: unknown) => this.normalizeRemoteSelectResponse(response, comp))
-            .then((options: SelectValueOption[]) => { this.remoteSelectCache.set(cacheKey, options); return options; })
+            .then((options: SelectValueOption[]) => { this.setCachedSelectOptions(cacheKey, options); return options; })
             .finally(() => { this.remoteSelectInflight.delete(cacheKey); });
         this.remoteSelectInflight.set(cacheKey, request);
         return request;
@@ -866,7 +1163,7 @@ export class AppFormioRendererService {
 
     private async fetchResourceSelectOptions(comp: Record<string, unknown>, payload: { model: string; payload: ListRequestPayload }): Promise<SelectValueOption[]> {
         const cacheKey = `resource:${this.stableStringify(payload)}`;
-        const cached = this.remoteSelectCache.get(cacheKey);
+        const cached = this.getCachedSelectOptions(cacheKey);
         if (cached) return cached;
         const inflight = this.remoteSelectInflight.get(cacheKey);
         if (inflight) return inflight;
@@ -875,7 +1172,7 @@ export class AppFormioRendererService {
             const option = this.toSelectValueOption(item, comp);
             if (option) options.push(option);
         }, undefined, { stream: false }).then(() => {
-                this.remoteSelectCache.set(cacheKey, options);
+                this.setCachedSelectOptions(cacheKey, options);
                 return options;
             })
             .finally(() => { this.remoteSelectInflight.delete(cacheKey); });

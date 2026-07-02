@@ -171,13 +171,35 @@ describe('OzonApiService', () => {
 
     expect(args.method).toBe('POST');
     expect(args.url).toContain('/api/list/component');
+    expect(args.url).toContain('stream=false');
     expect(args.data).toEqual({
       order: '',
       skip: 0,
       limit: 1000000,
+      stream: false,
       query: { type: 'resource' }
     });
     expect(args.opts.body).toBeUndefined();
+  });
+
+  it('should rewrite builder resource select submissions with stream disabled', () => {
+    const args: any = {
+      url: 'http://localhost/form/auth.user/submission?skip=10&limit=25',
+      opts: {}
+    };
+
+    (service as any).rewriteFormioBuilderResourceUrl(args);
+
+    expect(args.method).toBe('POST');
+    expect(args.url).toContain('/api/list/auth.user');
+    expect(args.url).toContain('stream=false');
+    expect(args.data).toEqual({
+      order: '',
+      skip: 10,
+      limit: 25,
+      stream: false,
+      query: {}
+    });
   });
 
   it('should normalize remote select payload strings before forwarding Formio requests', () => {
@@ -238,10 +260,12 @@ describe('OzonApiService', () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(String(fetchSpy.calls.mostRecent().args[0])).toContain('/api/list/component');
+    expect(String(fetchSpy.calls.mostRecent().args[0])).toContain('stream=false');
     expect(JSON.parse((fetchSpy.calls.mostRecent().args[1] as RequestInit).body as string)).toEqual({
       order: '',
       skip: 0,
       limit: 1000000,
+      stream: false,
       query: { type: 'resource' }
     });
     expect(response).toEqual([{
