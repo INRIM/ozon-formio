@@ -61,7 +61,9 @@ describe('AppComponent next_action redirect mode', () => {
       authLoginPath: '/login',
       authLogoutPath: '/logout',
       authRefreshPath: '/refresh',
-      appCode: ''
+      appCode: '',
+      appModuleName: 'Mci Service',
+      appLogoUrl: 'https://www.inrim.it/sites/default/files/2022-04/logoinrimhp%20%281%29.svg'
     });
     apiMock.updateRuntimeConfig.and.callFake(patch => ({ ...apiMock.getRuntimeConfig(), ...patch }));
     apiMock.getNextAction.and.resolveTo(makeResponse({

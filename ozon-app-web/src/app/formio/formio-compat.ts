@@ -3,6 +3,7 @@ import { DefaultEvaluator as FormioDefaultEvaluator, Formio } from '@formio/js';
 import Quill from 'quill';
 import { ozonFileTemplate } from './ozon-file-template';
 import { installOzonJsonEditorFormioComponent } from './ozon-json-editor-formio';
+import { installOzonDataTableFormioComponent } from './ozon-data-table-formio';
 
 /**
  * Form.io ships builder edit-form callbacks in both modern context-object form
@@ -57,6 +58,7 @@ export function installFormioCompatibility(): void {
   const templates = (Formio as unknown as { Templates?: { addTemplates?: (t: unknown) => void } }).Templates;
   templates?.addTemplates?.({ bootstrap: { file: { form: ozonFileTemplate } } });
   installOzonJsonEditorFormioComponent();
+  installOzonDataTableFormioComponent();
   if (typeof window !== 'undefined') {
     (window as Window & { Quill?: typeof Quill }).Quill = Quill;
   }

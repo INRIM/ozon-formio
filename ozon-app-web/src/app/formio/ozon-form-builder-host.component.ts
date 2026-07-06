@@ -101,7 +101,7 @@ export class OzonFormBuilderHostComponent implements AfterViewInit, OnChanges, O
         this.change.emit({
           type: 'addComponent',
           builder: instance,
-          form: instance.schema,
+          form: this.getLiveSchema(),
           component,
           parent,
           path,
@@ -116,7 +116,7 @@ export class OzonFormBuilderHostComponent implements AfterViewInit, OnChanges, O
         this.change.emit({
           type: this.componentAdding ? 'addComponent' : 'saveComponent',
           builder: instance,
-          form: instance.schema,
+          form: this.getLiveSchema(),
           component,
           originalComponent: original,
           parent,
@@ -133,7 +133,7 @@ export class OzonFormBuilderHostComponent implements AfterViewInit, OnChanges, O
         this.change.emit({
           type: 'updateComponent',
           builder: instance,
-          form: instance.schema,
+          form: this.getLiveSchema(),
           component
         });
       });
@@ -144,7 +144,7 @@ export class OzonFormBuilderHostComponent implements AfterViewInit, OnChanges, O
         this.change.emit({
           type: 'deleteComponent',
           builder: instance,
-          form: instance.schema,
+          form: this.getLiveSchema(),
           component,
           parent,
           path,
@@ -158,9 +158,20 @@ export class OzonFormBuilderHostComponent implements AfterViewInit, OnChanges, O
     });
   }
 
-  /** Returns the current live schema from the active builder instance, or null if not ready. */
+  /**
+   * Returns the current live schema from the active builder instance, or null if not ready.
+   * `instance.schema` is a Formio.js getter, not a plain property — it walks every component and
+   * reads its rendered `.element`, which can be momentarily undefined for a component that's mid
+   * add/remove (dragging a new one in, deleting one). Catching here, not just optional-chaining
+   * `instance`, is what actually protects callers from that getter throwing.
+   */
   getLiveSchema(): Record<string, unknown> | null {
-    const s: unknown = this.instance?.schema;
+    let s: unknown;
+    try {
+      s = this.instance?.schema;
+    } catch {
+      return null;
+    }
     if (!s || typeof s !== 'object' || Array.isArray(s)) return null;
     return s as Record<string, unknown>;
   }

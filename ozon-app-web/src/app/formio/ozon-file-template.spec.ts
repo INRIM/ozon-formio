@@ -19,7 +19,7 @@ describe('ozonFileTemplate', () => {
     });
 
     expect(html).toContain('Inrim-QuiIAM-OFFERTA v4.pdf');
-    expect(html).toContain('href="/client/attachment/test_request/test_request.b68/Inrim-QuiIAM-OFFERTA%20v4.pdf"');
+    expect(html).toContain('href="/api/client/attachment/test_request/test_request.b68/Inrim-QuiIAM-OFFERTA%20v4.pdf"');
     expect(html).not.toContain('No storage has been set');
   });
 });

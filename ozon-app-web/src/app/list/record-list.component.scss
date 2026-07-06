@@ -16,6 +16,37 @@
   margin-bottom: -0.5rem;
 }
 
+.ozon-fast-actions-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+  margin-bottom: -0.35rem;
+}
+
+.ozon-fast-actions-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.ozon-fast-actions-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.ozon-fast-actions-form {
+  width: 100%;
+}
+
+.ozon-fast-actions-placeholder {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.25rem 0 0.15rem;
+}
+
 .ozon-fast-search-header {
   display: flex;
   align-items: center;
@@ -167,6 +198,17 @@
   color: var(--bs-primary);
 }
 
+.ozon-list-button-icon {
+  display: block;
+  width: 1rem;
+  height: 1rem;
+  object-fit: contain;
+}
+
+:host-context(:root[data-theme='dark']) .ozon-list-button-icon {
+  filter: invert(1) brightness(1.2);
+}
+
 .ozon-filter-count {
   position: absolute;
   top: -0.4rem;
@@ -264,8 +306,6 @@
   align-items: center;
   gap: 0.35rem;
   font-size: 0.78rem;
-
-  .pi { font-size: 0.72rem; }
 }
 
 .ozon-filter-query pre {
@@ -439,4 +479,3 @@
     }
   }
 }
-

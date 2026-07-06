@@ -2,12 +2,10 @@ import { Component, Inject, OnDestroy, OnInit, Optional, ViewChild, inject } fro
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { FormioComponent, FormioModule } from '@formio/angular';
-import { EditorModule } from 'primeng/editor';
-import { InputSwitchModule } from 'primeng/inputswitch';
-import { DialogModule } from 'primeng/dialog';
 import { FORMIO_BUILDER_EXTENSIONS, FormioBuilderExtension } from './formio/formio-builder-config';
 import { OzonFormBuilderHostComponent } from './formio/ozon-form-builder-host.component';
 import { OzonJsonEditorComponent } from './shared/ozon-json-editor.component';
+import { OzonWysiwygEditorComponent } from './shared/ozon-wysiwyg-editor.component';
 import { RecordListComponent } from './list/record-list.component';
 import { AppThemeService } from './managers/app-theme.service';
 import { AppManagerService } from './managers/app-manager.service';
@@ -20,11 +18,13 @@ import {
     TableColumn, TableRow, MenuButton, MenuCard, MenuDrillDownGroup
 } from './models/app.types';
 import { GlobalErrorStateService } from './core/global-error-state.service';
+import { OzonApiService } from './core/ozon-api.service';
+import { setOzonDataTableApiService } from './formio/ozon-data-table-formio';
 
 @Component({
     selector: 'app-root',
     standalone: true,
-    imports: [CommonModule, FormsModule, FormioModule, InputSwitchModule, EditorModule, DialogModule, OzonFormBuilderHostComponent, OzonJsonEditorComponent, RecordListComponent],
+    imports: [CommonModule, FormsModule, FormioModule, OzonFormBuilderHostComponent, OzonJsonEditorComponent, OzonWysiwygEditorComponent, RecordListComponent],
     templateUrl: './app.component.html',
     styleUrl: './app.component.scss',
     providers: [AppThemeService, AppManagerService, AppTableManagerService, AppFormioRendererService, AppFormioBuilderService, AppActionManagerService]
@@ -34,6 +34,7 @@ export class AppComponent implements OnInit, OnDestroy {
     @ViewChild('formioViewer') formioViewer?: FormioComponent;
     readonly formPlaceholderRows = [0, 1, 2, 3, 4];
     private readonly globalErrorState = inject(GlobalErrorStateService);
+    private readonly api = inject(OzonApiService);
 
     constructor(
         readonly theme: AppThemeService,
@@ -46,6 +47,7 @@ export class AppComponent implements OnInit, OnDestroy {
     ) {}
 
     ngOnInit(): void {
+        setOzonDataTableApiService(this.api);
         this.theme.initialize();
         this.appManager.initializeBuilderPreference();
         this.builder.setFormBuilderExtensions(this.formBuilderExtensions);
@@ -133,7 +135,7 @@ export class AppComponent implements OnInit, OnDestroy {
     get openedNavMenuGroup(): string { return this.appManager.openedNavMenuGroup; }
     set openedNavMenuGroup(v: string) { this.appManager.openedNavMenuGroup = v; }
 
-    get brandTitle(): string { return this.appManager.appModuleName || 'Mci Service'; }
+    get brandTitle(): string { return this.appManager.appModuleName; }
     get brandSubtitle(): string {
         const layout = this.appManager.layoutName || 'standard';
         const version = this.appManager.appVersion ? ` | ${this.appManager.appVersion}` : '';
@@ -191,6 +193,11 @@ export class AppComponent implements OnInit, OnDestroy {
     canRunMenuAction(button: MenuButton): boolean { return this.actionManager.canRunMenuAction(button); }
     menuActionHref(button: MenuButton): string { return this.actionManager.menuActionHref(button); }
     async onMenuActionAnchorClick(button: MenuButton, event: MouseEvent): Promise<void> { return this.actionManager.onMenuActionAnchorClick(button, event); }
+    // `currentFormActionButtons` is a getter that rebuilds new array/object refs on every change
+    // detection cycle. Without trackBy, *ngFor destroys and recreates the button DOM nodes on every
+    // tick, which can drop a click that lands between mousedown and mouseup (Angular re-renders the
+    // node mid-gesture, so the mouseup/click event target has already been removed).
+    trackByButtonKey(_index: number, btn: MenuButton): string { return btn.key || btn.label; }
     resolveButtonIconClass(button: MenuButton): string { return this.actionManager.resolveButtonIconClass(button); }
     resolveBootstrapItaliaIconSrc(button: MenuButton): string { return this.actionManager.resolveBootstrapItaliaIconSrc(button); }
     async openRecordFromListSelection(): Promise<void> { return this.actionManager.openRecordFromListSelection(); }
@@ -306,6 +313,9 @@ export class AppComponent implements OnInit, OnDestroy {
     get fastSearchLoading(): boolean { return this.tableManager.fastSearchLoading; }
     get fastSearchSchema(): Record<string, unknown> | null { return this.tableManager.fastSearchSchema; }
     get fastSearchSubmission(): { data: Record<string, unknown> } { return this.tableManager.fastSearchSubmission; }
+    get fastActionsEnabled(): boolean { return this.tableManager.fastActionsEnabled; }
+    get fastActionsLoading(): boolean { return this.tableManager.fastActionsLoading; }
+    get fastActionsSchema(): Record<string, unknown> | null { return this.tableManager.fastActionsSchema; }
     get tableRenderLoading(): boolean { return this.tableManager.tableRenderLoading; }
     get formioRenderOptions(): Record<string, unknown> { return this.appManager.formioRenderOptions; }
     get formViewerLoading(): boolean { return this.renderer.formViewerLoading; }
@@ -352,6 +362,9 @@ export class AppComponent implements OnInit, OnDestroy {
     }
     async onFormCustomEvent(event: unknown): Promise<void> {
         return this.actionManager.onFormCustomEvent(event);
+    }
+    async onFastActionCustomEvent(event: unknown): Promise<void> {
+        return this.actionManager.onFastActionCustomEvent(event);
     }
 
     /** Delegated download for file-component links rendered by ozonFileTemplate. */
@@ -406,6 +419,7 @@ export class AppComponent implements OnInit, OnDestroy {
     }
     setFormEditorActiveTab(tab: 'builder' | 'print' | 'config'): void { this.builder.setFormEditorActiveTab(tab); }
     updateFormEditorField(field: string, value: unknown): void { this.builder.updateFormEditorField(field, value); }
+    autoFillRecNameFromTitle(): void { this.builder.autoFillRecNameFromTitle(); }
     formEditorBooleanSelectValue(field: string, defaultValue = '0'): string { return this.builder.formEditorBooleanSelectValue(field, defaultValue); }
     updateFormEditorBooleanField(field: string, value: unknown): void { this.builder.updateFormEditorBooleanField(field, value); }
     updateFormEditorProperty(property: string, value: unknown): void { this.builder.updateFormEditorProperty(property, value); }

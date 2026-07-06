@@ -6,21 +6,37 @@
   padding: 0.75rem 1rem 1.25rem;
 }
 
-.ozon-brandbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1.25rem;
-  background: var(--ozon-surface);
-  border: 1px solid var(--ozon-border);
-  border-radius: 14px;
-  padding: 0.85rem 1.1rem;
+/* =========================================================
+   Header — Bootstrap Italia "versione compatta" structure
+   (it-header-wrapper > it-nav-wrapper > it-header-center-wrapper
+   .it-small-header + it-header-navbar-wrapper), recolored with the
+   app's own --ozon-* theme variables instead of BI's default blue/
+   white palette (which has no equivalent for this app's navy dark
+   theme — see docs/menu-di-navigazione/header/).
+   ========================================================= */
+.ozon-header {
+  --ozon-header-radius: 0;
+  // BI sets `.it-header-wrapper { position: relative; z-index: 5 }`, which creates a stacking
+  // context — the open nav dropdown is painted as part of that context no matter how high its own
+  // z-index is set, so it can still end up behind later, unrelated form content that has no
+  // competing z-index of its own (later in DOM = on top at the same stacking level). Push the
+  // whole header context above the form/page content instead of chasing z-index inside the dropdown.
+  position: relative;
+  z-index: 1100;
 }
 
-.ozon-brand {
+.it-header-center-wrapper {
+  background-color: #0059b3;
+  border: 1px solid var(--ozon-border);
+  border-radius: 0;
+  border-bottom: 0;
+}
+
+.ozon-brand-link {
   display: flex;
   align-items: center;
   gap: 1rem;
+  text-decoration: none;
 }
 
 .ozon-logo-box {
@@ -29,7 +45,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: 0;
   font-weight: 700;
   letter-spacing: 0.06em;
   color: #f4f8ff;
@@ -44,119 +60,78 @@
   background: #ffffff;
 }
 
-.ozon-brand-copy {
-  display: flex;
-  flex-direction: column;
+.it-brand-title {
+  color: #ffffff;
 }
 
-.ozon-brand-title {
-  font-size: clamp(1.5rem, 1.2rem + 0.6vw, 1.95rem);
-  font-weight: 700;
-  color: #1f66c2;
-  line-height: 1.1;
-}
-
-.ozon-brand-subtitle {
-  font-size: 0.95rem;
-  color: var(--ozon-muted);
-  line-height: 1.15;
+.it-brand-tagline {
+  color: rgba(255, 255, 255, 0.88);
 }
 
 .ozon-theme-switch {
   min-height: 2.5rem;
   gap: 0.6rem;
   font-size: 0.95rem;
+  color: var(--ozon-text);
 }
 
-.ozon-topnav {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  background: #143356;
-  border: 1px solid #143356;
-  border-radius: 14px;
-  padding: 0.65rem 0.85rem;
-  min-height: 4rem;
-  position: relative;
-  z-index: 200;
-  overflow: visible;
-  flex-wrap: wrap;
+.it-header-navbar-wrapper {
+  background-color: #0059b3;
+  border: 1px solid var(--ozon-border);
+  border-radius: 0;
+}
+
+.it-header-navbar-wrapper .navbar-nav .nav-link {
+  color: #ffffff;
+  border: 0;
+  background: transparent;
+  font-weight: 600;
+}
+
+.it-header-navbar-wrapper .navbar-nav .nav-link:hover,
+.it-header-navbar-wrapper .navbar-nav .nav-link.active {
+  background: rgba(255, 255, 255, 0.16);
 }
 
 .ozon-home-btn {
-  border: 0;
-  background: transparent;
-  color: #d7e5f5;
+  color: #ffffff;
   width: 2.35rem;
   height: 2.35rem;
-  border-radius: 8px;
+  padding: 0;
+  justify-content: center;
 }
 
-.ozon-home-btn:hover {
-  background: rgba(255, 255, 255, 0.12);
+// BI's nav row aligns items to `align-items: flex-end` (fine for text links sitting on their
+// baseline), which pins this fixed-size square icon button to the bottom of the row instead of
+// centering it against the other items. `align-self` has to go on the flex item itself — that's
+// the <li>, not the <button> nested inside it.
+.navbar-nav > li.nav-item:has(> .ozon-home-btn) {
+  align-self: center;
 }
 
-.ozon-nav-groups {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  flex: 1 1 auto;
-  overflow: visible;
-  flex-wrap: wrap;
-  row-gap: 0.45rem;
+.ozon-home-icon {
+  width: 2.3rem;
+  height: 2.3rem;
+  filter: brightness(0) invert(1);
 }
 
-.ozon-nav-item {
-  position: relative;
-  flex: 0 0 auto;
-  z-index: 1;
-}
-
-.ozon-nav-link {
-  border: 0;
-  background: transparent;
-  color: #e7eef8;
-  border-radius: 8px;
-  min-height: 2.5rem;
-  padding: 0.45rem 0.85rem;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  font-weight: 600;
-  font-size: 1rem;
-  line-height: 1.2;
-  white-space: nowrap;
-}
-
-.ozon-nav-link:hover,
-.ozon-nav-link.is-active {
-  background: rgba(255, 255, 255, 0.14);
-}
-
-.ozon-nav-dropdown {
-  position: absolute;
-  top: calc(100% + 0.25rem);
-  left: 0;
-  min-width: 14.5rem;
-  max-width: 22rem;
+.it-header-navbar-wrapper .dropdown-menu {
   background: var(--ozon-surface);
   border: 1px solid var(--ozon-border);
   border-radius: 8px;
-  padding: 0.3rem;
   box-shadow: 0 12px 24px rgba(10, 34, 63, 0.2);
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  z-index: 1201;
+  min-width: 14.5rem;
+  max-width: 22rem;
+  padding: 0.3rem;
 }
 
-.ozon-nav-dropdown-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
+// BI draws a diamond "caret" pointing at the dropdown trigger via ::before, hardcoded to white —
+// invisible on a light background but a stray white diamond on the app's dark surface.
+.it-header-navbar-wrapper .dropdown-menu::before {
+  background-color: var(--ozon-surface);
 }
 
-.ozon-nav-dropdown-group + .ozon-nav-dropdown-group {
+.link-list-wrapper + .link-list-wrapper {
   border-top: 1px solid var(--ozon-border);
   margin-top: 0.15rem;
   padding-top: 0.3rem;
@@ -171,32 +146,26 @@
   padding: 0.15rem 0.5rem 0;
 }
 
-.ozon-nav-dropdown-item {
-  border: 0;
-  background: transparent;
+.it-header-navbar-wrapper .link-list .list-item {
   border-radius: 6px;
   min-height: 2.35rem;
-  width: 100%;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
   gap: 0.45rem;
   padding: 0.45rem 0.65rem;
-  text-align: left;
   color: var(--ozon-text);
-  text-decoration: none;
-  cursor: pointer;
   font-size: 0.95rem;
+  width: 100%;
 }
 
-.ozon-nav-dropdown-item i,
-.ozon-nav-dropdown-item .ozon-nav-dropdown-icon {
+.it-header-navbar-wrapper .link-list .list-item i,
+.it-header-navbar-wrapper .link-list .list-item .ozon-nav-dropdown-icon {
   width: 1rem;
   min-width: 1rem;
   text-align: center;
 }
 
-.ozon-nav-dropdown-item .ozon-menu-badge {
+.it-header-navbar-wrapper .link-list .list-item .ozon-menu-badge {
   margin-left: auto;
 }
 
@@ -211,37 +180,18 @@
   height: 1rem;
 }
 
-.ozon-nav-dropdown-item:hover {
+.it-header-navbar-wrapper .link-list .list-item:hover {
   background: var(--ozon-surface-soft);
 }
 
-.ozon-nav-dropdown-item.is-disabled {
+.it-header-navbar-wrapper .link-list .list-item.disabled {
   color: var(--ozon-muted);
   background: transparent;
   pointer-events: none;
 }
 
-.ozon-user-menu-wrap {
-  position: relative;
-  margin-left: auto;
-}
-
 .ozon-user-toggle {
-  border: 0;
-  background: transparent;
-  color: #ebf1f9;
-  display: inline-flex;
-  align-items: center;
   gap: 0.6rem;
-  border-radius: 8px;
-  padding: 0.4rem 0.6rem;
-  min-height: 2.5rem;
-  font-size: 0.98rem;
-  line-height: 1.2;
-}
-
-.ozon-user-toggle:hover {
-  background: rgba(255, 255, 255, 0.13);
 }
 
 .ozon-avatar {
@@ -264,21 +214,6 @@
   object-fit: cover;
 }
 
-.ozon-user-dropdown {
-  position: absolute;
-  top: calc(100% + 0.35rem);
-  right: 0;
-  min-width: 14rem;
-  background: var(--ozon-surface);
-  border: 1px solid var(--ozon-border);
-  border-radius: 8px;
-  box-shadow: 0 12px 24px rgba(10, 34, 63, 0.2);
-  padding: 0.7rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.65rem;
-}
-
 .ozon-builder-toggle-row {
   display: flex;
   align-items: center;
@@ -288,20 +223,11 @@
   font-size: 0.96rem;
 }
 
-.ozon-builder-flag {
-  font-size: 0.78rem;
-  color: var(--ozon-accent);
-  letter-spacing: 0.04em;
-}
-
 .ozon-auth-btn {
-  border: 0;
-  border-radius: 6px;
   background: transparent;
-  color: var(--ozon-text);
+  border: 0;
   text-align: left;
-  padding: 0.45rem 0.55rem;
-  font-size: 0.95rem;
+  width: 100%;
 }
 
 .ozon-client-error-banner {
@@ -347,104 +273,124 @@
 
 .ozon-dashboard-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 25%));
-  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: 1rem;
 }
 
 .ozon-dashboard-card {
-  border: 1px solid var(--ozon-border);
-  background: var(--ozon-surface);
-  border-radius: 10px;
-  min-height: 14rem;
   width: 100%;
-  display: grid;
-  grid-template-rows: auto 1fr;
-  overflow: hidden;
+  min-height: 12rem;
 }
 
-.ozon-card-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.5rem 0.45rem;
-  border-bottom: 1px solid var(--ozon-border);
-  background: #e7eef9;
+.ozon-card-title {
+  margin-bottom: 0;
 }
 
-.ozon-card-action {
-  border: 0;
-  background: transparent;
-  color: #1f66c2;
-  border-radius: 10px;
-  padding: 0.32rem 0.45rem;
-  min-height: 3rem;
-  min-width: 4.7rem;
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.12rem;
-  font-size: 0.74rem;
-  font-weight: 600;
+.ozon-card-title a,
+.ozon-card-title a:hover {
+  color: inherit;
   text-decoration: none;
-  cursor: pointer;
-  text-align: center;
 }
 
-.ozon-card-action:hover {
-  background: rgba(0, 83, 166, 0.1);
+.ozon-card-title a:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
 }
 
-.ozon-card-action.is-disabled {
-  color: #95a7bb;
+.ozon-card-title a.is-disabled {
+  color: var(--ozon-muted);
   pointer-events: none;
 }
 
+.ozon-card-body {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.ozon-card-related {
+  margin-top: 0;
+}
+
+// One action per full-width row, divided into 3 clear sections (icon | label | count), the
+// whole row clickable — BI's `.it-list .list-item` pattern, recolored with --ozon-* vars.
+.ozon-card-actions {
+  padding: 0;
+}
+
+.ozon-card-actions .it-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ozon-card-actions .it-list > li + li {
+  border-top: 1px solid var(--ozon-border);
+}
+
+.ozon-card-action {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.5rem 0.15rem;
+  font-weight: 600;
+  color: var(--ozon-text);
+  text-decoration: none;
+}
+
+.ozon-card-action:hover {
+  background: var(--ozon-surface-soft);
+  text-decoration: none;
+}
+
+.ozon-card-action.disabled {
+  color: var(--ozon-muted);
+  pointer-events: none;
+}
+
+// Section 1: icon, fixed width.
 .ozon-card-action-icon-wrap {
-  position: relative;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 1.9rem;
-  height: 1.25rem;
 }
 
 .ozon-card-action-icon {
-  font-size: 1.2rem;
+  font-size: 1rem;
   line-height: 1;
 }
 
 .ozon-card-action-icon-svg {
-  width: 1.2rem;
-  height: 1.2rem;
+  width: 1rem;
+  height: 1rem;
 }
 
+// Section 2: label, takes remaining space.
 .ozon-card-action-label {
-  line-height: 1.05;
+  flex: 1 1 auto;
+  min-width: 0;
+  line-height: 1.15;
 }
 
-.ozon-card-action-icon-wrap .ozon-menu-badge {
-  position: absolute;
-  right: -0.52rem;
-  top: -0.44rem;
-  margin-left: 0;
+// Section 3: active-instance count, fixed width, right-aligned.
+.ozon-card-action-count {
+  flex: 0 0 auto;
 }
 
-.ozon-card-title {
-  display: grid;
-  place-items: center;
-  text-align: center;
-  font-size: clamp(1.35rem, 2.8vw, 2.1rem);
-  font-weight: 700;
-  color: var(--ozon-text);
-  padding: 1.1rem;
+.ozon-card-action-count .ozon-menu-badge {
+  font-size: 1.1rem;
+  min-width: 1.8rem;
+  height: 1.8rem;
+  padding: 0 0.35rem;
 }
 
 .ozon-menu-badge {
   font-size: 0.68rem;
   font-weight: 700;
-  margin-left: 0.15rem;
   min-width: 1.15rem;
   height: 1.15rem;
   border-radius: 999px;
@@ -569,22 +515,8 @@
     padding: 0.4rem 0.4rem 0.85rem;
   }
 
-  .ozon-brandbar {
-    flex-wrap: wrap;
-    padding: 0.75rem 0.85rem;
-  }
-
-  .ozon-brand-title {
+  .it-brand-title {
     font-size: 1.25rem;
-  }
-
-  .ozon-nav-groups {
-    order: 2;
-    width: 100%;
-  }
-
-  .ozon-user-menu-wrap {
-    margin-left: auto;
   }
 
   .ozon-client-error-banner {
@@ -603,46 +535,56 @@
     min-height: 11rem;
     max-width: 100%;
   }
+}
 
-  .ozon-card-title {
-    font-size: 1.7rem;
+@media (max-width: 767px) {
+  .it-header-center-content-wrapper {
+    flex-wrap: nowrap;
+    align-items: center;
+    padding: 0.4rem 0.6rem;
+  }
+
+  .it-brand-tagline {
+    display: none;
+  }
+
+  .it-brand-title {
+    font-size: 1rem;
+    line-height: 1.2;
+  }
+
+  .ozon-logo-box {
+    min-width: 3.8rem;
+    height: 2.4rem;
+  }
+
+  .ozon-brand-link {
+    gap: 0.5rem;
+  }
+
+  .ozon-theme-switch .small {
+    display: none;
+  }
+
+  .ozon-theme-switch {
+    min-height: unset;
   }
 }
 
-:root[data-theme='dark'] .ozon-topnav {
-  background: #17324d;
-  border-color: #17324d;
-}
-
-:root[data-theme='dark'] .ozon-nav-dropdown,
-:root[data-theme='dark'] .ozon-user-dropdown {
-  background: #16273b;
-  border-color: #2a4564;
-}
-
-:root[data-theme='dark'] .ozon-nav-dropdown-item,
-:root[data-theme='dark'] .ozon-auth-btn {
-  color: #e6edf5;
-}
-
-:root[data-theme='dark'] .ozon-nav-dropdown-item:hover,
-:root[data-theme='dark'] .ozon-auth-btn:hover {
-  background: rgba(111, 182, 255, 0.2);
-}
-
-:root[data-theme='dark'] .ozon-card-actions {
-  background: #d9e4f6;
-}
-
-:root[data-theme='dark'] .ozon-dashboard-card {
+:host-context(:root[data-theme='dark']) .ozon-dashboard-card {
   background: #13263b;
   border-color: #284768;
-}
-
-:root[data-theme='dark'] .ozon-card-action {
-  color: #1257b7;
-}
-
-:root[data-theme='dark'] .ozon-card-title {
   color: #e8f0fa;
+}
+
+:host-context(:root[data-theme='dark']) .ozon-card-action {
+  color: #8ec7ff;
+}
+
+:host-context(:root[data-theme='dark']) .ozon-card-title {
+  color: #e8f0fa;
+}
+
+.ozon-modal-message {
+  white-space: pre-wrap;
 }

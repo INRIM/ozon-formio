@@ -664,9 +664,7 @@ export class OzonApiService {
     async downloadAttachment(fileUrl: string, filename = ''): Promise<void> {
         const raw = String(fileUrl ?? '').trim();
         if (!raw) throw new Error('URL allegato mancante');
-        const path = raw.startsWith('/client/attachment')
-            ? raw
-            : `/client/attachment/${raw.replace(/^\/+/, '')}`;
+        const path = this.normalizeAttachmentPath(raw);
         const response = await this.fetchRaw(path, { method: 'GET', redirect: 'follow' });
         if (!response.ok) {
             if (response.status === 401 || response.status === 403) this.unauthorizedSubject.next();
@@ -674,6 +672,39 @@ export class OzonApiService {
         }
         const blob = await response.blob();
         this.triggerBlobDownload(blob, filename || this.filenameFromPath(raw));
+    }
+
+    /**
+     * `fileUrl` here is whatever is in the `data-file-url` attribute of the clicked download link —
+     * that's `file.url` straight from the submission data, which is usually already a fully
+     * resolved `/api/client/attachment/...?app_code=...` URL (normalized by
+     * AppFormioRendererService on load). The old version of this method only recognized
+     * `/client/attachment` (no `/api`, no trailing slash) as "already a path", so a normalized
+     * value fell through to the generic branch and got `/client/attachment/` re-prepended onto
+     * itself — including its own `?app_code=...` query string, which then got a *second*
+     * `app_code` appended by buildEndpointUrl on top, since by then it was fused into the path
+     * rather than recognized as a query string. Strip any query and collapse repeats of the
+     * attachment prefix (handles both `api/client/attachment/` and `client/attachment/`, and any
+     * number of times a prior bug may have doubled it in already-stored data) so this always
+     * rebuilds a single canonical path, regardless of what shape the input arrives in.
+     */
+    private normalizeAttachmentPath(value: string): string {
+        const raw = String(value ?? '').trim();
+        const queryIndex = raw.indexOf('?');
+        const pathOnly = queryIndex === -1 ? raw : raw.slice(0, queryIndex);
+        let bare = pathOnly.replace(/^\/+/, '');
+        let strippedPrefix = true;
+        while (strippedPrefix) {
+            strippedPrefix = false;
+            if (bare.startsWith('api/client/attachment/')) {
+                bare = bare.slice('api/client/attachment/'.length);
+                strippedPrefix = true;
+            } else if (bare.startsWith('client/attachment/')) {
+                bare = bare.slice('client/attachment/'.length);
+                strippedPrefix = true;
+            }
+        }
+        return `/client/attachment/${bare}`;
     }
 
     private filenameFromPath(path: string): string {

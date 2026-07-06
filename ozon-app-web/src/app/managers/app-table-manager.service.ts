@@ -1,6 +1,7 @@
 import { Injectable } from '@angular/core';
 import jsonLogic from 'json-logic-js';
 import { OzonApiService } from '../core/ozon-api.service';
+import { AppFormioRendererService } from './app-formio-renderer.service';
 import {
     SelectOptionMappingConfig,
     selectOptionPrimitiveValue,
@@ -100,8 +101,12 @@ export class AppTableManagerService {
     private listSearchModel = '';
     private fastSearchFormModel = '';
     private fastSearchConfigRevision = 0;
+    private fastActionsFormModel = '';
+    fastActionsDataModel = '';
+    private fastActionsConfigRevision = 0;
     private tableCellRendererRevision = 0;
     fastSearchLoading = false;
+    fastActionsLoading = false;
     tableRenderLoading = false;
 
     fastSearchEnabled = false;
@@ -109,6 +114,9 @@ export class AppTableManagerService {
     fastSearchSchema: Record<string, unknown> | null = null;
     fastSearchSubmission: { data: Record<string, unknown> } = { data: {} };
     fastSearchActionName = '';
+    fastActionsEnabled = false;
+    fastActionsSchema: Record<string, unknown> | null = null;
+    fastActionsActionName = '';
     private fastSearchQueryFields: Record<string, unknown>[] = [];
     private isRefreshingFastSearchDependentSelects = false;
     private readonly fastSearchStoragePrefix = 'ozon.fs.';
@@ -122,7 +130,10 @@ export class AppTableManagerService {
     private remoteSelectCache = new Map<string, SelectValueOption[]>();
     private remoteSelectInflight = new Map<string, Promise<SelectValueOption[]>>();
 
-    constructor(private readonly api: OzonApiService) {}
+    constructor(
+        private readonly api: OzonApiService,
+        private readonly renderer: AppFormioRendererService
+    ) {}
 
     isRecord(v: unknown): v is Record<string, unknown> { return !!v && typeof v === 'object' && !Array.isArray(v); }
     errorMessage(e: unknown): string { return e instanceof Error ? e.message : String(e); }
@@ -460,6 +471,38 @@ export class AppTableManagerService {
             this.saveFastSearchStateToStorage();
             return true;
         }
+        return false;
+    }
+
+    beginFastActionsWarmup(expected: boolean): number {
+        const revision = ++this.fastActionsConfigRevision;
+        this.fastActionsLoading = expected;
+        this.fastActionsEnabled = false;
+        this.fastActionsSchema = null;
+        if (!expected) {
+            this.fastActionsActionName = '';
+            this.fastActionsFormModel = '';
+            this.fastActionsDataModel = '';
+        }
+        return revision;
+    }
+
+    async setFastActionsConfig(actionName: string, schema: Record<string, unknown> | null, formModel = '', revision?: number): Promise<boolean> {
+        const effectiveRevision = revision ?? ++this.fastActionsConfigRevision;
+        const normalizedActionName = String(actionName ?? '').trim();
+        const normalizedFormModel = String(formModel ?? '').trim();
+        // `prepareFastActionsSchema` (not a plain clone) is what stamps buttons with
+        // `action: 'event'` / `event: OZON_INLINE_ACTION_EVENT` (same as regular inline action
+        // buttons) and injects the selection-count enable/disable logic — skipping it left buttons
+        // with no click behavior wired at all, so they rendered but did nothing when clicked.
+        const hydratedSchema = schema ? this.renderer.prepareFastActionsSchema(schema) : null;
+        if (effectiveRevision !== this.fastActionsConfigRevision) return false;
+        this.fastActionsActionName = normalizedActionName;
+        this.fastActionsFormModel = normalizedFormModel;
+        this.fastActionsDataModel = normalizedFormModel;
+        this.fastActionsSchema = hydratedSchema;
+        this.fastActionsEnabled = Boolean(normalizedActionName && this.fastActionsSchema);
+        this.fastActionsLoading = false;
         return false;
     }
 

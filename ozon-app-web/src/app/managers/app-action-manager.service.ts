@@ -14,6 +14,46 @@ import {
 } from '../models/app.types';
 import { OzonFormBuilderHostComponent } from '../formio/ozon-form-builder-host.component';
 
+// Backend-configured menu icons still arrive as Font Awesome / PrimeIcons class names
+// (e.g. 'fa-plus', 'pi-pencil'), but neither icon font ships in this app anymore.
+// Map the names we actually see onto the equivalent Bootstrap Italia SVG icon id.
+const ICON_FONT_TO_BOOTSTRAP_ITALIA: Record<string, string> = {
+    plus: 'plus',
+    'plus-circle': 'plus-circle',
+    pencil: 'pencil',
+    edit: 'pencil',
+    trash: 'delete',
+    'trash-alt': 'delete',
+    delete: 'delete',
+    times: 'close',
+    close: 'close',
+    'times-circle': 'close-circle',
+    check: 'check',
+    'check-circle': 'check-circle',
+    list: 'list',
+    search: 'search',
+    download: 'download',
+    upload: 'upload',
+    cog: 'settings',
+    cogs: 'settings',
+    settings: 'settings'
+};
+
+interface FastActionRowResult {
+    rec_name: string;
+    status: string;
+    message?: string;
+}
+
+interface PendingFastAction {
+    button: MenuButton;
+    actionPath: string;
+    payload: Record<string, unknown>;
+    selectedRecNames: string[];
+    component: Record<string, unknown>;
+    properties: Record<string, unknown>;
+}
+
 @Injectable()
 export class AppActionManagerService {
     currentActionName = '';
@@ -31,6 +71,7 @@ export class AppActionManagerService {
     confirmModalVisible = false;
     confirmModalConfig: ButtonModalConfig | null = null;
     private pendingModalButton: MenuButton | null = null;
+    private pendingFastAction: PendingFastAction | null = null;
 
     private currentListComponentType = '';
     private redirectingToLogin = false;
@@ -268,6 +309,13 @@ export class AppActionManagerService {
             this.rebuildMenus();
             this.setStatus(`Modelli caricati: ${this.appManager.models.length}`, false);
         } catch (error) { this.setStatus(this.errorMessage(error), true); }
+    }
+
+    /** Populates the `data_model` select's model list without loadModels()'s side effects (selection/table reset). */
+    private async ensureModelsListLoadedForFormEditor(): Promise<void> {
+        try {
+            this.appManager.models = await this.api.getModels();
+        } catch { /* non-critical: data_model select just shows fewer options */ }
     }
 
     async loadSchema(): Promise<void> {
@@ -572,7 +620,42 @@ export class AppActionManagerService {
         await this.runTopMenuAction(button);
     }
 
+    async onFastActionCustomEvent(event: unknown): Promise<void> {
+        const request = this.toFastActionRequest(event);
+        if (!request) return;
+        const { button, component, properties } = request;
+        if (button.modal) {
+            const selectedRecNames = this.tableManager.selectedRows
+                .map(row => String(row.__rec_name ?? '').trim())
+                .filter(Boolean);
+            if (!selectedRecNames.length) {
+                this.setStatus('Seleziona almeno una riga', true);
+                return;
+            }
+            this.pendingFastAction = {
+                button,
+                actionPath: button.url_action,
+                payload: this.buildFastActionPayload(component, properties, selectedRecNames),
+                selectedRecNames,
+                component,
+                properties
+            };
+            this.confirmModalConfig = button.modal;
+            this.confirmModalVisible = true;
+            return;
+        }
+        await this.runFastAction(request);
+    }
+
     async confirmPendingModalAction(): Promise<void> {
+        if (this.pendingFastAction) {
+            const pending = this.pendingFastAction;
+            this.confirmModalVisible = false;
+            this.confirmModalConfig = null;
+            this.pendingFastAction = null;
+            await this.executeFastAction(pending);
+            return;
+        }
         const button = this.pendingModalButton;
         this.confirmModalVisible = false;
         this.confirmModalConfig = null;
@@ -585,6 +668,7 @@ export class AppActionManagerService {
         this.confirmModalVisible = false;
         this.confirmModalConfig = null;
         this.pendingModalButton = null;
+        this.pendingFastAction = null;
     }
 
     async resetNavigation(): Promise<void> {
@@ -814,7 +898,9 @@ export class AppActionManagerService {
     }
 
     get topMenuCards(): MenuCard[] {
-        return this.appManager.dashboardMenu.filter(card => this.builder.builderEnabled || !this.isAdminMenuCard(card));
+        return this.appManager.dashboardMenu
+            .filter(card => this.builder.builderEnabled || !this.isAdminMenuCard(card))
+            .filter(card => this.menuDrilldownGroups(card).length > 0);
     }
 
     get showTopMenu(): boolean { return this.builder.builderEnabled; }
@@ -888,7 +974,7 @@ export class AppActionManagerService {
         if (!card || !Array.isArray(card.buttons) || !card.buttons.length) return [];
         const groups = new Map<string, MenuDrillDownGroup>();
         card.buttons.forEach((button, index) => {
-            if (this.isMenuContainerButton(button)) return;
+            if (!this.isVisibleMenuButton(button)) return;
             const groupId = this.readFirstString(button.menu_group, card.group_id, `group_${index}`);
             if (!groupId) return;
             const existing = groups.get(groupId);
@@ -938,8 +1024,16 @@ export class AppActionManagerService {
         const tokenMatch = tokens.find(t => t.startsWith('it-'));
         if (tokenMatch) return tokenMatch.toLowerCase();
         const plain = normalized.replace(/^#/, '').trim().toLowerCase().replace(/_/g, '-');
-        const likelyClassPrefix = /^(pi|fa|bi|mdi|ph|ti|ri)(-|$)/;
-        if (!plain.includes(' ') && /^[a-z0-9-]+$/.test(plain) && !likelyClassPrefix.test(plain)) {
+        const likelyClassPrefix = /^(pi|fa|fas|far|fab|bi|mdi|ph|ti|ri)-/;
+        const prefixMatch = plain.match(likelyClassPrefix);
+        if (prefixMatch) {
+            // Icon-font classes (Font Awesome / PrimeIcons / ...) have no font loaded in this
+            // app anymore; map the handful of names we actually use onto Bootstrap Italia's SVG set.
+            const name = plain.slice(prefixMatch[0].length);
+            const mapped = ICON_FONT_TO_BOOTSTRAP_ITALIA[name];
+            return mapped ? `it-${mapped}` : '';
+        }
+        if (!plain.includes(' ') && /^[a-z0-9-]+$/.test(plain)) {
             return plain.startsWith('it-') ? plain : `it-${plain}`;
         }
         return '';
@@ -1191,6 +1285,172 @@ export class AppActionManagerService {
         };
     }
 
+    private toFastActionRequest(event: unknown): { button: MenuButton; component: Record<string, unknown>; properties: Record<string, unknown> } | null {
+        if (!this.isRecord(event) || event['type'] !== OZON_INLINE_ACTION_EVENT) return null;
+        const component = this.asRecord(event['component']);
+        if (!component) return null;
+        const properties = this.renderer.readComponentProperties(component);
+        const actionType = this.normalizeMenuType(this.readFirstString(
+            component['btn_action_type'],
+            properties['btn_action_type'],
+            component['action_type'],
+            properties['action_type']
+        ));
+        if (actionType !== 'post') {
+            this.setStatus(`Azione fast non supportata: ${actionType || 'mancante'}`, true);
+            return null;
+        }
+        const key = this.readFirstString(component['key'], 'fast_action');
+        const actionPath = this.resolveInlineActionPostPath(component, this.buildFastActionContext(), undefined);
+        if (!actionPath) {
+            this.setStatus(`url_action mancante per il pulsante "${this.readFirstString(component['label'], component['key']) || 'fast'}"`, true);
+            return null;
+        }
+        const label = this.readFirstString(component['label'], key);
+        return {
+            component,
+            properties,
+            button: {
+                model: this.appManager.selectedModel,
+                key,
+                type: 'button',
+                label,
+                leftIcon: this.readFirstString(component['leftIcon'], component['rightIcon'], 'pi pi-play') || 'pi pi-play',
+                authtoken: this.appManager.baseToken,
+                req_id: this.uiReqId,
+                btn_action_type: 'post',
+                action_type: 'post',
+                url_action: actionPath,
+                builder: false,
+                mode: 'list',
+                content: actionPath,
+                menu_group: 'list',
+                menu_type: '',
+                is_admin: false,
+                skip_validation: true,
+                modal: this.extractButtonModalConfig(component, properties)
+            }
+        };
+    }
+
+    private buildFastActionContext(): Record<string, unknown> {
+        const evalContext = this.asRecord(this.appManager.formioRenderOptions['evalContext']) ?? {};
+        return {
+            ...evalContext,
+            user: this.asRecord(evalContext['user']) ?? this.appManager.sessionUser,
+            session: this.asRecord(evalContext['session']) ?? this.appManager.sessionRecord,
+            is_admin: evalContext['is_admin'] ?? this.appManager.isAdminUser,
+            app: {
+                curr_model: this.appManager.selectedModel,
+                selected_model: this.appManager.selectedModel,
+                current_action: this.currentActionName,
+                selection_count: this.tableManager.selectedRows.length
+            }
+        };
+    }
+
+    private buildFastActionPayload(component: Record<string, unknown>, properties: Record<string, unknown>, selectedRecNames: string[]): Record<string, unknown> {
+        const payload: Record<string, unknown> = {
+            model: this.tableManager.fastActionsDataModel || this.appManager.selectedModel,
+            rec_names: [...selectedRecNames]
+        };
+        const extraProps = this.extractFastActionProperties(properties);
+        return { ...payload, ...extraProps };
+    }
+
+    private extractFastActionProperties(properties: Record<string, unknown>): Record<string, unknown> {
+        const payload: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(properties ?? {})) {
+            const normalizedKey = String(key ?? '').trim();
+            if (!normalizedKey) continue;
+            if (['btn_action_type', 'url_action', 'modal_title', 'modal_message', 'btn_modal_label', 'action_type', 'tooltip'].includes(normalizedKey)) continue;
+            if (value === undefined) continue;
+            payload[normalizedKey] = value;
+        }
+        return payload;
+    }
+
+    private async runFastAction(request: { button: MenuButton; component: Record<string, unknown>; properties: Record<string, unknown> }): Promise<void> {
+        const selectedRecNames = this.tableManager.selectedRows
+            .map(row => String(row.__rec_name ?? '').trim())
+            .filter(Boolean);
+        if (!selectedRecNames.length) {
+            this.setStatus('Seleziona almeno una riga', true);
+            return;
+        }
+        const payload = this.buildFastActionPayload(request.component, request.properties, selectedRecNames);
+        await this.executeFastAction({
+            button: request.button,
+            actionPath: request.button.url_action,
+            payload,
+            selectedRecNames,
+            component: request.component,
+            properties: request.properties
+        });
+    }
+
+    private async executeFastAction(pending: PendingFastAction): Promise<void> {
+        await this.withClickTransition(async () => {
+            this.setStatus(`Eseguo azione "${pending.button.label}" su ${pending.selectedRecNames.length} righe...`, false);
+            // Bulk camunda actions against a local/fast backend can resolve in a handful of ms —
+            // the overlay has no fade transition, so it can render and unmount within the same
+            // paint, effectively invisible even though it technically "worked". Floor the visible
+            // time so it always reads as an actual loading state.
+            const minVisible = new Promise<void>(resolve => setTimeout(resolve, 350));
+            try {
+                const response = await this.api.postActionPath(pending.actionPath, pending.payload);
+                const summary = this.buildFastActionSummary(response, pending);
+                this.confirmModalConfig = {
+                    title: `${pending.button.label} - esito`,
+                    message: summary,
+                    confirmLabel: 'Chiudi'
+                };
+                this.confirmModalVisible = true;
+                this.setStatus(`Azione "${pending.button.label}" eseguita`, false);
+                await this.loadRecords(false);
+            } catch (error) {
+                this.setStatus(this.errorMessage(error), true);
+            } finally {
+                await minVisible;
+            }
+        });
+    }
+
+    private buildFastActionSummary(response: unknown, pending: PendingFastAction): string {
+        const obj = this.tryResponseObject(response);
+        const rows = this.extractFastActionRowResults(obj?.content?.data);
+        const okCount = rows.filter(row => this.isFastActionOk(row.status)).length;
+        const failCount = rows.length - okCount;
+        const processStatus = this.readFirstString((obj?.content as Record<string, unknown> | undefined)?.['process_status']);
+        const header = [
+            `Azione: ${pending.button.label}`,
+            `Righe selezionate: ${pending.selectedRecNames.length}`,
+            rows.length ? `Esito: ${okCount} ok, ${failCount} errori${processStatus ? ` (${processStatus})` : ''}` : `Esito: completata${processStatus ? ` (${processStatus})` : ''}`
+        ];
+        const detailLines = rows.map(row => {
+            const suffix = row.message ? ` - ${row.message}` : '';
+            return `${row.rec_name || 'n/d'}: ${row.status}${suffix}`;
+        });
+        return [...header, ...detailLines].join('\n');
+    }
+
+    private extractFastActionRowResults(value: unknown): FastActionRowResult[] {
+        if (!Array.isArray(value)) return [];
+        return value.map(entry => {
+            const row = this.asRecord(entry) ?? {};
+            return {
+                rec_name: this.readFirstString(row['rec_name']),
+                status: this.readFirstString(row['status'], row['result'], 'ok'),
+                message: this.readFirstString(row['message'])
+            };
+        }).filter(entry => Boolean(entry.rec_name || entry.status));
+    }
+
+    private isFastActionOk(status: string): boolean {
+        const normalized = String(status ?? '').trim().toLowerCase();
+        return !normalized || normalized === 'ok' || normalized === 'success' || normalized === 'done';
+    }
+
     private resolveInlineActionPostPath(component: Record<string, unknown>, data: Record<string, unknown>, liveValue: unknown = undefined): string {
         const properties = this.renderer.readComponentProperties(component);
         const key = this.readFirstString(component['key']);
@@ -1304,7 +1564,8 @@ export class AppActionManagerService {
             app: {
                 curr_model: this.appManager.selectedModel,
                 selected_model: this.appManager.selectedModel,
-                current_action: this.currentActionName
+                current_action: this.currentActionName,
+                selection_count: this.tableManager.selectedRows.length
             }
         };
         console.log('[json-logic] variabili disponibili (top-level keys):', Object.keys(context));
@@ -1366,6 +1627,13 @@ export class AppActionManagerService {
     }
 
     private isMenuContainerButton(button: MenuButton): boolean { return this.normalizeMenuType(button?.action_type) === 'menu'; }
+    private isVisibleMenuButton(button: MenuButton): boolean {
+        if (!button || this.isMenuContainerButton(button)) return false;
+        const label = this.readFirstString(button.label);
+        if (!label) return false;
+        const actionPath = this.getButtonActionPath(button);
+        return actionPath !== '/' && actionPath !== '/menu';
+    }
     private isBuilderAction(button: MenuButton): boolean {
         if (!button) return false;
         if (button.builder) return true;
@@ -1898,6 +2166,39 @@ export class AppActionManagerService {
         if (restored) void this.loadRecords(false);
     }
 
+    private async applyFastActionsConfig(fields: Record<string, unknown>): Promise<void> {
+        const rawConfig = fields['fast_actions'];
+        if (!this.isRecord(rawConfig)) {
+            this.tableManager.beginFastActionsWarmup(false);
+            return;
+        }
+        const fastActionsRevision = this.tableManager.beginFastActionsWarmup(true);
+        const rawSchema = rawConfig['schema'];
+        let schema: Record<string, unknown> | null = this.renderer.extractFormSchema(rawSchema);
+        if (!schema) {
+            const modelName = this.readFirstString(
+                rawConfig['fast_actions_model'],
+                rawConfig['fast_actions_form_model'],
+                rawConfig['fast_actions_data_model']
+            );
+            if (modelName) {
+                try {
+                    const payload = await this.api.getAction('form_form_fast_actions_config', { recName: modelName });
+                    const cfgObj = requireResponseObject(payload);
+                    schema = this.renderer.extractFormSchema(cfgObj.content.schema);
+                } catch { /* leave schema null */ }
+            }
+        }
+        const formModel = this.readFirstString(
+            rawConfig['model'],
+            rawConfig['fast_actions_model'],
+            rawConfig['fast_actions_form_model'],
+            rawConfig['fast_actions_data_model']
+        );
+        const normalizedSchema = schema ? this.renderer.prepareFastActionsSchema(schema) : null;
+        await this.tableManager.setFastActionsConfig(this.currentActionName, normalizedSchema, formModel, fastActionsRevision);
+    }
+
     private warmActionListView(
         fields: Record<string, unknown>,
         rows: Array<Record<string, unknown>>,
@@ -1910,6 +2211,7 @@ export class AppActionManagerService {
             : this.warmActionListFallbackSchema(rows, pageContextId);
         void Promise.allSettled([
             this.applyFastSearchConfig(fields),
+            this.applyFastActionsConfig(fields),
             tableWarmup
         ]).then(() => {
             if (!this.isCurrentPageContext(pageContextId)) return;
@@ -1954,6 +2256,9 @@ export class AppActionManagerService {
         this.tableManager.selectedModel = model;
         this.renderer.selectedModel = model;
         const isComponentRecord = String(model).trim().toLowerCase() === 'component';
+        if (isComponentRecord && !this.appManager.models.length) {
+            void this.ensureModelsListLoadedForFormEditor();
+        }
         let schema = this.renderer.extractFormSchema(content.schema);
         // A component record IS a formio form definition: its schema lives in content.data,
         // not in a queryable model schema (/record/component is a meta-model, returns fail).
@@ -1977,6 +2282,10 @@ export class AppActionManagerService {
         }
         this.renderer.formSchema = null; this.renderer.formSubmission = null;
         const normalizedData = this.renderer.normalizeFormSubmissionData(data, schema);
+        if (isComponentRecord && !String(content.rec_name ?? '').trim()) {
+            normalizedData['title'] = '';
+            normalizedData['rec_name'] = '';
+        }
         const renderSchema = this.renderer.prepareSchemaForRender(this.cloneSchema(schema), normalizedData);
         this.renderer.formSchema = renderSchema;
         if (!this.isCurrentPageContext(pageContextId)) { this.renderer.cancelFormViewerLoad(); return; }

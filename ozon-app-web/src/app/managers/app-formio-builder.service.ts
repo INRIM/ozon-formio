@@ -155,6 +155,22 @@ export class AppFormioBuilderService {
         }
     }
 
+    autoFillRecNameFromTitle(): void {
+        const title = this.readFirstString(this.formEditorData['title']);
+        if (!title) return;
+        if (String(this.formEditorData['rec_name'] ?? '').trim()) return;
+        this.updateFormEditorField('rec_name', this.slugifyToSnakeCase(title));
+    }
+
+    private slugifyToSnakeCase(value: string): string {
+        return value
+            .trim()
+            .toLowerCase()
+            .normalize('NFD').replace(/[̀-ͯ]/g, '')
+            .replace(/[^a-z0-9]+/g, '_')
+            .replace(/^_+|_+$/g, '');
+    }
+
     formEditorBooleanSelectValue(key: string, defaultValue = '0'): string {
         const data = this.formEditorData;
         if (!Object.prototype.hasOwnProperty.call(data, key)) return defaultValue;
@@ -176,17 +192,9 @@ export class AppFormioBuilderService {
     updateFormEditorProperty(key: string, value: unknown): void {
         const currentProps = this.formEditorProperties;
         const nextProps = { ...currentProps, [key]: value };
-        
+
         if (!this.renderer.formSubmission) this.renderer.formSubmission = { data: {} };
-        const data: Record<string, unknown> = { ...this.renderer.formSubmission.data, properties: nextProps };
-        
-        if (key === 'query') {
-            data['queryformeditable'] = value;
-        } else if (key === 'orderby' || key === 'Orderby') {
-            data['sort'] = value;
-        }
-        
-        this.renderer.formSubmission.data = data;
+        this.renderer.formSubmission.data = { ...this.renderer.formSubmission.data, properties: nextProps, [key]: value };
     }
 
     formEditorJsonPropertyValue(key: string): string {

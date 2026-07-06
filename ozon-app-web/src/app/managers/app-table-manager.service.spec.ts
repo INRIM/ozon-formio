@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing';
 import { OzonApiService } from '../core/ozon-api.service';
 import { AppTableManagerService } from './app-table-manager.service';
+import { AppFormioRendererService } from './app-formio-renderer.service';
 
 describe('AppTableManagerService', () => {
   let service: AppTableManagerService;
@@ -9,6 +10,7 @@ describe('AppTableManagerService', () => {
     TestBed.configureTestingModule({
       providers: [
         AppTableManagerService,
+        AppFormioRendererService,
         {
           provide: OzonApiService,
           useValue: jasmine.createSpyObj<OzonApiService>('OzonApiService', [

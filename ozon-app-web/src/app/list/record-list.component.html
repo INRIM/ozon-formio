@@ -29,7 +29,7 @@
                         [attr.aria-expanded]="filterOpen"
                         title="Filtri"
                 >
-                    <i class="pi pi-search" aria-hidden="true"></i>
+                    <img class="ozon-list-button-icon" src="bootstrap-italia/src/svg/it-search.svg" alt="" aria-hidden="true" />
                     <span class="ozon-filter-count" *ngIf="filterCount">{{ filterCount }}</span>
                 </button>
             </div>
@@ -142,29 +142,13 @@
 
                     <ng-template #scalarFilterValue>
                         <ng-container *ngIf="operatorRequiresValue(rule.operator)">
-                            <p-datepicker
-                                    *ngIf="filterFieldType(rule.field || '') === 'datetime' || filterFieldType(rule.field || '') === 'date'; else standardInput"
-                                    class="ozon-filter-datepicker-wrapper"
-                                    styleClass="w-100"
-                                    [ngModel]="toDateValue(rule.value)"
-                                    (ngModelChange)="onFilterRuleValueChange(i, $event)"
-                                    [showTime]="filterFieldType(rule.field || '') === 'datetime'"
-                                    [hourFormat]="'24'"
-                                    [showIcon]="true"
-                                    [fluid]="true"
-                                    [appendTo]="'body'"
-                                    [placeholder]="filterFieldType(rule.field || '') === 'datetime' ? 'Scegli data e ora' : 'Scegli data'"
+                            <input
+                                    class="form-control form-control-sm ozon-filter-value"
+                                    [type]="filterValueInputType(rule.field || '')"
+                                    [value]="rule.value ?? ''"
+                                    (change)="onFilterRuleValueChange(i, $any($event.target).value)"
                                     [attr.aria-label]="'Valore filtro ' + (i + 1)"
-                            ></p-datepicker>
-                            <ng-template #standardInput>
-                                <input
-                                        class="form-control form-control-sm ozon-filter-value"
-                                        [type]="filterValueInputType(rule.field || '')"
-                                        [value]="rule.value ?? ''"
-                                        (change)="onFilterRuleValueChange(i, $any($event.target).value)"
-                                        [attr.aria-label]="'Valore filtro ' + (i + 1)"
-                                />
-                            </ng-template>
+                            />
                         </ng-container>
                         <span class="ozon-filter-no-value" *ngIf="!operatorRequiresValue(rule.operator)">-</span>
                     </ng-template>
@@ -175,7 +159,7 @@
                             (click)="removeFilterRule(i)"
                             [attr.aria-label]="'Rimuovi filtro ' + (i + 1)"
                     >
-                        <i class="pi pi-times" aria-hidden="true"></i>
+                        <img class="ozon-list-button-icon" src="bootstrap-italia/src/svg/it-close.svg" alt="" aria-hidden="true" />
                     </button>
                 </div>
             </div>
@@ -193,7 +177,7 @@
                         (click)="toggleMongoQuery()"
                         [attr.aria-expanded]="showMongoQuery"
                 >
-                    <i class="pi" [ngClass]="showMongoQuery ? 'pi-eye-slash' : 'pi-eye'" aria-hidden="true"></i>
+                    <img class="ozon-list-button-icon" src="bootstrap-italia/src/svg/it-pencil.svg" alt="" aria-hidden="true" />
                     <!--          <span>{{ showMongoQuery ? 'Nascondi query MongoDB' : 'Mostra query MongoDB' }}</span>-->
                 </button>
             </div>
@@ -246,6 +230,25 @@
             </ng-container>
         </div>
 
+        <!-- Fast actions -->
+        <div class="ozon-fast-actions-shell" *ngIf="showFastActionsShell">
+            <div class="ozon-fast-actions-header">
+                <div class="ozon-fast-actions-title">Azioni rapide</div>
+            </div>
+            <div class="ozon-fast-actions-placeholder" *ngIf="fastActionsLoading" aria-live="polite" aria-busy="true">
+                <span class="ozon-skeleton ozon-skeleton--control" *ngFor="let row of fastActionsPlaceholderRows"></span>
+            </div>
+            <div class="ozon-fast-actions-form" *ngIf="showFastActionsForm">
+                <formio
+                        #fastActionsFormioRef
+                        [form]="fastActionsFormSchema"
+                        [renderOptions]="fastActionsRenderOptions"
+                        (customEvent)="fastActionCustomEvent.emit($event)"
+                        (ready)="refreshFastActionsSelectionGuard()"
+                ></formio>
+            </div>
+        </div>
+
         <!-- Above-table info bar: selection LEFT · stream counters RIGHT -->
         <div class="ozon-table-infobar mb-1">
             <div class="small text-muted">{{ selectionInfo }}</div>
@@ -293,7 +296,7 @@
             Header `X-Columns` mancante o non valido
         </div>
 
-        <app-record-table-cdk
+        <app-record-table-ag-grid
                 *ngIf="showDesktopTable"
                 [columns]="tableColumns"
                 [rows]="tableRows"
@@ -310,7 +313,7 @@
                 (rowReorder)="rowReorder.emit($event)"
                 (copyRow)="copyRow.emit($event)"
                 (removeRow)="removeRow.emit($event)"
-        ></app-record-table-cdk>
+        ></app-record-table-ag-grid>
 
         <app-record-cards
                 *ngIf="showMobileCards"

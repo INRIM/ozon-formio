@@ -1,10 +1,9 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, EventEmitter, Input, Output, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, EventEmitter, Input, OnChanges, Output, SimpleChanges, ViewChild, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { BreakpointObserver } from '@angular/cdk/layout';
-import { FormioModule } from '@formio/angular';
-import { DatePicker } from 'primeng/datepicker';
+import { FormioComponent, FormioModule } from '@formio/angular';
 import {
     ContextAction, FormNotification, ListExportConfig, ListImportConfig, ListPageChange, ListRowReorderChange,
     ListSearchSessionContext, ListSortChange, QueryBuilderConfig, Rule, RuleSet,
@@ -12,17 +11,19 @@ import {
 } from '../models/app.types';
 import { RecordCardsComponent } from './record-cards.component';
 import { RecordTransferToolsComponent } from './record-transfer-tools.component';
-import { RecordTableCdkComponent } from './record-table-cdk.component';
+import { RecordTableAgGridComponent } from './record-table-ag-grid.component';
 
 @Component({
     selector: 'app-record-list',
     standalone: true,
-    imports: [CommonModule, FormsModule, FormioModule, RecordTableCdkComponent, RecordCardsComponent, RecordTransferToolsComponent, DatePicker],
+    imports: [CommonModule, FormsModule, FormioModule, RecordTableAgGridComponent, RecordCardsComponent, RecordTransferToolsComponent],
     templateUrl: './record-list.component.html',
     styleUrl: './record-list.component.scss',
     changeDetection: ChangeDetectionStrategy.OnPush
 })
-export class RecordListComponent {
+export class RecordListComponent implements OnChanges {
+    @ViewChild('fastActionsFormioRef') fastActionsFormioRef?: FormioComponent;
+
     @Input() dashboardTitle = '';
     @Input() isAdmin = false;
     @Input() streamCount = 0;
@@ -48,6 +49,9 @@ export class RecordListComponent {
     @Input() fastSearchLoading = false;
     @Input() fastSearchSchema: Record<string, unknown> | null = null;
     @Input() fastSearchSubmission: { data: Record<string, unknown> } = { data: {} };
+    @Input() fastActionsEnabled = false;
+    @Input() fastActionsLoading = false;
+    @Input() fastActionsSchema: Record<string, unknown> | null = null;
     @Input() tableRenderLoading = false;
     @Input() formioRenderOptions: Record<string, unknown> | null = null;
     @Input() exportConfig: ListExportConfig | null = null;
@@ -66,6 +70,7 @@ export class RecordListComponent {
     @Output() fastSearchKeydown = new EventEmitter<KeyboardEvent>();
     @Output() fastSearchSearch = new EventEmitter<void>();
     @Output() fastSearchReset = new EventEmitter<void>();
+    @Output() fastActionCustomEvent = new EventEmitter<unknown>();
     @Output() openRecord = new EventEmitter<void>();
     @Output() openNewRecord = new EventEmitter<void>();
     @Output() deleteRecord = new EventEmitter<void>();
@@ -94,6 +99,9 @@ export class RecordListComponent {
 
     private lastMobileClickTime = 0;
     private lastMobileClickRec = '';
+    private fastActionsRenderOptionsCache: Record<string, unknown> | undefined;
+    private fastActionsRenderOptionsBase: Record<string, unknown> | null = null;
+    private fastActionsRenderOptionsSelectionCount = -1;
 
     private readonly breakpointObserver = inject(BreakpointObserver);
     private readonly destroyRef = inject(DestroyRef);
@@ -106,6 +114,33 @@ export class RecordListComponent {
                 this.isMobile = result.matches;
                 if (!result.matches) this.fastSearchCollapsed = false;
             });
+    }
+
+    ngOnChanges(changes: SimpleChanges): void {
+        if (changes['selectedRows']) void this.refreshFastActionsSelectionGuard();
+    }
+
+    /**
+     * Drives the fast-actions button enable/disable guard. Two things had to both be true, and
+     * verified empirically (a first attempt got each half wrong separately):
+     *  1. Form.io's `type: 'json'` logic trigger only ever sees `{data, row, form}` (see
+     *     AppFormioRendererService.injectFastActionsSelectionGuard) — it can't read
+     *     `options.evalContext`, so the guard reads `data.selection_count`, real submission data,
+     *     not a context var.
+     *  2. `setSubmission()` updates `form.data` but does *not* itself cascade into
+     *     `checkConditions()` for a top-level button component — logic only re-runs on an explicit
+     *     `checkConditions()` call. `[submission]` binding alone (relying on @formio/angular's own
+     *     ngOnChanges -> setSubmission) updates the data but the guard never re-evaluates.
+     * So: set the submission, wait for it, then force the recheck — in that order, explicitly.
+     */
+    async refreshFastActionsSelectionGuard(): Promise<void> {
+        const instance = this.fastActionsFormioRef?.formio as {
+            setSubmission?: (submission: { data: Record<string, unknown> }) => Promise<unknown>;
+            checkConditions?: () => void;
+        } | undefined;
+        if (!instance?.setSubmission) return;
+        await instance.setSubmission({ data: { selection_count: this.selectedRows.length } });
+        instance.checkConditions?.();
     }
 
     get selectionInfo(): string {
@@ -391,12 +426,42 @@ export class RecordListComponent {
         return this.fastSearchLoading || (this.fastSearchEnabled && Boolean(this.fastSearchSchema));
     }
 
+    get showFastActionsShell(): boolean {
+        return this.fastActionsLoading || (this.fastActionsEnabled && Boolean(this.fastActionsSchema));
+    }
+
     get showFastSearchForm(): boolean {
         return !this.fastSearchLoading && this.fastSearchEnabled && Boolean(this.fastSearchSchema);
     }
 
+    get showFastActionsForm(): boolean {
+        return !this.fastActionsLoading && this.fastActionsEnabled && Boolean(this.fastActionsSchema);
+    }
+
     get fastSearchFormSchema(): Record<string, unknown> | undefined {
         return this.fastSearchSchema ?? undefined;
+    }
+
+    get fastActionsFormSchema(): Record<string, unknown> | undefined {
+        return this.fastActionsSchema ?? undefined;
+    }
+
+    get fastActionsRenderOptions(): Record<string, unknown> | undefined {
+        const base = this.isRecord(this.formioRenderOptions) ? this.formioRenderOptions : null;
+        const selectionCount = this.selectedRows.length;
+        if (this.fastActionsRenderOptionsCache && this.fastActionsRenderOptionsBase === base && this.fastActionsRenderOptionsSelectionCount === selectionCount) {
+            return this.fastActionsRenderOptionsCache;
+        }
+        const nextBase = this.isRecord(base) ? { ...base } : {};
+        const evalContext = this.isRecord(nextBase['evalContext']) ? { ...(nextBase['evalContext'] as Record<string, unknown>) } : {};
+        const app = this.isRecord(evalContext['app']) ? { ...(evalContext['app'] as Record<string, unknown>) } : {};
+        app['selection_count'] = selectionCount;
+        evalContext['app'] = app;
+        nextBase['evalContext'] = evalContext;
+        this.fastActionsRenderOptionsBase = base;
+        this.fastActionsRenderOptionsSelectionCount = selectionCount;
+        this.fastActionsRenderOptionsCache = nextBase;
+        return nextBase;
     }
 
     get showTablePlaceholder(): boolean {
@@ -419,6 +484,10 @@ export class RecordListComponent {
         return [0, 1, 2];
     }
 
+    get fastActionsPlaceholderRows(): number[] {
+        return [0];
+    }
+
     get tablePlaceholderRows(): number[] {
         const count = this.isLoadingRecords ? 4 : (this.tableRows.length ? Math.min(Math.max(this.tableRows.length, 2), 6) : 3);
         return Array.from({ length: count }, (_value, index) => index);
@@ -437,6 +506,10 @@ export class RecordListComponent {
 
     get pageItems(): Array<number | string> {
         return this.buildPageItems(this.currentPage, this.totalPages);
+    }
+
+    private isRecord(value: unknown): value is Record<string, unknown> {
+        return !!value && typeof value === 'object' && !Array.isArray(value);
     }
 
     onPageSizeChanged(pageSize: string | number): void {

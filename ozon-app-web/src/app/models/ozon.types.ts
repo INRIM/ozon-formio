@@ -12,6 +12,8 @@ export interface RuntimeConfig {
   authLogoutPath: string;
   authRefreshPath: string;
   appCode: string;
+  appModuleName: string;
+  appLogoUrl: string;
 }
 
 export type ResponseMode = 'form' | 'list' | 'list_stream' | 'layout' | 'menu' | 'card' | 'redirect' | 'action' | string;

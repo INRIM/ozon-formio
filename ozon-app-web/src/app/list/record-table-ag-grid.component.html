@@ -1,0 +1,27 @@
+<div class="ozon-table-wrap">
+  <ag-grid-angular
+    class="ag-theme-quartz ozon-ag-grid"
+    [theme]="'legacy'"
+    [columnDefs]="colDefs"
+    [rowData]="rowData"
+    [defaultColDef]="defaultColDef"
+    [rowClassRules]="rowClassRules"
+    [getRowId]="getRowId"
+    [rowSelection]="rowSelection"
+    [rowDragManaged]="rowDragManaged"
+    [suppressCellFocus]="suppressCellFocus"
+    [suppressMoveWhenRowDragging]="true"
+    [animateRows]="true"
+    (gridReady)="onGridReady($event)"
+    (selectionChanged)="onSelectionChanged($event)"
+    (sortChanged)="onSortChanged($event)"
+    (rowClicked)="onRowClicked($event)"
+    (rowDoubleClicked)="onRowDoubleClicked($event)"
+    (cellClicked)="onCellClicked($event)"
+    (rowDragEnd)="onRowDragEnd($event)"
+  ></ag-grid-angular>
+
+  <div *ngIf="!rows.length" class="ozon-record-table__empty">
+    Nessun record
+  </div>
+</div>

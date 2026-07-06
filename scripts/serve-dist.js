@@ -75,6 +75,7 @@ function loadRuntimeConfig() {
     return {
         backendurl: process.env.backendurl || process.env.BACKENDURL || env.backendurl || env.BACKENDURL || 'http://localhost:8002',
         app_code: process.env.app_code || process.env.APP_CODE || env.app_code || env.APP_CODE || '',
+        applogourl: process.env.applogourl || process.env.APP_LOGO_URL || process.env.appLogoUrl || env.applogourl || env.APP_LOGO_URL || env.appLogoUrl || 'https://www.inrim.it/sites/default/files/2022-04/logoinrimhp%20%281%29.svg',
         basetocken: process.env.basetocken || process.env.BASETOCKEN || env.basetocken || env.BASETOCKEN || '',
         tokenheader: process.env.tokenheader || process.env.TOKEN_HEADER || env.tokenheader || env.TOKEN_HEADER || 'Authorization',
         tokenprefix: process.env.tokenprefix || process.env.TOKEN_PREFIX || env.tokenprefix || env.TOKEN_PREFIX || ''

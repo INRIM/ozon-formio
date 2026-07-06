@@ -226,6 +226,13 @@ export class AppFormioRendererService {
         return hydrated;
     }
 
+    /** Sync-only: normalize a fast-actions schema so button components behave like inline actions. */
+    prepareFastActionsSchema(schema: Record<string, unknown>): Record<string, unknown> {
+        const hydrated = this.prepareSchemaForRender(schema, null);
+        this.injectFastActionsSelectionGuard(hydrated);
+        return hydrated;
+    }
+
     /** Background: fetch remote selects for the current formSchema and patch it in-place, then trigger re-render. */
     async hydrateRemoteSelectsInBackground(sub: Record<string, unknown> | null, contextId = this.formAsyncContextId): Promise<void> {
         if (!this.formSchema) return;
@@ -529,18 +536,42 @@ export class AppFormioRendererService {
         return normalized;
     }
 
+    /**
+     * This runs on both load (extractSubmission) and save (normalizeCurrentSubmissionData), so it
+     * must be idempotent — feeding its own output back in has to yield the same result. Two things
+     * broke that: (1) detecting "already normalized" only via a leading slash, which missed backend
+     * values that omit it and fell through to the generic branch, doubling the prefix into
+     * `/api/client/attachment/api/client/attachment/...`; (2) not stripping the `?app_code=...`
+     * query string that a previous pass's `resolveApiUrl` call appended before re-running the
+     * per-segment `encodeURIComponent(decodeURIComponent(...))` pass, which folded the literal `?`
+     * into the path as `%3F` — so the next pass no longer recognized it as a query string and
+     * `resolveApiUrl` appended a *second* `?app_code=...`, compounding further on every subsequent
+     * save/load cycle. Stripping the query up front and always recomputing it fresh fixes both.
+     */
     private normalizeBackendFileUrl(value: string): string {
         const raw = value.trim();
         if (!raw) return raw;
-        if (raw.startsWith('/api/client/attachment/')) {
-            return raw.split('/').map((segment, index) => {
-                if (index === 0) return '';
-                return encodeURIComponent(decodeURIComponent(segment));
-            }).join('/');
+        const queryIndex = raw.indexOf('?');
+        const pathOnly = queryIndex === -1 ? raw : raw.slice(0, queryIndex);
+        // Collapse any repeats of the attachment prefix — a value already corrupted by an earlier
+        // bug (or by OzonApiService.downloadAttachment's now-fixed but previously-separate copy of
+        // this same logic) may have it doubled or tripled in already-stored data. Stripping in a
+        // loop self-heals it back to a single canonical prefix instead of preserving the doubling
+        // forever (a plain `startsWith` check is satisfied just as well by a doubled prefix, so it
+        // never actually fixed already-corrupted values, only stopped making new ones worse).
+        let bare = pathOnly.replace(/^\/+/, '');
+        let strippedPrefix = true;
+        while (strippedPrefix) {
+            strippedPrefix = false;
+            if (bare.startsWith('api/client/attachment/')) {
+                bare = bare.slice('api/client/attachment/'.length);
+                strippedPrefix = true;
+            } else if (bare.startsWith('client/attachment/')) {
+                bare = bare.slice('client/attachment/'.length);
+                strippedPrefix = true;
+            }
         }
-        const path = raw.startsWith('/client/attachment/')
-            ? raw
-            : `/client/attachment/${raw.replace(/^\/+/, '')}`;
+        const path = `/client/attachment/${bare}`;
         const encodedPath = path.split('/').map((segment, index) => {
             if (index === 0) return '';
             return encodeURIComponent(decodeURIComponent(segment));
@@ -782,11 +813,26 @@ export class AppFormioRendererService {
             if (Array.isArray(node)) { node.forEach(visit); return; }
             if (!this.isRecord(node)) return;
             const type = String(node['type'] ?? '').trim().toLowerCase();
-            if (type === 'table') { node['tableView'] = true; node['customClass'] = this.appendCustomClass(node['customClass'], 'ozon-form-table'); }
-            else if (type === 'datagrid' || type === 'editgrid') { node['tableView'] = true; node['customClass'] = this.appendCustomClass(node['customClass'], 'ozon-form-datagrid'); }
+            if (type === 'table' && this.isOzonDataTableStub(node)) {
+                // Legacy builder-palette stub reuses Form.io's native `table` layout type name for our
+                // custom data-grid component. Retype it so it doesn't collide with the real table layout.
+                node['type'] = 'ozon_data_table';
+                node['input'] = false;
+                node['tableView'] = false;
+                node['customClass'] = this.appendCustomClass(node['customClass'], 'ozon-form-data-table');
+            } else if (type === 'table') {
+                node['tableView'] = true; node['customClass'] = this.appendCustomClass(node['customClass'], 'ozon-form-table');
+            } else if (type === 'datagrid' || type === 'editgrid') {
+                node['tableView'] = true; node['customClass'] = this.appendCustomClass(node['customClass'], 'ozon-form-datagrid');
+            }
             Object.values(node).forEach(visit);
         };
         visit(schema);
+    }
+
+    private isOzonDataTableStub(node: Record<string, unknown>): boolean {
+        const props = this.readComponentProperties(node);
+        return typeof props['action_url'] === 'string' && props['action_url'].trim().length > 0;
     }
 
     private normalizeFormWysiwygComponents(schema: Record<string, unknown>, submissionData: Record<string, unknown> | null = null): void {
@@ -882,6 +928,78 @@ export class AppFormioRendererService {
             this.normalizeNativeSubmitButtonComponent(node);
             this.normalizeInlineActionButtonComponent(node);
             this.normalizeOutlineButtonComponent(node);
+            Object.values(node).forEach(visit);
+        };
+        visit(schema);
+    }
+
+    /**
+     * Form.io's own `type: 'json'` logic trigger (Utils.checkJsonConditional) evaluates against
+     * `{data, row, form, _}` only — `options.evalContext` (where `user.*`/`session.*`/`app.*` live,
+     * used elsewhere for interpolation) is never passed in. `{var: 'app.selection_count'}` here
+     * would always resolve to undefined, so the guard could never actually flip — it'd stay however
+     * it started. Reading `data.selection_count` instead works because it's real submission data,
+     * and RecordListComponent binds `[submission]` with that key so Form.io's normal
+     * setSubmission -> setValue -> checkConditions cascade re-evaluates this on every selection
+     * change, no manual poke required.
+     */
+    private injectFastActionsSelectionGuard(schema: Record<string, unknown>): void {
+        const addLogic = (component: Record<string, unknown>, selectionCountValue: number, state: boolean): void => {
+            const logic = Array.isArray(component['logic']) ? [...component['logic'] as unknown[]] : [];
+            logic.push({
+                name: state ? 'disableSelectionGuard' : 'enableSelectionGuard',
+                trigger: {
+                    type: 'json',
+                    json: {
+                        [state ? '<=' : '>']: [
+                            { var: 'data.selection_count' },
+                            selectionCountValue
+                        ]
+                    }
+                },
+                actions: [
+                    {
+                        name: 'show',
+                        type: 'property',
+                        property: {
+                            label: 'Disabled',
+                            value: 'disabled',
+                            type: 'boolean'
+                        },
+                        state
+                    }
+                ]
+            });
+            component['logic'] = logic;
+        };
+
+        const visit = (node: unknown): void => {
+            if (Array.isArray(node)) {
+                node.forEach(visit);
+                return;
+            }
+            if (!this.isRecord(node)) return;
+            const type = String(node['type'] ?? '').trim().toLowerCase();
+            if (type === 'button') {
+                const key = String(node['key'] ?? '').trim().toLowerCase();
+                if (key !== 'submit') {
+                    const hasGuard = Array.isArray(node['logic']) && (node['logic'] as unknown[]).some(item => {
+                        if (!this.isRecord(item)) return false;
+                        const actions = Array.isArray(item['actions']) ? item['actions'] as unknown[] : [];
+                        return actions.some(action => {
+                            if (!this.isRecord(action)) return false;
+                            const property = this.isRecord(action['property']) ? action['property'] : null;
+                            return String(action['type'] ?? '').trim().toLowerCase() === 'property'
+                                && String(property?.['value'] ?? '').trim().toLowerCase() === 'disabled';
+                        });
+                    });
+                    node['tooltip'] = this.readFirstString(node['tooltip'], this.isRecord(node['properties']) ? (node['properties'] as Record<string, unknown>)['tooltip'] : '') || 'Seleziona almeno una riga';
+                    if (!hasGuard) {
+                        addLogic(node, 0, true);
+                        addLogic(node, 0, false);
+                    }
+                }
+            }
             Object.values(node).forEach(visit);
         };
         visit(schema);
@@ -989,6 +1107,11 @@ export class AppFormioRendererService {
         if (String(component['type'] ?? '').trim().toLowerCase() !== 'file') return;
         if (typeof component['multiple'] !== 'boolean') component['multiple'] = true;
         component['customClass'] = this.appendCustomClass(component['customClass'], 'ozon-file-upload');
+        // Form.io silently no-ops file selection when `component.storage` is unset (see
+        // File.js#prepareFilesToUpload). Forms that don't configure a storage provider still need
+        // uploads to work, so fall back to inline base64 — normalizeFileEntry() already round-trips
+        // base64 file values on read, so this is consistent with how saved files are handled.
+        if (!component['storage']) component['storage'] = 'base64';
     }
 
     private normalizeNativeSubmitButtonComponent(component: Record<string, unknown>): void {

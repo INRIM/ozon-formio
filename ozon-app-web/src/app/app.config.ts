@@ -4,8 +4,6 @@ import { provideAnimationsAsync } from '@angular/platform-browser/animations/asy
 import { provideRouter, withDisabledInitialNavigation } from '@angular/router';
 import { provideDesignAngularKit } from 'design-angular-kit';
 import { FORMIO_CONFIG, FormioAppConfig } from '@formio/angular';
-import Aura from '@primeuix/themes/aura';
-import { providePrimeNG } from 'primeng/config';
 import { routes } from './app.routes';
 import { GlobalErrorHandler } from './core/global-error-handler';
 import { RuntimeConfigService } from './core/runtime-config.service';
@@ -39,15 +37,6 @@ export const appConfig: ApplicationConfig = {
     provideAnimationsAsync(),
     provideDesignAngularKit(),
     { provide: FORMIO_CONFIG, useFactory: buildFormioConfig, deps: [RuntimeConfigService] },
-    FormioAppConfig,
-    providePrimeNG({
-      ripple: true,
-      theme: {
-        preset: Aura,
-        options: {
-          darkModeSelector: ':root[data-theme="dark"]'
-        }
-      }
-    })
+    FormioAppConfig
   ]
 };

@@ -35,6 +35,8 @@
             "styles": [
               "node_modules/quill/dist/quill.snow.css",
               "node_modules/@formio/js/dist/formio.full.min.css",
+              "node_modules/ag-grid-community/styles/ag-grid.css",
+              "node_modules/ag-grid-community/styles/ag-theme-quartz.css",
               "src/styles.scss"
             ],
             "scripts": []

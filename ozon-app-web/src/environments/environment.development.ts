@@ -10,5 +10,7 @@ export const environment = {
   authLoginPath: '/api/login',
   authLogoutPath: '/api/logout',
   authRefreshPath: '/refresh',
-  appCode: ''
+  appCode: '',
+  appModuleName: 'Mci Service',
+  appLogoUrl: 'https://www.inrim.it/sites/default/files/2022-04/logoinrimhp%20%281%29.svg'
 };

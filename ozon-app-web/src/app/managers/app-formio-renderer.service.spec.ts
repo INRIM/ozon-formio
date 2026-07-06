@@ -342,4 +342,48 @@ describe('AppFormioRendererService', () => {
     expect(service.formViewerLoading).toBeFalse();
     expect(service.formDataReady).toBeTrue();
   });
+
+  it('retypes the legacy embeddable data-table stub (type "table" + properties.action_url) to ozon_data_table, so it does not collide with Form.io\'s native table layout component', () => {
+    const schema = {
+      components: [
+        {
+          type: 'table',
+          key: 'ozonDataTable',
+          input: false,
+          properties: {
+            action_url: '/action/list_group_members',
+            model: 'res.partner',
+            list_metadata_show: 'name,codicefiscale,'
+          }
+        }
+      ]
+    };
+
+    const prepared = service.prepareSchemaForRender(schema, null);
+    const table = (prepared['components'] as Array<Record<string, unknown>>)[0];
+
+    expect(table['type']).toBe('ozon_data_table');
+    expect(String(table['customClass'] ?? '')).toContain('ozon-form-data-table');
+  });
+
+  it('leaves Form.io\'s native table layout component untouched when it has no action_url property', () => {
+    const schema = {
+      components: [
+        {
+          type: 'table',
+          key: 'layoutTable',
+          numRows: 2,
+          numCols: 2,
+          rows: []
+        }
+      ]
+    };
+
+    const prepared = service.prepareSchemaForRender(schema, null);
+    const table = (prepared['components'] as Array<Record<string, unknown>>)[0];
+
+    expect(table['type']).toBe('table');
+    expect(String(table['customClass'] ?? '')).toContain('ozon-form-table');
+    expect(String(table['customClass'] ?? '')).not.toContain('ozon-form-data-table');
+  });
 });

@@ -1,4 +1,5 @@
 import { TestBed } from '@angular/core/testing';
+import { By } from '@angular/platform-browser';
 import { EMPTY } from 'rxjs';
 import { AppComponent } from './app.component';
 import { OzonApiService } from './core/ozon-api.service';
@@ -6,6 +7,7 @@ import { MainManagerService } from './core/main-manager.service';
 import { BackendAuthService } from './core/backend-auth.service';
 import { ListRequestPayload, requireResponseObject, ResponseObject, ResponseObjectData } from './models/ozon.types';
 import { GlobalErrorStateService } from './core/global-error-state.service';
+import { RecordListComponent } from './list/record-list.component';
 
 const makeResponse = (content: Partial<ResponseObjectData>, fail = false, message = ''): ResponseObject => ({
   content: {
@@ -45,7 +47,9 @@ const runtimeConfig = {
   authLoginPath: '/login',
   authLogoutPath: '/logout',
   authRefreshPath: '/refresh',
-  appCode: ''
+  appCode: '',
+  appModuleName: 'Mci Service',
+  appLogoUrl: 'https://www.inrim.it/sites/default/files/2022-04/logoinrimhp%20%281%29.svg'
 };
 
 describe('AppComponent', () => {
@@ -191,6 +195,44 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
     expect(app).toBeTruthy();
+  });
+
+  it('should render the home nav button with the Bootstrap Italia PA icon', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    fixture.detectChanges();
+
+    app.appManager.backendSessionReady = true;
+    fixture.detectChanges();
+
+    const icon = fixture.nativeElement.querySelector('.ozon-home-btn img') as HTMLImageElement | null;
+    expect(icon).not.toBeNull();
+    expect(icon?.getAttribute('src')).toBe('bootstrap-italia/src/svg/it-pa.svg');
+  });
+
+  it('should adapt the home nav PA icon for dark theme', () => {
+    document.documentElement.setAttribute('data-theme', 'dark');
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    fixture.detectChanges();
+
+    app.appManager.backendSessionReady = true;
+    fixture.detectChanges();
+
+    const icon = fixture.nativeElement.querySelector('.ozon-home-btn img') as HTMLImageElement;
+    expect(getComputedStyle(icon).filter).toContain('invert');
+  });
+
+  it('should keep primary buttons readable in light theme', () => {
+    document.documentElement.setAttribute('data-theme', 'light');
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.confirmModalVisible = true;
+    fixture.detectChanges();
+
+    const primary = fixture.nativeElement.querySelector('.modal .btn-primary') as HTMLButtonElement | null;
+    expect(primary).not.toBeNull();
+    expect(getComputedStyle(primary as HTMLButtonElement).color).toBe('rgb(255, 255, 255)');
   });
 
   it('should initialize theme from local storage', () => {
@@ -1988,7 +2030,44 @@ describe('AppComponent', () => {
     expect(app.appManager.dashboardCards[0].title).toBe('Documenti');
   });
 
-  it('should show cards only for non-admin menus and gate admin menus by builder flag', () => {
+  it('should render dashboard cards with Bootstrap Italia service card structure', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance;
+    app.appManager.viewMode = 'dashboard';
+    app.appManager.dashboardCards = [
+      {
+        model: 'ordine',
+        group_id: 'docs',
+        title: 'Gestione Documenti',
+        menu_type: 'standard',
+        is_admin: false,
+        buttons: [{
+          model: 'ordine',
+          key: 'list',
+          type: 'button',
+          label: 'Lista',
+          leftIcon: 'it-list',
+          authtoken: '',
+          req_id: 'req',
+          btn_action_type: false,
+          action_type: 'window',
+          url_action: '/action/list_docs',
+          builder: false
+        }]
+      }
+    ];
+
+    fixture.detectChanges();
+
+    const card = fixture.nativeElement.querySelector('.ozon-dashboard-card') as HTMLElement;
+    expect(card.classList).toContain('it-card');
+    expect(card.classList).toContain('it-card-height-full');
+    expect(card.querySelector('h4.it-card-title a')?.textContent?.trim()).toBe('Gestione Documenti');
+    expect(card.querySelector('.it-card-body .it-card-related')).not.toBeNull();
+    expect(card.querySelector('.it-card-footer .list-item')?.textContent?.trim()).toContain('Lista');
+  });
+
+  it('should show cards only for non-admin menus and hide the header menu in builder mode', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
     app.appManager.isAdminUser = true;
@@ -2043,12 +2122,43 @@ describe('AppComponent', () => {
     const app = fixture.componentInstance as any;
     app.appManager.isAdminUser = true;
     app.appManager.builderFeatureEnabled = true;
+    app.appManager.backendSessionReady = true;
     app.appManager.builderEnabled = false;
+    app.appManager.dashboardMenu = [{
+      model: 'ordine',
+      group_id: 'docs',
+      title: 'Documenti',
+      menu_type: 'standard',
+      is_admin: false,
+      buttons: [{ key: 'list', label: 'Lista', action_type: 'window', url_action: '/action/list_docs', builder: false, type: 'button' }]
+    }];
+    fixture.detectChanges();
 
     expect(app.showTopMenu).toBeFalse();
+    expect(fixture.nativeElement.querySelector('.it-header-navbar-wrapper .ozon-home-btn')).not.toBeNull();
+    expect(fixture.nativeElement.querySelectorAll('.it-header-navbar-wrapper .menu-wrapper > .navbar-nav:not(.navbar-secondary) > .nav-item.dropdown').length).toBe(0);
 
     app.onBuilderSwitchChanged(true);
+    fixture.detectChanges();
     expect(app.showTopMenu).toBeTrue();
+    expect(fixture.nativeElement.querySelector('.it-header-navbar-wrapper .ozon-home-btn')).not.toBeNull();
+    expect(fixture.nativeElement.querySelectorAll('.it-header-navbar-wrapper .menu-wrapper > .navbar-nav:not(.navbar-secondary) > .nav-item.dropdown').length).toBe(1);
+  });
+
+  it('should hide placeholder-only menu cards and avoid empty group labels', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.appManager.dashboardMenu = [
+      {
+        model: 'placeholder',
+        group_id: 'group_0',
+        title: 'Group 0',
+        buttons: [{ key: 'action_0', label: 'Action 0', action_type: 'window', url_action: '/', builder: false, type: 'button' }]
+      }
+    ];
+
+    expect(app.topMenuCards.length).toBe(0);
+    expect(app.menuDrilldownGroups(app.appManager.dashboardMenu[0])).toEqual([]);
   });
 
   it('should keep table row copy/remove hidden by default', () => {
@@ -2355,6 +2465,21 @@ describe('AppComponent', () => {
     );
 
     expect(app.appManager.currentUserName).toBe('Mario Rossi');
+  });
+
+  it('should keep runtime app logo when layout settings do not provide one', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+
+    app.appManager.applyRuntime(apiMock.getRuntimeConfig());
+    app.appManager.applyLayoutResponse(
+      makeResponse({ mode: 'layout', data: { layout: 'standard', schema: {}, menu: [], settings: {} } }).content,
+      (_d: unknown) => [],
+      (s: Record<string, unknown>) => ({ ...s }),
+      []
+    );
+
+    expect(app.appManager.appLogoUrl).toBe(runtimeConfig.appLogoUrl);
   });
 
   it('should expose session user and admin flag in Formio evalContext for component jsonLogic', async () => {
@@ -3626,6 +3751,18 @@ describe('AppComponent', () => {
     await app.applyListFilters();
 
     expect(apiMock.streamList).toHaveBeenCalled();
+  });
+
+  it('should pass the generated Mongo query preview to the record list', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.appManager.viewMode = 'list';
+    app.tableManager.queryText = JSON.stringify({ status: 'APERTO' }, null, 2);
+
+    fixture.detectChanges();
+
+    const list = fixture.debugElement.query(By.directive(RecordListComponent)).componentInstance as RecordListComponent;
+    expect(list.filterPreview).toBe(app.tableManager.queryText);
   });
 
   it('should render fast search config from list action response and keep action reload as default', async () => {

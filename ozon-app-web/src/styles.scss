@@ -1,5 +1,4 @@
 @import 'bootstrap-italia/dist/css/bootstrap-italia.min.css';
-@import 'primeicons/primeicons.css';
 
 :root {
   color-scheme: light;
@@ -295,7 +294,7 @@ body {
    without touching app-wide cards.
    ========================================================= */
 .formio-builder-form {
-  border-radius: 0.75rem;
+  border-radius: 0.25rem;
 }
 
 .formio-builder-form > .formio-component,
@@ -305,6 +304,7 @@ body {
   border-color: #d9e3f2 !important;
   color: #17324d !important;
 }
+
 
 .formio-builder-form .card-body,
 .formio-builder-form .card-header + .card-body,
@@ -401,11 +401,15 @@ body {
 }
 
 .formio-form .ozon-select-readonly .choices__list--single {
-  padding-right: 0.5rem !important;
+  //padding-right: 0.5rem !important;
 }
 
 .formio-form .ozon-select-readonly .choices__list--multiple .choices__item {
-  padding-right: 0.65rem !important;
+  //padding-right: 0.65rem !important;
+}
+
+.choices {
+  border-bottom: 1px solid var(--ozon-border);
 }
 
 .formio-form .btn.btn-warning.ozon-btn-custom-outline,
@@ -422,6 +426,17 @@ body {
   background: rgba(0, 83, 166, 0.08) !important;
   color: var(--ozon-accent) !important;
   border-color: var(--ozon-accent) !important;
+}
+
+:root:not([data-theme='dark']) .btn-primary,
+:root:not([data-theme='dark']) .btn.btn-primary,
+:root:not([data-theme='dark']) .btn-primary:hover,
+:root:not([data-theme='dark']) .btn.btn-primary:hover,
+:root:not([data-theme='dark']) .btn-primary:focus,
+:root:not([data-theme='dark']) .btn.btn-primary:focus {
+  background-color: var(--bs-primary, #06c);
+  border-color: var(--bs-primary, #06c);
+  color: #fff;
 }
 
 :root[data-theme='dark'] .card {
@@ -585,6 +600,14 @@ body {
    ========================================================= */
 :root[data-theme='dark'] {
 
+  // 0. Bootstrap Italia SVG icons rendered as <img> (file upload widget, etc.) — these are
+  // black-by-default external SVGs (no inline fill to override), same fix as .ozon-home-icon
+  // in app.component.scss but global since this markup is injected outside Angular's view
+  // encapsulation by Form.io.
+  .ozon-bi-icon {
+    filter: invert(1) brightness(1.2);
+  }
+
   // 1. Input Group (Prefissi e Suffissi nei campi)
   .input-group-text {
     background-color: var(--ozon-surface-soft);
@@ -662,7 +685,7 @@ body {
     color: var(--ozon-muted);
   }
   .choices[data-type*='select-one']::after {
-    border-color: #c8d8eb transparent transparent transparent;
+    // border-color: #c8d8eb transparent transparent transparent;
   }
   .choices[data-type*='select-one'].is-open::after {
     border-color: transparent transparent #c8d8eb transparent;

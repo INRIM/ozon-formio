@@ -1,100 +1,146 @@
 <div class="ozon-shell">
-  <header class="ozon-brandbar">
-    <div class="ozon-brand">
-      <div class="ozon-logo-box">
-        <img *ngIf="appLogoUrl; else defaultLogo" [src]="appLogoUrl" alt="Application logo" />
-        <ng-template #defaultLogo>{{ logoFallbackText }}</ng-template>
-      </div>
-      <div class="ozon-brand-copy">
-        <div class="ozon-brand-title">{{ brandTitle }}</div>
-        <div class="ozon-brand-subtitle">{{ brandSubtitle }}</div>
-      </div>
-    </div>
-    <div class="d-flex align-items-center gap-2 ozon-theme-switch">
-      <span class="small text-muted">Tema {{ currentThemeLabel }}</span>
-      <p-inputSwitch
-        [ngModel]="isDarkTheme"
-        (ngModelChange)="onThemeSwitchChanged($event)"
-        inputId="theme-switch"
-        ariaLabel="Toggle tema chiaro/scuro"
-      >
-      </p-inputSwitch>
-    </div>
-  </header>
-
-  <nav class="ozon-topnav">
-    <button type="button" class="ozon-home-btn" *ngIf="showHomeButton" (click)="resetNavigation()">
-      <i class="pi pi-building"></i>
-    </button>
-
-    <div class="ozon-nav-groups" *ngIf="showTopMenu">
-      <div class="ozon-nav-item" *ngFor="let card of topMenuCards">
-        <button
-          type="button"
-          class="ozon-nav-link"
-          [class.is-active]="activeDashboardGroup === card.group_id"
-          (click)="openTopMenu(card)"
-        >
-          <span>{{ card.title }}</span>
-          <i class="pi pi-angle-down"></i>
-        </button>
-
-        <div class="ozon-nav-dropdown" *ngIf="openedNavMenuGroup === card.group_id">
-          <ng-container *ngIf="menuDrilldownGroups(card) as drilldownGroups">
-            <div class="ozon-nav-dropdown-group" *ngFor="let group of drilldownGroups">
-              <div class="ozon-nav-dropdown-group-title" *ngIf="drilldownGroups.length > 1">
-                {{ group.title }}
+  <header class="it-header-wrapper ozon-header">
+    <div class="it-nav-wrapper">
+      <div class="it-header-center-wrapper it-small-header">
+        <div class="container-fluid">
+          <div class="row">
+            <div class="col-12">
+              <div class="it-header-center-content-wrapper">
+                <div class="it-brand-wrapper">
+                  <a class="ozon-brand-link">
+                    <div class="ozon-logo-box">
+                      <img *ngIf="appLogoUrl; else defaultLogo" [src]="appLogoUrl" alt="Application logo" />
+                      <ng-template #defaultLogo>{{ logoFallbackText }}</ng-template>
+                    </div>
+                    <div class="it-brand-text">
+                      <div class="it-brand-title">{{ brandTitle }}</div>
+                      <div class="it-brand-tagline">{{ brandSubtitle }}</div>
+                    </div>
+                  </a>
+                </div>
+                <div class="it-right-zone">
+                  <div class="d-flex align-items-center gap-2 ozon-theme-switch">
+                    <span class="small">Tema {{ currentThemeLabel }}</span>
+                    <div class="toggles">
+                      <label for="theme-switch" class="m-0 p-0">
+                        <input
+                          type="checkbox"
+                          id="theme-switch"
+                          [ngModel]="isDarkTheme"
+                          (ngModelChange)="onThemeSwitchChanged($event)"
+                          aria-label="Toggle tema chiaro/scuro"
+                        />
+                        <span class="lever"></span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <a
-                class="ozon-nav-dropdown-item"
-                *ngFor="let button of group.buttons"
-                [class.is-disabled]="!canRunMenuAction(button)"
-                [attr.href]="menuActionHref(button)"
-                (click)="onMenuActionAnchorClick(button, $event)"
-              >
-                <ng-container *ngIf="resolveBootstrapItaliaIconSrc(button) as navIconSrc; else navClassIcon">
-                  <img class="ozon-bi-icon ozon-nav-dropdown-icon" [src]="navIconSrc" alt="" aria-hidden="true" />
-                </ng-container>
-                <ng-template #navClassIcon>
-                  <i [class]="resolveButtonIconClass(button)"></i>
-                </ng-template>
-                <span>{{ button.label }}</span>
-                <span *ngIf="button.number" class="ozon-menu-badge">{{ button.number }}</span>
-              </a>
             </div>
-          </ng-container>
-        </div>
-      </div>
-    </div>
-
-    <div class="ozon-user-menu-wrap">
-      <button type="button" class="ozon-user-toggle" (click)="toggleUserMenu()">
-        <span class="ozon-avatar">
-          <img *ngIf="userAvatarUrl; else initialsTpl" [src]="userAvatarUrl" alt="User avatar" />
-          <ng-template #initialsTpl>{{ userInitials }}</ng-template>
-        </span>
-        <span>{{ userDisplayName }}</span>
-        <i class="pi pi-angle-up"></i>
-      </button>
-      <div class="ozon-user-dropdown" *ngIf="userMenuOpen">
-        <div class="ozon-builder-toggle-row" *ngIf="showBuilderToggle">
-          <span>Builder</span>
-          <div class="d-flex align-items-center gap-2">
-            <span class="ozon-builder-flag">{{ builderSwitchLabel }}</span>
-            <p-inputSwitch
-              [ngModel]="builderEnabled"
-              (ngModelChange)="onBuilderSwitchChanged($event)"
-              inputId="builder-switch"
-              ariaLabel="Toggle builder mode"
-            >
-            </p-inputSwitch>
           </div>
         </div>
-        <button *ngIf="showLoginButton" type="button" class="ozon-auth-btn" (click)="login()">Login</button>
-        <button *ngIf="showLogoutButton" type="button" class="ozon-auth-btn" (click)="logout()">Logout</button>
+      </div>
+
+      <div class="it-header-navbar-wrapper">
+        <div class="container-fluid">
+          <div class="row">
+            <div class="col-12">
+              <nav class="navbar navbar-expand-lg" aria-label="Navigazione principale">
+                <div class="navbar-collapsable">
+                  <div class="menu-wrapper">
+                    <ul class="navbar-nav">
+                      <li class="nav-item" *ngIf="showHomeButton">
+                        <button type="button" class="nav-link ozon-home-btn" (click)="resetNavigation()">
+                          <img class="ozon-home-icon ozon-bi-icon" src="bootstrap-italia/src/svg/it-pa.svg" alt="" aria-hidden="true" />
+                        </button>
+                      </li>
+
+                      <ng-container *ngIf="showTopMenu">
+                        <li class="nav-item dropdown" *ngFor="let card of topMenuCards" [class.show]="openedNavMenuGroup === card.group_id">
+                          <button
+                            type="button"
+                            class="nav-link dropdown-toggle"
+                            [class.active]="activeDashboardGroup === card.group_id"
+                            (click)="openTopMenu(card)"
+                          >
+                            <span>{{ card.title }}</span>
+                          </button>
+
+                          <div class="dropdown-menu" [class.show]="openedNavMenuGroup === card.group_id" *ngIf="openedNavMenuGroup === card.group_id">
+                            <ng-container *ngIf="menuDrilldownGroups(card) as drilldownGroups">
+                              <div class="link-list-wrapper" *ngFor="let group of drilldownGroups">
+                                <div class="ozon-nav-dropdown-group-title" *ngIf="drilldownGroups.length > 1">
+                                  {{ group.title }}
+                                </div>
+                                <ul class="link-list">
+                                  <li *ngFor="let button of group.buttons">
+                                    <a
+                                      class="list-item"
+                                      [class.disabled]="!canRunMenuAction(button)"
+                                      [attr.href]="menuActionHref(button)"
+                                      (click)="onMenuActionAnchorClick(button, $event)"
+                                    >
+                                      <ng-container *ngIf="resolveBootstrapItaliaIconSrc(button) as navIconSrc; else navClassIcon">
+                                        <img class="ozon-bi-icon ozon-nav-dropdown-icon" [src]="navIconSrc" alt="" aria-hidden="true" />
+                                      </ng-container>
+                                      <ng-template #navClassIcon>
+                                        <i [class]="resolveButtonIconClass(button)"></i>
+                                      </ng-template>
+                                      <span>{{ button.label }}</span>
+                                      <span *ngIf="button.number" class="ozon-menu-badge">{{ button.number }}</span>
+                                    </a>
+                                  </li>
+                                </ul>
+                              </div>
+                            </ng-container>
+                          </div>
+                        </li>
+                      </ng-container>
+                    </ul>
+
+                    <ul class="navbar-nav navbar-secondary">
+                      <li class="nav-item dropdown" [class.show]="userMenuOpen">
+                        <button type="button" class="nav-link dropdown-toggle ozon-user-toggle" (click)="toggleUserMenu()">
+                          <span class="ozon-avatar">
+                            <img *ngIf="userAvatarUrl; else initialsTpl" [src]="userAvatarUrl" alt="User avatar" />
+                            <ng-template #initialsTpl>{{ userInitials }}</ng-template>
+                          </span>
+                          <span>{{ userDisplayName }}</span>
+                        </button>
+                        <div class="dropdown-menu dropdown-menu-end" [class.show]="userMenuOpen" *ngIf="userMenuOpen">
+                          <div class="link-list-wrapper">
+                            <ul class="link-list">
+                              <li class="ozon-builder-toggle-row" *ngIf="showBuilderToggle">
+                                <span class="small">Attiva Form Builder</span>
+                                <div class="toggles">
+                                  <label for="builder-switch" class="m-0 p-0">
+                                    <input
+                                      type="checkbox"
+                                      id="builder-switch"
+                                      [ngModel]="builderEnabled"
+                                      (ngModelChange)="onBuilderSwitchChanged($event)"
+                                      aria-label="Abilita modifica form"
+                                    />
+                                    <span class="lever"></span>
+                                  </label>
+                                </div>
+                              </li>
+                              <li *ngIf="showLoginButton"><button type="button" class="list-item ozon-auth-btn" (click)="login()">Login</button></li>
+                              <li *ngIf="showLogoutButton"><button type="button" class="list-item ozon-auth-btn" (click)="logout()">Logout</button></li>
+                            </ul>
+                          </div>
+                        </div>
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </nav>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
-  </nav>
+  </header>
 
   <section class="ozon-client-error-banner" *ngIf="fatalClientErrorVisible" aria-live="assertive">
     <div class="ozon-client-error-banner__copy">
@@ -110,28 +156,53 @@
   </section>
 
   <section class="ozon-dashboard-grid" *ngIf="isDashboardPage && nonAdminDashboardCards.length">
-    <article class="ozon-dashboard-card" *ngFor="let card of nonAdminDashboardCards">
-      <div class="ozon-card-actions">
+    <article class="it-card it-card-height-full rounded border shadow-sm ozon-dashboard-card" *ngFor="let card of nonAdminDashboardCards">
+      <h4 class="it-card-title ozon-card-title">
         <a
-          *ngFor="let button of card.buttons"
-          class="ozon-card-action"
-          [class.is-disabled]="!canRunMenuAction(button)"
-          [attr.href]="menuActionHref(button)"
-          (click)="onMenuActionAnchorClick(button, $event)"
-        >
-          <span class="ozon-card-action-icon-wrap">
-            <ng-container *ngIf="resolveBootstrapItaliaIconSrc(button) as cardIconSrc; else cardClassIcon">
-              <img class="ozon-card-action-icon ozon-card-action-icon-svg ozon-bi-icon" [src]="cardIconSrc" alt="" aria-hidden="true" />
-            </ng-container>
-            <ng-template #cardClassIcon>
-              <i [class]="resolveButtonIconClass(button)" class="ozon-card-action-icon"></i>
-            </ng-template>
-            <span *ngIf="button.number !== undefined" class="ozon-menu-badge">{{ button.number }}</span>
-          </span>
-          <span class="ozon-card-action-label">{{ button.label }}</span>
-        </a>
+          *ngIf="card.buttons[0] as primaryButton; else dashboardCardPlainTitle"
+          [class.is-disabled]="!canRunMenuAction(primaryButton)"
+          [attr.href]="menuActionHref(primaryButton)"
+          (click)="onMenuActionAnchorClick(primaryButton, $event)"
+        >{{ card.title }}</a>
+        <ng-template #dashboardCardPlainTitle>{{ card.title }}</ng-template>
+      </h4>
+      <div class="it-card-body ozon-card-body">
+        <footer class="it-card-related ozon-card-related" *ngIf="card.buttons.length">
+          <div class="it-card-taxonomy">
+            <div class="chip chip-simple chip-sm chip-success">
+              <span class="visually-hidden">Stato del servizio: </span>
+              <span class="chip-label">{{ card.buttons.length }} azioni</span>
+            </div>
+          </div>
+        </footer>
       </div>
-      <div class="ozon-card-title">{{ card.title }}</div>
+      <div class="it-card-footer ozon-card-actions" aria-label="Link correlati:">
+        <div class="it-list-wrapper">
+          <ul class="it-list">
+            <li *ngFor="let button of card.buttons">
+              <a
+                class="list-item ozon-card-action"
+                [class.disabled]="!canRunMenuAction(button)"
+                [attr.href]="menuActionHref(button)"
+                (click)="onMenuActionAnchorClick(button, $event)"
+              >
+                <span class="ozon-card-action-icon-wrap">
+                  <ng-container *ngIf="resolveBootstrapItaliaIconSrc(button) as cardIconSrc; else cardClassIcon">
+                    <img class="ozon-card-action-icon ozon-card-action-icon-svg ozon-bi-icon" [src]="cardIconSrc" alt="" aria-hidden="true" />
+                  </ng-container>
+                  <ng-template #cardClassIcon>
+                    <i [class]="resolveButtonIconClass(button)" class="ozon-card-action-icon"></i>
+                  </ng-template>
+                </span>
+                <span class="ozon-card-action-label">{{ button.label }}</span>
+                <span class="ozon-card-action-count" *ngIf="button.number !== undefined">
+                  <span class="ozon-menu-badge">{{ button.number }}</span>
+                </span>
+              </a>
+            </li>
+          </ul>
+        </div>
+      </div>
     </article>
   </section>
 
@@ -156,11 +227,17 @@
     [canOpenNewRecord]="canOpenNewRecord"
     [showStaticActionButtons]="showListActionButtonsFallback"
     [contextActions]="listContextActions"
+    [filterConfig]="listFilterConfig"
+    [filterRules]="listFilterRules"
+    [filterPreview]="listFilterPreview"
     [isLoadingRecords]="isLoadingRecords"
     [fastSearchEnabled]="fastSearchEnabled"
     [fastSearchLoading]="fastSearchLoading"
     [fastSearchSchema]="fastSearchSchema"
     [fastSearchSubmission]="fastSearchSubmission"
+    [fastActionsEnabled]="fastActionsEnabled"
+    [fastActionsLoading]="fastActionsLoading"
+    [fastActionsSchema]="fastActionsSchema"
     [tableRenderLoading]="tableRenderLoading"
     [formioRenderOptions]="formioRenderOptions"
     [exportConfig]="tableManager.listExportConfig"
@@ -174,9 +251,13 @@
     (fastSearchKeydown)="onFastSearchKeydown($event)"
     (fastSearchSearch)="doFastSearch()"
     (fastSearchReset)="resetFastSearch()"
+    (fastActionCustomEvent)="onFastActionCustomEvent($event)"
     (openRecord)="openRecordFromListSelection()"
     (openNewRecord)="openNewRecord()"
     (contextActionClick)="onContextActionClick($event)"
+    (filterRulesChange)="onListFilterRulesChange($event)"
+    (filterApply)="applyListFilters()"
+    (filterReset)="resetListFilters()"
     (retryServerError)="retryServerError()"
     (rowClick)="onTableRowClick($event.row, $event.event)"
     (desktopRowOpen)="onDesktopTableRowOpen($event.row, $event.event)"
@@ -206,7 +287,8 @@
             <input type="text" class="form-control" id="fe-title" name="title"
                    placeholder="Enter the form title" required
                    [value]="formEditorData['title'] ?? ''"
-                   (input)="updateFormEditorField('title', $any($event.target).value)">
+                   (input)="updateFormEditorField('title', $any($event.target).value)"
+                   (blur)="autoFillRecNameFromTitle()">
           </div>
         </div>
         <div class="col col-sm-3">
@@ -315,15 +397,12 @@
               </div>
             </div>
             <div class="form-group mt-2">
-              <label class="control-label">Report Layout</label>
-              <p-editor
-                [ngModel]="formEditorProperties['report'] ?? ''"
-                [ngModelOptions]="{ standalone: true }"
-                (ngModelChange)="updateFormEditorProperty('report', $event)"
-                [style]="{ height: '20rem' }"
-                styleClass="ozon-report-editor"
-              ></p-editor>
-              <small class="form-text text-muted">Editor WYSIWYG del template di stampa.</small>
+              <app-ozon-wysiwyg-editor
+                label="Report Layout"
+                hint="Editor WYSIWYG del template di stampa."
+                [value]="$any(formEditorProperties['report'] ?? '')"
+                (valueChange)="updateFormEditorProperty('report', $event)"
+              ></app-ozon-wysiwyg-editor>
             </div>
           </div>
 
@@ -438,8 +517,8 @@
                 <div class="form-group">
                   <label for="fe-query" class="control-label">Query</label>
                   <textarea id="fe-query" class="form-control" name="query-form-editable"
-                            [value]="formEditorData['queryformeditable'] ?? ''"
-                            (input)="updateFormEditorField('queryformeditable', $any($event.target).value)"></textarea>
+                            [value]="formEditorProperties['queryformeditable'] ?? ''"
+                            (input)="updateFormEditorProperty('queryformeditable', $any($event.target).value)"></textarea>
                   <small>Form Readonly se la query è valida</small>
                 </div>
               </div>
@@ -447,8 +526,8 @@
                 <div class="form-group">
                   <label for="fe-sort" class="control-label">Order by</label>
                   <input type="text" class="form-control" id="fe-sort" name="sort"
-                         [value]="formEditorData['sort'] ?? ''"
-                         (input)="updateFormEditorField('sort', $any($event.target).value)">
+                         [value]="formEditorProperties['sort'] ?? ''"
+                         (input)="updateFormEditorProperty('sort', $any($event.target).value)">
                   <small>campi divisi da virgola: nome:asc|desc</small>
                 </div>
               </div>
@@ -523,7 +602,7 @@
       <div class="d-flex flex-wrap align-items-center justify-content-end gap-2">
         <ng-container *ngIf="formSchema && showFormViewerActionButtons">
           <button
-            *ngFor="let btn of currentFormActionButtons"
+            *ngFor="let btn of currentFormActionButtons; trackBy: trackByButtonKey"
             type="button"
             class="btn btn-sm btn-warning"
             [disabled]="!canRunMenuAction(btn)"
@@ -589,31 +668,23 @@
   </div>
 
   <!-- Action confirmation modal -->
-  <p-dialog
-    [(visible)]="confirmModalVisible"
-    [modal]="true"
-    [responsive]="true"
-    [style]="{ width: '450px' }"
-    [draggable]="false"
-    [resizable]="false"
-  >
-    <ng-template pTemplate="header">
-      <span class="h5 mb-0">{{ confirmModalTitle }}</span>
-    </ng-template>
-    
-    <div class="py-2">
-      <p class="mb-0">{{ confirmModalMessage }}</p>
-    </div>
-
-    <ng-template pTemplate="footer">
-      <div class="d-flex justify-content-end gap-2">
-        <button type="button" class="btn btn-sm btn-outline-secondary" (click)="confirmModalCancel()">
-          Annulla
-        </button>
-        <button type="button" class="btn btn-sm btn-primary" (click)="confirmModalAccept()">
-          {{ confirmModalConfirmLabel }}
-        </button>
+  <div class="modal" [class.d-block]="confirmModalVisible" [class.show]="confirmModalVisible" tabindex="-1" role="dialog" [attr.aria-modal]="confirmModalVisible ? 'true' : null" style="background-color: rgba(0,0,0,0.5)">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 class="modal-title h5">{{ confirmModalTitle }}</h2>
+          <button class="btn-close" type="button" aria-label="Chiudi" (click)="confirmModalCancel()">
+            <svg class="icon"><use href="bootstrap-italia/dist/svg/sprites.svg#it-close"></use></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <p class="m-0 ozon-modal-message">{{ confirmModalMessage }}</p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline-secondary btn-sm" type="button" (click)="confirmModalCancel()">Annulla</button>
+          <button class="btn btn-primary btn-sm" type="button" (click)="confirmModalAccept()">{{ confirmModalConfirmLabel }}</button>
+        </div>
       </div>
-    </ng-template>
-  </p-dialog>
+    </div>
+  </div>
 </div>

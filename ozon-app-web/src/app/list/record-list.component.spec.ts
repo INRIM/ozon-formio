@@ -3,7 +3,7 @@ import { By } from '@angular/platform-browser';
 import { RecordListComponent } from './record-list.component';
 import { RecordTransferToolsComponent } from './record-transfer-tools.component';
 import { OzonApiService } from '../core/ozon-api.service';
-import { RecordTableCdkComponent } from './record-table-cdk.component';
+import { RecordTableAgGridComponent } from './record-table-ag-grid.component';
 
 describe('RecordListComponent', () => {
   let fixture: ComponentFixture<RecordListComponent>;
@@ -48,7 +48,7 @@ describe('RecordListComponent', () => {
 
     expect(fixture.debugElement.query(By.css('.ozon-fast-search-placeholder'))).not.toBeNull();
     expect(fixture.debugElement.query(By.css('.ozon-list-placeholder'))).not.toBeNull();
-    expect(fixture.debugElement.query(By.css('app-record-table-cdk'))).toBeNull();
+    expect(fixture.debugElement.query(By.css('app-record-table-ag-grid'))).toBeNull();
   });
 
   it('should not render the deprecated plain filter when fast search is not available', () => {
@@ -96,10 +96,14 @@ describe('RecordListComponent', () => {
 
     fixture.detectChanges();
     const filterButton = fixture.debugElement.query(By.css('.ozon-filter-btn'));
+    const filterIcon = filterButton.nativeElement.querySelector('img') as HTMLImageElement | null;
+    expect(filterIcon?.getAttribute('src')).toBe('bootstrap-italia/src/svg/it-search.svg');
     filterButton.nativeElement.click();
     fixture.detectChanges();
 
     expect(fixture.debugElement.query(By.css('.ozon-filter-panel'))).not.toBeNull();
+    const queryToggleIcon = fixture.debugElement.query(By.css('.ozon-filter-query__toggle img')).nativeElement as HTMLImageElement;
+    expect(queryToggleIcon.getAttribute('src')).toBe('bootstrap-italia/src/svg/it-pencil.svg');
 
     const addButton = fixture.debugElement.queryAll(By.css('.ozon-filter-actions button'))[0];
     addButton.nativeElement.click();
@@ -114,6 +118,57 @@ describe('RecordListComponent', () => {
     applyButton.nativeElement.click();
 
     expect(component.filterApply.emit).toHaveBeenCalled();
+  });
+
+  it('should render fast actions after fast search and pass selection count to render options', () => {
+    component.fastActionsEnabled = true;
+    component.fastActionsSchema = {
+      components: [
+        {
+          type: 'button',
+          key: 'approve',
+          label: 'Approva',
+          btn_action_type: 'post',
+          url_action: '/action/approve_many'
+        }
+      ]
+    };
+    component.selectedRows = [
+      { __rowid: 1, __rec_name: 'REC-1', country: 'IT' }
+    ];
+    spyOn(component.fastActionCustomEvent, 'emit');
+
+    fixture.detectChanges();
+
+    const shell = fixture.debugElement.query(By.css('.ozon-fast-actions-shell'));
+    expect(shell).not.toBeNull();
+    expect(component.fastActionsRenderOptions?.['evalContext'] && (component.fastActionsRenderOptions['evalContext'] as Record<string, unknown>)['app']).toEqual(
+      jasmine.objectContaining({ selection_count: 1 })
+    );
+
+    const formioDebug = fixture.debugElement.query(By.css('.ozon-fast-actions-form formio'));
+    expect(formioDebug).not.toBeNull();
+    (formioDebug.componentInstance as any).customEvent.emit({ type: 'ozonInlineAction', component: { key: 'approve' } });
+
+    expect(component.fastActionCustomEvent.emit).toHaveBeenCalled();
+  });
+
+  it('should render filter row remove buttons with the Bootstrap Italia close icon', () => {
+    component.filterConfig = {
+      fields: {
+        country: { name: 'Country', type: 'string' }
+      }
+    };
+    component.filterRules = {
+      condition: 'and',
+      rules: [{ field: 'country', operator: '=', value: '' }]
+    };
+    component.filterOpen = true;
+
+    fixture.detectChanges();
+
+    const removeIcon = fixture.debugElement.query(By.css('.ozon-filter-remove img')).nativeElement as HTMLImageElement;
+    expect(removeIcon.getAttribute('src')).toBe('bootstrap-italia/src/svg/it-close.svg');
   });
 
   it('should not emit filter value changes on every keystroke', () => {
@@ -154,7 +209,7 @@ describe('RecordListComponent', () => {
 
     fixture.detectChanges();
 
-    const table = fixture.debugElement.query(By.directive(RecordTableCdkComponent)).componentInstance as RecordTableCdkComponent;
+    const table = fixture.debugElement.query(By.directive(RecordTableAgGridComponent)).componentInstance as RecordTableAgGridComponent;
     const payload = { row: component.tableRows[0], event: new MouseEvent('click') };
     table.rowClick.emit(payload);
 

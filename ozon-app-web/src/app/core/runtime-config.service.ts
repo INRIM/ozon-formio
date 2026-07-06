@@ -48,7 +48,9 @@ export class RuntimeConfigService {
         patch.authRefreshPath ?? this.config.authRefreshPath,
         '/refresh'
       ),
-      appCode: String(patch.appCode ?? this.config.appCode ?? '').trim()
+      appCode: String(patch.appCode ?? this.config.appCode ?? '').trim(),
+      appModuleName: String(patch.appModuleName ?? this.config.appModuleName ?? '').trim() || this.config.appModuleName,
+      appLogoUrl: String(patch.appLogoUrl ?? this.config.appLogoUrl ?? '').trim()
     };
     this.persist(this.config);
     return this.getConfig();
@@ -178,7 +180,29 @@ export class RuntimeConfigService {
         runtime['appCode'],
         stored?.appCode,
         environment.appCode
-      ) ?? ''
+      ) ?? '',
+      appModuleName: this.pickFirstString(
+        query['appmodulename'],
+        query['APP_MODULE_NAME'],
+        runtime['appmodulename'],
+        runtime['APP_MODULE_NAME'],
+        runtime['appModuleName'],
+        stored?.appModuleName,
+        environment.appModuleName
+      ),
+      appLogoUrl: this.pickFirstString(
+        query['applogourl'],
+        query['APP_LOGO_URL'],
+        query['logo'],
+        query['logo_img_url'],
+        runtime['applogourl'],
+        runtime['APP_LOGO_URL'],
+        runtime['appLogoUrl'],
+        runtime['logo'],
+        runtime['logo_img_url'],
+        stored?.appLogoUrl,
+        environment.appLogoUrl
+      )
     };
 
     this.persist(merged);
@@ -306,7 +330,9 @@ export class RuntimeConfigService {
         authLoginPath: this.normalizeEndpointPath(String(parsed.authLoginPath ?? '/api/login'), '/api/login'),
         authLogoutPath: this.normalizeEndpointPath(String(parsed.authLogoutPath ?? '/api/logout'), '/api/logout'),
         authRefreshPath: this.normalizeEndpointPath(String(parsed.authRefreshPath ?? '/api/auth/refresh'), '/api/auth/refresh'),
-        appCode: String(parsed.appCode ?? '').trim()
+        appCode: String(parsed.appCode ?? '').trim(),
+        appModuleName: String(parsed.appModuleName ?? '').trim(),
+        appLogoUrl: String(parsed.appLogoUrl ?? '').trim()
       };
       if (typeof parsed.useProxy === 'boolean') {
         out.useProxy = parsed.useProxy;

@@ -3,6 +3,7 @@ import { RuntimeAuthMode, ResponseObjectData } from '../models/ozon.types';
 import { OzonApiService } from '../core/ozon-api.service';
 import { BackendAuthService } from '../core/backend-auth.service';
 import { MainManagerService } from '../core/main-manager.service';
+import { RuntimeConfigService } from '../core/runtime-config.service';
 import { AppViewMode, FormNotification, MenuButton, MenuCard } from '../models/app.types';
 
 @Injectable()
@@ -23,7 +24,7 @@ export class AppManagerService {
     contextualActions: MenuButton[] = [];
     layoutName = '';
     layoutSchema: Record<string, unknown> | null = null;
-    appModuleName = 'Mci Service';
+    appModuleName: string;
     appVersion = '';
     appLogoUrl = '';
     currentUserName = 'Utente';
@@ -57,8 +58,11 @@ export class AppManagerService {
     constructor(
         private readonly api: OzonApiService,
         private readonly backendAuth: BackendAuthService,
-        private readonly mainManager: MainManagerService
-    ) {}
+        private readonly mainManager: MainManagerService,
+        runtimeConfig: RuntimeConfigService
+    ) {
+        this.appModuleName = runtimeConfig.getConfig().appModuleName;
+    }
 
     setStatus(m: string, e: boolean): void { this.statusText = m; this.statusError = e; }
 
@@ -84,10 +88,11 @@ export class AppManagerService {
     errorMessage(e: unknown): string { return e instanceof Error ? e.message : String(e); }
     isRecord(v: unknown): v is Record<string, unknown> { return !!v && typeof v === 'object' && !Array.isArray(v); }
 
-    applyRuntime(config: { backendUrl: string; baseToken: string; authMode: RuntimeAuthMode }): void {
+    applyRuntime(config: { backendUrl: string; baseToken: string; authMode: RuntimeAuthMode; appLogoUrl?: string }): void {
         this.backendUrl = config.backendUrl;
         this.baseToken = config.baseToken;
         this.authMode = config.authMode;
+        if (config.appLogoUrl) this.appLogoUrl = this.resolveBrandAssetUrl(config.appLogoUrl);
     }
 
     initializeBuilderPreference(): void {
@@ -274,7 +279,7 @@ export class AppManagerService {
         );
         this.appModuleName = moduleName || this.appModuleName;
         this.appVersion = this.readFirstString(settings['app_version'], settings['version'], this.appVersion);
-        const logoRaw = this.readFirstString(settings['logo'], settings['logo_img_url'], settings['logo_img'], settings['logo_url']);
+        const logoRaw = this.readFirstString(settings['logo'], settings['logo_img_url'], settings['logo_img'], settings['logo_url'], this.appLogoUrl);
         this.appLogoUrl = this.resolveBrandAssetUrl(logoRaw);
 
         const runtimeUser = this.readFirstString(settings['user_name'], settings['username'], settings['user']);

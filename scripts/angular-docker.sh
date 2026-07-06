@@ -6,6 +6,7 @@ ACTION="${1:-build}"
 shift || true
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+echo $ROOT_DIR
 APP_DIR="$ROOT_DIR/ozon-app-web"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.angular.yml"
 ENV_FILE="$ROOT_DIR/.env"

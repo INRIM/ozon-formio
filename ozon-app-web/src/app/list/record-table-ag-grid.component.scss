@@ -1,0 +1,46 @@
+.ozon-table-wrap {
+  border: 1px solid var(--ozon-border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--ozon-surface);
+}
+
+// AG Grid virtualizes rows itself and needs an explicit height to know its scroll viewport —
+// unlike the old CDK table, which relied on the wrapper's own `overflow: auto`.
+.ozon-ag-grid {
+  height: 460px;
+  width: 100%;
+}
+
+// Recolor the legacy Quartz CSS theme with the app's own --ozon-* variables (which already swap
+// per light/dark theme at :root) instead of AG Grid's own palette, same approach used for the
+// Bootstrap Italia header/nav.
+.ag-theme-quartz {
+  --ag-background-color: var(--ozon-surface);
+  --ag-foreground-color: var(--ozon-text);
+  --ag-header-background-color: var(--ozon-surface);
+  --ag-header-foreground-color: var(--ozon-text);
+  --ag-border-color: var(--ozon-border);
+  --ag-row-border-color: var(--ozon-border);
+  --ag-row-hover-color: rgba(111, 182, 255, 0.08);
+  --ag-selected-row-background-color: rgba(111, 182, 255, 0.2);
+  --ag-odd-row-background-color: var(--ozon-surface);
+  --ag-font-family: inherit;
+  --ag-font-size: 0.92rem;
+  --ag-cell-horizontal-padding: 0.85rem;
+  --ag-border-radius: 0;
+}
+
+// `selectedRecordName` (the currently open record) is independent of AG Grid's own checkbox
+// multi-selection highlight above — needs its own rule.
+.ag-theme-quartz .ag-row.ozon-row-selected {
+  background: rgba(111, 182, 255, 0.2);
+}
+
+.ozon-record-table__empty {
+  min-height: 4.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ozon-muted);
+}
