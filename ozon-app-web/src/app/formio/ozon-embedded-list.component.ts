@@ -118,11 +118,13 @@ export class OzonEmbeddedListComponent implements OnInit, OnChanges {
       });
       const content = requireResponseObject(response).content;
       await this.zone.run(async () => {
-        this.applyListResponse(content);
+        const rowCount = this.applyListResponse(content);
         this.tableManager.finishLoadRecords(querySignature, {
-          count: this.tableManager.allRows.length,
-          totalCount: content.total_count || this.tableManager.allRows.length
+          count: rowCount,
+          totalCount: content.total_count || rowCount
         });
+        console.log('[ozon_embedded_list] tableColumns after flush', this.tableManager.tableColumns);
+        console.log('[ozon_embedded_list] tableRows[0] after flush', this.tableManager.tableRows[0]);
         await this.applyFastSearchConfig(content.fields || {});
         this.statusText = `Record: ${this.tableManager.allRows.length} / Totale: ${this.tableManager.tableTotalRecords}`;
         this.statusError = false;
@@ -148,12 +150,15 @@ export class OzonEmbeddedListComponent implements OnInit, OnChanges {
     return { $and: [base, dynamicQuery] };
   }
 
-  private applyListResponse(content: ResponseObjectData): void {
+  private applyListResponse(content: ResponseObjectData): number {
     const rows = Array.isArray(content.data) ? content.data : [];
     this.tableManager.strictHeaderColumns = Object.keys(content.columns || {}).length > 0;
     this.tableManager.applyTableColumnsFromHeader(content.columns);
     rows.forEach(row => this.tableManager.appendRecordRow(row));
     if (content.sort) this.tableManager.order = content.sort;
+    console.log('[ozon_embedded_list] content.columns', content.columns);
+    console.log('[ozon_embedded_list] rows[0] raw', rows[0]);
+    return rows.length;
   }
 
   private async applyFastSearchConfig(fields: Record<string, unknown>): Promise<void> {
