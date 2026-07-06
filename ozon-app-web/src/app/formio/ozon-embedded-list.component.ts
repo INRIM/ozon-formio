@@ -32,10 +32,10 @@ export class OzonEmbeddedListComponent implements OnInit, OnChanges {
   statusText = '';
   statusError = false;
 
-  readonly displayCell = (row: TableRow, field: string): string => {
-    const value = (row as Record<string, unknown>)[field];
-    return value == null ? '' : String(value);
-  };
+  // Matches AppComponent.recordDisplayCell: resolveFieldValue supports comma-separated candidate
+  // fields, remote-select value resolution and cell renderers - a naive row[field] lookup here
+  // silently returned '' for every cell whose key didn't happen to match those rules exactly.
+  readonly displayCell = (row: TableRow, field: string): string => this.tableManager.displayCell(row, field);
 
   constructor(
     private readonly api: OzonApiService,
