@@ -386,4 +386,45 @@ describe('AppFormioRendererService', () => {
     expect(String(table['customClass'] ?? '')).toContain('ozon-form-table');
     expect(String(table['customClass'] ?? '')).not.toContain('ozon-form-data-table');
   });
+
+  it('collapses the search_area well paired to an embedded data table, since the table renders its own filter form', () => {
+    const schema = {
+      components: [
+        {
+          type: 'well',
+          key: 'search_area',
+          properties: {
+            type: 'search_area',
+            model: 'group_users',
+            object_id: 'table_group_users'
+          },
+          components: []
+        }
+      ]
+    };
+
+    const prepared = service.prepareSchemaForRender(schema, null);
+    const well = (prepared['components'] as Array<Record<string, unknown>>)[0];
+
+    expect(well['hidden']).toBeTrue();
+    expect(String(well['customClass'] ?? '')).toContain('ozon-search-area-embedded');
+  });
+
+  it('leaves a generic well untouched when it is not a search_area stub', () => {
+    const schema = {
+      components: [
+        {
+          type: 'well',
+          key: 'plainWell',
+          components: []
+        }
+      ]
+    };
+
+    const prepared = service.prepareSchemaForRender(schema, null);
+    const well = (prepared['components'] as Array<Record<string, unknown>>)[0];
+
+    expect(well['hidden']).toBeFalsy();
+    expect(String(well['customClass'] ?? '')).not.toContain('ozon-search-area-embedded');
+  });
 });

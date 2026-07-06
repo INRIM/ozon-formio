@@ -1,4 +1,4 @@
-import { Component, Inject, OnDestroy, OnInit, Optional, ViewChild, inject } from '@angular/core';
+import { ApplicationRef, Component, EnvironmentInjector, Inject, Injector, OnDestroy, OnInit, Optional, ViewChild, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { FormioComponent, FormioModule } from '@formio/angular';
@@ -18,8 +18,7 @@ import {
     TableColumn, TableRow, MenuButton, MenuCard, MenuDrillDownGroup
 } from './models/app.types';
 import { GlobalErrorStateService } from './core/global-error-state.service';
-import { OzonApiService } from './core/ozon-api.service';
-import { setOzonDataTableApiService } from './formio/ozon-data-table-formio';
+import { setOzonDataTableAngularRefs } from './formio/ozon-data-table-formio';
 
 @Component({
     selector: 'app-root',
@@ -34,7 +33,12 @@ export class AppComponent implements OnInit, OnDestroy {
     @ViewChild('formioViewer') formioViewer?: FormioComponent;
     readonly formPlaceholderRows = [0, 1, 2, 3, 4];
     private readonly globalErrorState = inject(GlobalErrorStateService);
-    private readonly api = inject(OzonApiService);
+    private readonly environmentInjector = inject(EnvironmentInjector);
+    private readonly applicationRef = inject(ApplicationRef);
+    // AppComponent's own node injector - needed as elementInjector for the embedded-table bridge
+    // below: AppFormioRendererService/AppTableManagerService are registered in this component's
+    // `providers` array (not providedIn: 'root'), which the root EnvironmentInjector can't see.
+    private readonly elementInjector = inject(Injector);
 
     constructor(
         readonly theme: AppThemeService,
@@ -47,7 +51,7 @@ export class AppComponent implements OnInit, OnDestroy {
     ) {}
 
     ngOnInit(): void {
-        setOzonDataTableApiService(this.api);
+        setOzonDataTableAngularRefs(this.environmentInjector, this.applicationRef, this.elementInjector);
         this.theme.initialize();
         this.appManager.initializeBuilderPreference();
         this.builder.setFormBuilderExtensions(this.formBuilderExtensions);

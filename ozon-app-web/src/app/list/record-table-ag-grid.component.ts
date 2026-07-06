@@ -3,7 +3,7 @@ import { CommonModule } from '@angular/common';
 import { AgGridAngular } from 'ag-grid-angular';
 import {
     AllCommunityModule, CellClickedEvent, ColDef, GridApi, GridReadyEvent, ModuleRegistry, RowClickedEvent,
-    RowDoubleClickedEvent, RowDragEndEvent, SelectionChangedEvent, SortChangedEvent
+    RowDoubleClickedEvent, RowDragEndEvent, SelectionChangedEvent, SortChangedEvent, themeQuartz
 } from 'ag-grid-community';
 import { ListRowReorderChange, ListSortChange, TableColumn, TableRow, TableSortDirection } from '../models/app.types';
 import { RecordTableRowActionsComponent, RecordRowActionsParams } from './record-table-row-actions.component';
@@ -16,6 +16,26 @@ ModuleRegistry.registerModules([AllCommunityModule]);
 const SELECT_COL_ID = '__select';
 const HANDLE_COL_ID = '__handle';
 const ACTIONS_COL_ID = '__actions';
+
+// AG Grid v36's Theming API, not the old CSS-file + `theme: 'legacy'` compat shim: that shim
+// doesn't keep re-reading --ag-* custom properties from the DOM after the grid's initial paint,
+// so it never picked up the app's dark/light toggle (which flips --ozon-* at :root[data-theme]).
+// Theme parameters *are* implemented as live CSS custom properties under the hood, so pointing
+// them at --ozon-* here keeps that single source of truth and reacts to the toggle automatically
+// - no JS-side light/dark theme switching needed.
+const GRID_THEME = themeQuartz.withParams({
+    backgroundColor: 'var(--ozon-surface)',
+    foregroundColor: 'var(--ozon-text)',
+    headerTextColor: 'var(--ozon-text)',
+    borderColor: 'var(--ozon-border)',
+    rowHoverColor: 'rgba(111, 182, 255, 0.08)',
+    selectedRowBackgroundColor: 'rgba(111, 182, 255, 0.2)',
+    oddRowBackgroundColor: 'var(--ozon-surface)',
+    fontFamily: 'inherit',
+    fontSize: '0.92rem',
+    cellHorizontalPadding: '0.85rem',
+    borderRadius: 0
+});
 
 /**
  * Pure rendering surface — pagination, filtering and sorting of the actual dataset all happen
@@ -52,6 +72,8 @@ export class RecordTableAgGridComponent implements OnChanges {
     @Output() removeRow = new EventEmitter<{ row: TableRow; event: Event }>();
 
     @ViewChild(AgGridAngular) grid?: AgGridAngular;
+
+    readonly gridTheme = GRID_THEME;
 
     colDefs: ColDef<TableRow>[] = [];
     rowData: TableRow[] = [];

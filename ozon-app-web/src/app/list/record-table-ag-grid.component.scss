@@ -12,28 +12,13 @@
   width: 100%;
 }
 
-// Recolor the legacy Quartz CSS theme with the app's own --ozon-* variables (which already swap
-// per light/dark theme at :root) instead of AG Grid's own palette, same approach used for the
-// Bootstrap Italia header/nav.
-.ag-theme-quartz {
-  --ag-background-color: var(--ozon-surface);
-  --ag-foreground-color: var(--ozon-text);
-  --ag-header-background-color: var(--ozon-surface);
-  --ag-header-foreground-color: var(--ozon-text);
-  --ag-border-color: var(--ozon-border);
-  --ag-row-border-color: var(--ozon-border);
-  --ag-row-hover-color: rgba(111, 182, 255, 0.08);
-  --ag-selected-row-background-color: rgba(111, 182, 255, 0.2);
-  --ag-odd-row-background-color: var(--ozon-surface);
-  --ag-font-family: inherit;
-  --ag-font-size: 0.92rem;
-  --ag-cell-horizontal-padding: 0.85rem;
-  --ag-border-radius: 0;
-}
+// Colors now come from the grid's own Theming API (see GRID_THEME in the .ts file), which points
+// its parameters at these same --ozon-* variables - the old CSS-file + `theme: 'legacy'` compat
+// shim didn't keep reacting to the app's dark/light toggle after initial paint.
 
 // `selectedRecordName` (the currently open record) is independent of AG Grid's own checkbox
 // multi-selection highlight above — needs its own rule.
-.ag-theme-quartz .ag-row.ozon-row-selected {
+.ag-row.ozon-row-selected {
   background: rgba(111, 182, 255, 0.2);
 }
 

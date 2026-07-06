@@ -824,6 +824,12 @@ export class AppFormioRendererService {
                 node['tableView'] = true; node['customClass'] = this.appendCustomClass(node['customClass'], 'ozon-form-table');
             } else if (type === 'datagrid' || type === 'editgrid') {
                 node['tableView'] = true; node['customClass'] = this.appendCustomClass(node['customClass'], 'ozon-form-datagrid');
+            } else if (type === 'well' && this.isSearchAreaStub(node)) {
+                // The paired ozon_data_table (linked via properties.object_id) already renders its
+                // own fast-search filter form (RecordListComponent's built-in fastSearchSchema UI).
+                // This well would otherwise show as an empty placeholder box, so collapse it.
+                node['hidden'] = true;
+                node['customClass'] = this.appendCustomClass(node['customClass'], 'ozon-search-area-embedded');
             }
             Object.values(node).forEach(visit);
         };
@@ -833,6 +839,11 @@ export class AppFormioRendererService {
     private isOzonDataTableStub(node: Record<string, unknown>): boolean {
         const props = this.readComponentProperties(node);
         return typeof props['action_url'] === 'string' && props['action_url'].trim().length > 0;
+    }
+
+    private isSearchAreaStub(node: Record<string, unknown>): boolean {
+        const props = this.readComponentProperties(node);
+        return String(props['type'] ?? '').trim().toLowerCase() === 'search_area';
     }
 
     private normalizeFormWysiwygComponents(schema: Record<string, unknown>, submissionData: Record<string, unknown> | null = null): void {

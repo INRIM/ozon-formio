@@ -1,27 +1,91 @@
+import { ApplicationRef, ComponentRef, EnvironmentInjector, Injector, createComponent } from '@angular/core';
 import { Formio } from '@formio/js';
-import { AllCommunityModule, ColDef, createGrid, GridApi, GridOptions, ModuleRegistry } from 'ag-grid-community';
-import { OzonApiService } from '../core/ozon-api.service';
-
-ModuleRegistry.registerModules([AllCommunityModule]);
+import jsonLogic from 'json-logic-js';
+import { OzonEmbeddedListComponent } from './ozon-embedded-list.component';
 
 const COMPONENT_TYPE = 'ozon_data_table';
 let registered = false;
-let apiServiceRef: OzonApiService | null = null;
+let environmentInjectorRef: EnvironmentInjector | null = null;
+let applicationRefRef: ApplicationRef | null = null;
+let elementInjectorRef: Injector | null = null;
 
-/** Wires the singleton OzonApiService into the component, once Angular DI is up (main.ts runs before it). */
-export function setOzonDataTableApiService(api: OzonApiService): void {
-  apiServiceRef = api;
+/**
+ * Wires Angular's environment injector/app ref into the module, once Angular DI is up (main.ts
+ * runs before it). `elementInjector` must be AppComponent's own node injector, not just the root
+ * environment injector: AppFormioRendererService (used by the embedded list) is registered in
+ * AppComponent's `providers` array, not `providedIn: 'root'`, so only that node injector can
+ * resolve it.
+ */
+export function setOzonDataTableAngularRefs(environmentInjector: EnvironmentInjector, applicationRef: ApplicationRef, elementInjector: Injector): void {
+  environmentInjectorRef = environmentInjector;
+  applicationRefRef = applicationRef;
+  elementInjectorRef = elementInjector;
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === 'object' && !Array.isArray(v);
 }
 
-function splitCsvList(raw: unknown): string[] {
-  return String(raw ?? '')
-    .split(',')
-    .map(e => e.trim())
-    .filter(Boolean);
+/** Mirrors AppTableManagerService.parsePythonStyleQuery - the well's static properties.query and
+ * the "query=<jsonlogic>" logic-action value are both Python-dict literals (single quotes,
+ * True/False/None), not JSON. */
+function parseWellPythonStyleQuery(queryStr: string): Record<string, unknown> | null {
+  if (!queryStr.trim()) return null;
+  try {
+    const jsonStr = queryStr
+      .replace(/'/g, '"')
+      .replace(/\bTrue\b/g, 'true')
+      .replace(/\bFalse\b/g, 'false')
+      .replace(/\bNone\b/g, 'null');
+    const parsed = JSON.parse(jsonStr);
+    return isRecord(parsed) && Object.keys(parsed).length ? parsed : null;
+  } catch { return null; }
+}
+
+/** Mirrors AppTableManagerService.evaluateFormioQueryAction - the search_area well's `logic`
+ * encodes its dynamic query as a "value" action whose string is "query=<jsonlogic-expr>". */
+function evaluateWellQueryAction(action: Record<string, unknown>, context: unknown): Record<string, unknown> | null {
+  if (String(action['type'] ?? '').trim().toLowerCase() !== 'value') return null;
+  const value = action['value'];
+  if (typeof value !== 'string') return null;
+  const eqIdx = value.indexOf('=');
+  if (eqIdx < 1) return null;
+  if (value.slice(0, eqIdx).trim() !== 'query') return null;
+  let logicExpr: unknown;
+  try { logicExpr = JSON.parse(value.slice(eqIdx + 1).trim()); } catch { return null; }
+  let evaluated: unknown;
+  try { evaluated = jsonLogic.apply(logicExpr as any, context); } catch { return null; }
+  if (typeof evaluated === 'string') return parseWellPythonStyleQuery(evaluated.trim());
+  return isRecord(evaluated) && Object.keys(evaluated).length ? evaluated : null;
+}
+
+function evaluateWellLogicTrigger(trigger: Record<string, unknown>, context: unknown): boolean {
+  if (String(trigger['type'] ?? '').trim().toLowerCase() !== 'json') return false;
+  const json = trigger['json'];
+  if (json == null) return true;
+  try { return Boolean(jsonLogic.apply(json as any, context)); } catch { return false; }
+}
+
+/** Resolves the default scoping query a paired search_area well carries (e.g. "only rows whose
+ * groups include this record's rec_name"), evaluating its logic the same way the main list view
+ * does - so a well that only ever worked (or only ever silently no-op'd) there behaves identically
+ * here, rather than a second, possibly-diverging reimplementation. */
+function resolveWellQuerySeed(well: Record<string, unknown>, context: unknown): Record<string, unknown> | null {
+  const properties = isRecord(well['properties']) ? well['properties'] : {};
+  const staticQuery = typeof properties['query'] === 'string' ? parseWellPythonStyleQuery(properties['query']) : null;
+  const logicArray = Array.isArray(well['logic']) ? well['logic'] : [];
+  for (const logicItem of logicArray) {
+    if (!isRecord(logicItem)) continue;
+    const trigger = isRecord(logicItem['trigger']) ? logicItem['trigger'] : null;
+    if (trigger && !evaluateWellLogicTrigger(trigger, context)) continue;
+    const actions = Array.isArray(logicItem['actions']) ? logicItem['actions'] : [];
+    for (const action of actions) {
+      if (!isRecord(action)) continue;
+      const result = evaluateWellQueryAction(action, context);
+      if (result !== null) return result;
+    }
+  }
+  return staticQuery;
 }
 
 export function installOzonDataTableFormioComponent(): void {
@@ -52,39 +116,42 @@ export function installOzonDataTableFormioComponent(): void {
       };
     }
 
-    private gridApi: GridApi | null = null;
-    private gridElement: HTMLElement | null = null;
+    private componentRef: ComponentRef<OzonEmbeddedListComponent> | null = null;
+    private hostElement: HTMLElement | null = null;
 
     renderElement(_value: unknown, index: number): string {
       const self = this as any;
       return `
         <div
           ${self['_referenceAttributeName']}="input"
-          class="ozon-data-table-grid ag-theme-quartz"
+          class="ozon-data-table-grid"
           data-index="${index}"
         ></div>
       `;
     }
 
     attachElement(element: HTMLElement, _index: number): HTMLElement {
-      this.gridElement = element;
-      void this.loadAndRenderGrid();
+      this.hostElement = element;
+      this.mountEmbeddedList(element);
       return element;
     }
 
     detach(): void {
-      this.destroyGrid();
+      this.destroyEmbeddedList();
       return super.detach();
     }
 
     destroy(all?: boolean): void {
-      this.destroyGrid();
+      this.destroyEmbeddedList();
       return super.destroy(all);
     }
 
-    private destroyGrid(): void {
-      this.gridApi?.destroy();
-      this.gridApi = null;
+    private destroyEmbeddedList(): void {
+      if (this.componentRef) {
+        this.applicationRef?.detachView(this.componentRef.hostView);
+        this.componentRef.destroy();
+        this.componentRef = null;
+      }
     }
 
     private get properties(): Record<string, unknown> {
@@ -92,82 +159,63 @@ export function installOzonDataTableFormioComponent(): void {
       return isRecord(props) ? props : {};
     }
 
-    private async loadAndRenderGrid(): Promise<void> {
-      const element = this.gridElement;
-      if (!element) return;
-      const actionUrl = String(this.properties['action_url'] ?? '').trim();
-      if (!actionUrl) {
+    private get applicationRef(): ApplicationRef | null {
+      return applicationRefRef;
+    }
+
+    /** action_url historically held a full path (legacy DataTables ajax URL); the bare name is what /action/{name} needs. */
+    private resolveActionName(): string {
+      const explicit = String(this.properties['action_name'] ?? '').trim();
+      if (explicit) return explicit;
+      const url = String(this.properties['action_url'] ?? '').trim();
+      return url.replace(/^\/?action\//, '').replace(/^\//, '');
+    }
+
+    /** Finds the sibling search_area well paired to this table via properties.object_id, and
+     * resolves the default scoping query it carries against the current form's submission data. */
+    private resolveBaseQuery(): Record<string, unknown> | null {
+      const self = this as any;
+      const root = self.root;
+      const ownKey = String(self.key ?? '').trim();
+      if (!ownKey || !root || typeof root.everyComponent !== 'function') return null;
+      let wellComponent: Record<string, unknown> | null = null;
+      root.everyComponent((comp: any) => {
+        if (wellComponent) return;
+        const props = isRecord(comp?.component?.properties) ? comp.component.properties : {};
+        if (String(props['object_id'] ?? '').trim() === ownKey) wellComponent = comp.component;
+      });
+      if (!wellComponent) return null;
+      const submissionData = isRecord(root.submission?.data) ? root.submission.data : {};
+      return resolveWellQuerySeed(wellComponent, { form: submissionData, data: submissionData });
+    }
+
+    private mountEmbeddedList(element: HTMLElement): void {
+      const actionName = this.resolveActionName();
+      if (!actionName) {
         element.textContent = 'Data Table: action_url non configurato';
         return;
       }
-      if (!apiServiceRef) {
-        element.textContent = 'Data Table: servizio API non disponibile';
+      if (!environmentInjectorRef || !applicationRefRef || !elementInjectorRef) {
+        element.textContent = 'Data Table: servizio non disponibile';
         return;
       }
+      this.destroyEmbeddedList();
       try {
-        const response = await apiServiceRef.postActionPath(actionUrl, {});
-        if (this.gridElement !== element) return; // component was re-attached/destroyed meanwhile
-        console.log('[ozon_data_table] raw response for', actionUrl, response);
-        const content = isRecord(response) && isRecord((response as any)['content'])
-          ? (response as any)['content'] as Record<string, unknown>
-          : (response as Record<string, unknown>);
-
-        const rows = this.extractRows(response as Record<string, unknown>, content);
-        const backendColumns = this.extractColumns(content);
-        const allowList = splitCsvList(this.properties['list_metadata_show']);
-        const fields = allowList.length
-          ? allowList
-          : Object.keys(backendColumns).length
-            ? Object.keys(backendColumns)
-            : Object.keys(rows[0] ?? {});
-        const columnDefs: ColDef[] = fields.map(field => ({
-          field,
-          headerName: backendColumns[field] || field
-        }));
-        console.log('[ozon_data_table] resolved', { rowCount: rows.length, columnDefs });
-        const gridOptions: GridOptions = {
-          theme: 'legacy',
-          columnDefs,
-          rowData: rows,
-          domLayout: 'autoHeight',
-          suppressCellFocus: true,
-          overlayNoRowsTemplate: '<span>Nessuna riga (vedi console per la risposta grezza)</span>'
-        };
-        this.destroyGrid();
-        this.gridApi = createGrid(element, gridOptions);
+        const ref = createComponent(OzonEmbeddedListComponent, {
+          environmentInjector: environmentInjectorRef,
+          elementInjector: elementInjectorRef ?? undefined,
+          hostElement: element
+        });
+        ref.instance.actionName = actionName;
+        ref.instance.orderDefault = String(this.properties['order'] ?? '').trim();
+        ref.instance.baseQuery = this.resolveBaseQuery();
+        applicationRefRef.attachView(ref.hostView);
+        ref.changeDetectorRef.detectChanges();
+        this.componentRef = ref;
       } catch (error) {
-        if (this.gridElement !== element) return;
-        element.textContent = 'Data Table: errore caricamento dati';
-        console.error('[ozon_data_table] failed to load action', actionUrl, error);
+        element.textContent = 'Data Table: errore montaggio componente';
+        console.error('[ozon_data_table] mount failed:', error);
       }
-    }
-
-    /** Tries the shapes seen across Ozon action responses and the legacy DataTables server-side contract. */
-    private extractRows(response: Record<string, unknown>, content: Record<string, unknown>): Record<string, unknown>[] {
-      const candidates: unknown[] = [
-        content['data'],
-        content['rows'],
-        content['records'],
-        content['items'],
-        content['list'],
-        response['data'],
-        response['rows']
-      ];
-      for (const candidate of candidates) {
-        if (Array.isArray(candidate)) return candidate as Record<string, unknown>[];
-      }
-      return [];
-    }
-
-    private extractColumns(content: Record<string, unknown>): Record<string, string> {
-      for (const key of ['columns', 'header', 'headers', 'fields']) {
-        const candidate = content[key];
-        if (isRecord(candidate)) return candidate as Record<string, string>;
-        if (Array.isArray(candidate)) {
-          return Object.fromEntries(candidate.map(field => [String(field), String(field)]));
-        }
-      }
-      return {};
     }
   }
 
