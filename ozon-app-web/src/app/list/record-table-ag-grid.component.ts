@@ -24,8 +24,13 @@ const ACTIONS_COL_ID = '__actions';
 // them at --ozon-* here keeps that single source of truth and reacts to the toggle automatically
 // - no JS-side light/dark theme switching needed.
 const GRID_THEME = themeQuartz.withParams({
+    // backgroundColor/foregroundColor/accentColor are the 3 foundational colors themeQuartz's
+    // built-in colorSchemeVariable part derives every other color from (focus rings, checkboxes,
+    // header tint, etc.) - setting only background/foreground without accentColor left those
+    // derived states using AG Grid's own default blue instead of the app's own accent.
     backgroundColor: 'var(--ozon-surface)',
     foregroundColor: 'var(--ozon-text)',
+    accentColor: 'rgb(111, 182, 255)',
     headerTextColor: 'var(--ozon-text)',
     borderColor: 'var(--ozon-border)',
     rowHoverColor: 'rgba(111, 182, 255, 0.08)',
