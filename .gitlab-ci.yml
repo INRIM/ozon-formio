@@ -5,26 +5,19 @@ build-ozon-app-web:
   stage: build
   image: docker:25
   services:
-    - docker:25ma -dind
+    - docker:dind
 
   before_script:
-    - test -n "${REGISTRY_HOST}" || (echo "REGISTRY_HOST is empty - check protected variable/branch settings" && exit 1)
-    - test -n "${REGISTRY_USER}" || (echo "REGISTRY_USER is empty - check protected variable/branch settings" && exit 1)
-    - test -n "${REGISTRY_PASSWORD}" || (echo "REGISTRY_PASSWORD is empty - check protected variable/branch settings" && exit 1)
-    - test -n "${IMAGE_REF}" || (echo "IMAGE_REF is empty - check protected variable/branch settings" && exit 1)
-    - export IMAGE_REF="${IMAGE_REF%%:*}"
-    - echo "REGISTRY_HOST=${REGISTRY_HOST}"
-    - echo "IMAGE_REF (sanitized, no tag)=${IMAGE_REF}"
-    - echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_HOST" -u "$REGISTRY_USER" --password-stdin
+    - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
   script:
     - >
       docker build
       --network host
       -f "${CI_PROJECT_DIR}/ozon-app-web/Dockerfile"
-      -t "${REGISTRY_HOST}/${IMAGE_REF}:${CI_COMMIT_SHORT_SHA}"
-      -t "${REGISTRY_HOST}/${IMAGE_REF}:latest"
+      -t "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}"
+      -t "${CI_REGISTRY_IMAGE}:latest"
       "${CI_PROJECT_DIR}/ozon-app-web"
-    - docker push "${REGISTRY_HOST}/${IMAGE_REF}:${CI_COMMIT_SHORT_SHA}"
-    - docker push "${REGISTRY_HOST}/${IMAGE_REF}:latest"
+    - docker push "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}"
+    - docker push "${CI_REGISTRY_IMAGE}:latest"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "1.0"'
