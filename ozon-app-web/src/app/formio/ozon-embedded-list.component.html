@@ -13,6 +13,7 @@
   [pageSizeOptions]="tableManager.pageSizeOptions"
   [showStaticActionButtons]="false"
   [contextActions]="[]"
+  [showFilterButton]="filterVisible"
   [filterConfig]="tableManager.queryBuilderConfig"
   [filterRules]="tableManager.queryBuilderRules"
   [filterPreview]="tableManager.queryText"
@@ -34,4 +35,16 @@
   (selectionChange)="onSelectionChange($event)"
   (sortChange)="onSortChange($event)"
   (pageChange)="onPageChange($event)"
+  (rowClick)="onRowClick($event.row, $event.event)"
+  (desktopRowOpen)="onRowOpen($event.row, $event.event)"
+  (rowDblClick)="onRowOpen($event.row, $event.event)"
 ></app-record-list>
+
+<app-ozon-record-modal
+  *ngIf="modalRecName"
+  [model]="model"
+  [actionName]="actionName"
+  [recName]="modalRecName"
+  (closed)="onModalClosed()"
+  (saved)="onModalSaved()"
+></app-ozon-record-modal>

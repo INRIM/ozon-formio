@@ -1,0 +1,28 @@
+<div class="modal d-block show" tabindex="-1" role="dialog" aria-modal="true" style="background-color: rgba(0,0,0,0.5)">
+  <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title h5">{{ title }}</h2>
+        <button class="btn-close" type="button" aria-label="Chiudi" (click)="close()"></button>
+      </div>
+      <div class="modal-body">
+        <div *ngIf="loading" class="text-center py-4">Caricamento record...</div>
+        <formio
+          *ngIf="!loading && schema"
+          #formioViewer
+          [form]="schema"
+          [submission]="submission"
+          [renderOptions]="renderOptions"
+          (change)="onFormChange($event)"
+        ></formio>
+        <div *ngIf="statusText" class="mt-2" [class.text-danger]="statusError" [class.text-success]="!statusError">
+          {{ statusText }}
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary btn-sm" type="button" (click)="close()">Chiudi</button>
+        <button class="btn btn-primary btn-sm" type="button" [disabled]="loading || saving" (click)="save()">Salva</button>
+      </div>
+    </div>
+  </div>
+</div>

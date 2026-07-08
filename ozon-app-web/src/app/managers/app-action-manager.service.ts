@@ -518,6 +518,84 @@ export class AppActionManagerService {
         });
     }
 
+    /** Explicit-args variant for tables that aren't backed by this service's own `tableManager`
+     * (e.g. ozon_data_table's embedded list, which has its own component-scoped table manager) -
+     * takes the action and record name directly instead of reading shared selection state, so it
+     * can't accidentally open whatever the main list last had selected. */
+    async openRecordByAction(actionName: string, recName: string): Promise<void> {
+        const action = String(actionName ?? '').trim();
+        const rec = String(recName ?? '').trim();
+        if (!action || !rec) return;
+        await this.withClickTransition(async () => { await this.runNextActionRoute([action, rec]); });
+    }
+
+    /** Read-only counterpart to applyActionFormResponse (line ~2256) for callers that need a
+     * record's schema/submission/submit-action without taking over the app's shared viewMode,
+     * selectedModel, breadcrumbs, etc. - used by ozon_data_table's modal-open mode, which renders
+     * a record form on top of the current page rather than navigating away from it.
+     *
+     * getNextAction's response is usually mode:"redirect" (e.g. {next_page:
+     * "/action/form_form_group_users/<rec_name>"}), same as row-click navigation elsewhere in this
+     * app (runNextActionRoute/runActionRoute both follow that redirect via handleRedirectResponseTarget
+     * -> a full page navigation). Here there's no page navigation to piggyback on, so the redirect
+     * target is fetched directly as a second /action/{name}/{recName} call instead. */
+    async loadRecordForModal(actionName: string, recName: string): Promise<{
+        schema: Record<string, unknown>; submission: { data: Record<string, unknown> }; submitActionPath: string; model: string; title: string;
+    } | null> {
+        const action = String(actionName ?? '').trim();
+        const rec = String(recName ?? '').trim();
+        if (!action || !rec) return null;
+        let response = await this.api.getNextAction(action, rec);
+        let { content, fail, message } = requireResponseObject(response);
+        if (fail) throw new Error(message || 'Errore dal server');
+        if (content.mode.trim().toLowerCase() === 'redirect') {
+            const redirectUrl = this.resolveRedirectUrl(content);
+            const route = redirectUrl ? this.parseActionRoute(redirectUrl) : null;
+            if (!route) throw new Error(`Redirect non risolvibile: ${redirectUrl || '(vuoto)'}`);
+            response = await this.api.getAction(route.name, { recName: route.recName, query: {}, order: '', skip: 0, limit: 1 });
+            ({ content, fail, message } = requireResponseObject(response));
+            if (fail) throw new Error(message || 'Errore dal server');
+        }
+        const data = this.isRecord(content.data) ? content.data : {};
+        const model = this.resolveModelName(content, action);
+        if (!model) throw new Error('Model non trovato nella risposta');
+        let schema = this.renderer.extractFormSchema(content.schema);
+        if (!schema) {
+            const schemaPayload = await this.api.getRecordSchema(model);
+            const schemaObj = requireResponseObject(schemaPayload);
+            schema = this.renderer.extractFormSchema(schemaObj.content.schema);
+        }
+        if (!schema) throw new Error(`Schema non trovato per "${model}"`);
+        const normalizedData = this.renderer.normalizeFormSubmissionData(data, schema);
+        const renderSchema = this.renderer.prepareSchemaForRender(this.cloneSchema(schema), normalizedData);
+        this.renderer.seedSubmissionDefaultsIntoSchema(renderSchema, normalizedData);
+        const submitActionPath = this.resolveSubmitActionFromFields(content.fields);
+        const title = this.readFirstString(content.title, model);
+        return { schema: renderSchema, submission: { data: normalizedData }, submitActionPath, model, title };
+    }
+
+    /** Read-only-state counterpart to saveCurrentRecord (line ~756): posts to the resolved
+     * submit action (or falls back to a plain record update), reporting success/failure without
+     * touching shared viewMode/selectedModel/tableManager state. */
+    async saveRecordForModal(
+        model: string, recName: string, submitActionPath: string, payload: Record<string, unknown>
+    ): Promise<{ success: boolean; message: string }> {
+        try {
+            if (submitActionPath && submitActionPath.startsWith('/action/')) {
+                const response = await this.api.postActionPath(submitActionPath, payload);
+                const obj = requireResponseObject(response);
+                if (obj.fail) return { success: false, message: obj.message || 'Errore dal server' };
+                return { success: true, message: obj.message || 'Record salvato' };
+            }
+            const rec = String(recName ?? '').trim() || String(payload['rec_name'] ?? '').trim();
+            if (!rec) return { success: false, message: 'rec_name mancante: impossibile salvare' };
+            await this.api.updateRecord(model, rec, payload);
+            return { success: true, message: `Record salvato: ${rec}` };
+        } catch (error) {
+            return { success: false, message: this.errorMessage(error) };
+        }
+    }
+
     async openNewRecord(): Promise<void> {
         const currentAction = this.resolveCurrentActionName();
         if (!currentAction) { this.setStatus('Azione corrente non disponibile per Nuovo record', true); return; }

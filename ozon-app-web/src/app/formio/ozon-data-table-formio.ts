@@ -171,22 +171,39 @@ export function installOzonDataTableFormioComponent(): void {
       return url.replace(/^\/?action\//, '').replace(/^\//, '');
     }
 
-    /** Finds the sibling search_area well paired to this table via properties.object_id, and
-     * resolves the default scoping query it carries against the current form's submission data. */
-    private resolveBaseQuery(): Record<string, unknown> | null {
+    /** Finds the sibling search_area well paired to this table via properties.object_id. */
+    private findSearchAreaWell(): Record<string, unknown> | null {
       const self = this as any;
       const root = self.root;
       const ownKey = String(self.key ?? '').trim();
       if (!ownKey || !root || typeof root.everyComponent !== 'function') return null;
-      let wellComponent: Record<string, unknown> | null = null;
+      let found: Record<string, unknown> | null = null;
       root.everyComponent((comp: any) => {
-        if (wellComponent) return;
+        if (found) return;
         const props = isRecord(comp?.component?.properties) ? comp.component.properties : {};
-        if (String(props['object_id'] ?? '').trim() === ownKey) wellComponent = comp.component;
+        if (String(props['object_id'] ?? '').trim() === ownKey) found = comp.component;
       });
-      if (!wellComponent) return null;
-      const submissionData = isRecord(root.submission?.data) ? root.submission.data : {};
-      return resolveWellQuerySeed(wellComponent, { form: submissionData, data: submissionData });
+      return found;
+    }
+
+    /** Resolves the default scoping query the well's logic carries, against the current form's
+     * submission data. */
+    private resolveBaseQuery(well: Record<string, unknown> | null): Record<string, unknown> | null {
+      if (!well) return null;
+      const root = (this as any).root;
+      const submissionData = isRecord(root?.submission?.data) ? root.submission.data : {};
+      return resolveWellQuerySeed(well, { form: submissionData, data: submissionData });
+    }
+
+    /** Whether the well is visible per the form design. AppFormioRendererService always forces
+     * the well's own `hidden` to true before Formio ever builds it (it's replaced by this table's
+     * own filter UI, so it would otherwise show as an empty box) - stashing the design's original
+     * flag under `properties.__ozon_design_hidden` before doing so, since that forced value would
+     * otherwise be the only thing left to read here. */
+    private resolveFilterVisible(well: Record<string, unknown> | null): boolean {
+      if (!well) return true;
+      const props = isRecord(well['properties']) ? well['properties'] : {};
+      return !props['__ozon_design_hidden'];
     }
 
     private mountEmbeddedList(element: HTMLElement): void {
@@ -208,7 +225,11 @@ export function installOzonDataTableFormioComponent(): void {
         });
         ref.instance.actionName = actionName;
         ref.instance.orderDefault = String(this.properties['order'] ?? '').trim();
-        ref.instance.baseQuery = this.resolveBaseQuery();
+        ref.instance.model = String(this.properties['model'] ?? '').trim();
+        ref.instance.openInModal = String(this.properties['modal'] ?? '').trim().toLowerCase() === 'y';
+        const well = this.findSearchAreaWell();
+        ref.instance.baseQuery = this.resolveBaseQuery(well);
+        ref.instance.filterVisible = this.resolveFilterVisible(well);
         applicationRefRef.attachView(ref.hostView);
         ref.changeDetectorRef.detectChanges();
         this.componentRef = ref;

@@ -21,6 +21,7 @@
                     </svg>
                 </button>
                 <button
+                        *ngIf="showFilterButton"
                         class="btn btn-sm btn-outline-secondary ozon-filter-btn"
                         type="button"
                         (click)="toggleFilters()"
@@ -83,7 +84,7 @@
         </div>
 
         <!-- Filters panel -->
-        <div *ngIf="filterOpen" class="ozon-filter-panel mb-2">
+        <div *ngIf="filterOpen && showFilterButton" class="ozon-filter-panel mb-2">
             <div class="ozon-filter-panel__header">
                 <div class="ozon-filter-title">Filtri</div>
                 <div class="ozon-filter-condition">

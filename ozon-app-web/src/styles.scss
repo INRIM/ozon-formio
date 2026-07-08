@@ -25,6 +25,11 @@
   --bs-border-color: var(--ozon-border);
   --bs-secondary-color: var(--ozon-muted);
   --bs-tertiary-color: var(--ozon-muted);
+  // bootstrap-italia's .modal-content reads --bs-modal-bg/--bs-modal-border-color, not
+  // --bs-body-bg/--bs-border-color above - left at their light-mode default otherwise, so every
+  // modal (the Elimina confirm dialog, the record-form modal) stayed white regardless of theme.
+  --bs-modal-bg: var(--ozon-surface);
+  --bs-modal-border-color: var(--ozon-border);
 }
 
 html,

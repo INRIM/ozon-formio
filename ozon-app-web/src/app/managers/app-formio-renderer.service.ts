@@ -827,7 +827,12 @@ export class AppFormioRendererService {
             } else if (type === 'well' && this.isSearchAreaStub(node)) {
                 // The paired ozon_data_table (linked via properties.object_id) already renders its
                 // own fast-search filter form (RecordListComponent's built-in fastSearchSchema UI).
-                // This well would otherwise show as an empty placeholder box, so collapse it.
+                // This well would otherwise show as an empty placeholder box, so collapse it - but
+                // stash the design's own hidden flag first: ozon_data_table reads it back to decide
+                // whether ITS OWN filter button shows, and would otherwise only ever see the forced
+                // `true` set below.
+                const props = this.readComponentProperties(node);
+                props['__ozon_design_hidden'] = Boolean(node['hidden']);
                 node['hidden'] = true;
                 node['customClass'] = this.appendCustomClass(node['customClass'], 'ozon-search-area-embedded');
             }

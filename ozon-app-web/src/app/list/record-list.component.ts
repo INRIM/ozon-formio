@@ -60,6 +60,7 @@ export class RecordListComponent implements OnChanges {
     @Input() filterConfig: QueryBuilderConfig = { fields: {} };
     @Input() filterRules: RuleSet = { condition: 'and', rules: [] };
     @Input() filterPreview = '{}';
+    @Input() showFilterButton = true;
     @Input() statusText = '';
     @Input() statusError = false;
     @Input() serverErrorRetryVisible = false;

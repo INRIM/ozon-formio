@@ -1,0 +1,22 @@
+// AppComponent's own header is pinned at z-index 1100 (app.component.scss) specifically to stay
+// above ordinary page/form content in its own stacking context - bootstrap-italia's default modal
+// z-index (1055) sits below that, so without this the header rendered on top of the modal even
+// after re-parenting it to <body>. .ozon-transition-loader (the page-nav spinner) is the next
+// reference point above the header, at 1200.
+.modal {
+  z-index: 1200;
+}
+
+// Direct override instead of relying on --bs-modal-bg: bootstrap-italia's .modal-content reads
+// that variable, but it's not resolving here reliably, so set the theme colors straight on the
+// element this component actually owns.
+.modal-content {
+  background-color: var(--ozon-surface);
+  color: var(--ozon-text);
+  border-color: var(--ozon-border);
+}
+
+.modal-header,
+.modal-footer {
+  border-color: var(--ozon-border);
+}
