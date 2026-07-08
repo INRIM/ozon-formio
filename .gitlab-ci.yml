@@ -3,11 +3,12 @@ stages:
 
 build-ozon-app-web:
   stage: build
-  image:
-    name: gcr.io/kaniko-project/executor:v1.23.2-debug
-    entrypoint: [""]
+  image: docker:24
+  services:
+    - docker:24-dind
   variables:
-    DOCKER_CONFIG: /kaniko/.docker
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
   before_script:
     - test -n "${REGISTRY_HOST}" || (echo "REGISTRY_HOST is empty - check protected variable/branch settings" && exit 1)
     - test -n "${REGISTRY_USER}" || (echo "REGISTRY_USER is empty - check protected variable/branch settings" && exit 1)
@@ -16,14 +17,16 @@ build-ozon-app-web:
     - export IMAGE_REF="${IMAGE_REF%%:*}"
     - echo "REGISTRY_HOST=${REGISTRY_HOST}"
     - echo "IMAGE_REF (sanitized, no tag)=${IMAGE_REF}"
-    - mkdir -p "${DOCKER_CONFIG}"
-    - echo "{\"auths\":{\"${REGISTRY_HOST}\":{\"auth\":\"$(printf '%s:%s' "${REGISTRY_USER}" "${REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > "${DOCKER_CONFIG}/config.json"
+    - echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_HOST" -u "$REGISTRY_USER" --password-stdin
   script:
     - >
-      /kaniko/executor
-      --context "${CI_PROJECT_DIR}/ozon-app-web"
-      --dockerfile "${CI_PROJECT_DIR}/ozon-app-web/Dockerfile"
-      --destination "${REGISTRY_HOST}/${IMAGE_REF}:${CI_COMMIT_SHORT_SHA}"
-      --destination "${REGISTRY_HOST}/${IMAGE_REF}:latest"
+      docker build
+      --network host
+      -f "${CI_PROJECT_DIR}/ozon-app-web/Dockerfile"
+      -t "${REGISTRY_HOST}/${IMAGE_REF}:${CI_COMMIT_SHORT_SHA}"
+      -t "${REGISTRY_HOST}/${IMAGE_REF}:latest"
+      "${CI_PROJECT_DIR}/ozon-app-web"
+    - docker push "${REGISTRY_HOST}/${IMAGE_REF}:${CI_COMMIT_SHORT_SHA}"
+    - docker push "${REGISTRY_HOST}/${IMAGE_REF}:latest"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "1.0"'
