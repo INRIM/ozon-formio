@@ -27,4 +27,4 @@ services:
 networks:
   backend:
     external: true
-    name: ${OZON_NETWORK:-ozon-network}
+    name: ${BACKEND_DOCKER_NETWORK:-ozon-network}
