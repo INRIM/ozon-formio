@@ -9,6 +9,10 @@ build-ozon-app-web:
   variables:
     DOCKER_CONFIG: /kaniko/.docker
   before_script:
+    - test -n "${REGISTRY_HOST}" || (echo "REGISTRY_HOST is empty - check protected variable/branch settings" && exit 1)
+    - test -n "${REGISTRY_USER}" || (echo "REGISTRY_USER is empty - check protected variable/branch settings" && exit 1)
+    - test -n "${REGISTRY_PASSWORD}" || (echo "REGISTRY_PASSWORD is empty - check protected variable/branch settings" && exit 1)
+    - test -n "${IMAGE_REF}" || (echo "IMAGE_REF is empty - check protected variable/branch settings" && exit 1)
     - mkdir -p "${DOCKER_CONFIG}"
     - echo "{\"auths\":{\"${REGISTRY_HOST}\":{\"auth\":\"$(printf '%s:%s' "${REGISTRY_USER}" "${REGISTRY_PASSWORD}" | base64 | tr -d '\n')\"}}}" > "${DOCKER_CONFIG}/config.json"
   script:
