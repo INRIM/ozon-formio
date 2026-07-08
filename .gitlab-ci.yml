@@ -3,12 +3,10 @@ stages:
 
 build-ozon-app-web:
   stage: build
-  image: docker:24
+  image: docker:25
   services:
-    - docker:24-dind
-  variables:
-    DOCKER_HOST: tcp://docker:2375
-    DOCKER_TLS_CERTDIR: ""
+    - docker:25ma -dind
+
   before_script:
     - test -n "${REGISTRY_HOST}" || (echo "REGISTRY_HOST is empty - check protected variable/branch settings" && exit 1)
     - test -n "${REGISTRY_USER}" || (echo "REGISTRY_USER is empty - check protected variable/branch settings" && exit 1)
