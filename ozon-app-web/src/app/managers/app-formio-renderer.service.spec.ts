@@ -387,6 +387,27 @@ describe('AppFormioRendererService', () => {
     expect(String(table['customClass'] ?? '')).not.toContain('ozon-form-data-table');
   });
 
+  it('normalizes datagrid components with visible remove-row text fallback', () => {
+    const schema = {
+      components: [
+        {
+          type: 'datagrid',
+          key: 'rows',
+          components: [
+            { type: 'textfield', key: 'name', input: true }
+          ]
+        }
+      ]
+    };
+
+    const prepared = service.prepareSchemaForRender(schema, null);
+    const datagrid = (prepared['components'] as Array<Record<string, unknown>>)[0];
+
+    expect(datagrid['tableView']).toBeTrue();
+    expect(datagrid['removeRow']).toBe('Elimina');
+    expect(String(datagrid['customClass'] ?? '')).toContain('ozon-form-datagrid');
+  });
+
   it('collapses the search_area well paired to an embedded data table, since the table renders its own filter form', () => {
     const schema = {
       components: [

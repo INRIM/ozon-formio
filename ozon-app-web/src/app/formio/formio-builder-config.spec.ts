@@ -13,6 +13,16 @@ describe('buildOzonFormBuilderOptions', () => {
     expect(schema['storage']).toBeUndefined();
   });
 
+  it('should use the Bootstrap Italia calendar icon for datetime fields', () => {
+    const options = buildOzonFormBuilderOptions();
+    const builder = options['builder'] as Record<string, unknown>;
+    const advanced = builder['advanced'] as Record<string, unknown>;
+    const components = advanced['components'] as Record<string, unknown>;
+    const datetime = components['datetime'] as Record<string, unknown>;
+
+    expect(datetime['icon']).toBe('it-calendar');
+  });
+
   it('should include the process panel component preset', () => {
     const options = buildOzonFormBuilderOptions();
     const builder = options['builder'] as Record<string, unknown>;

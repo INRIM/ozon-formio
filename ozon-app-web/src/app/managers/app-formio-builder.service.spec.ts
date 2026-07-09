@@ -69,4 +69,16 @@ describe('AppFormioBuilderService', () => {
       expect(service.formEditorData['queryformeditable']).toBe('{"active":true}');
     });
   });
+
+  describe('buildModelFieldComponents', () => {
+    it('uses the Bootstrap Italia calendar icon for datetime model fields', () => {
+      const components = (service as any).buildParentModelBuilderComponents({
+        components: [
+          { type: 'datetime', key: 'start_at', label: 'Start At', input: true }
+        ]
+      });
+
+      expect(components['start_at']['icon']).toBe('it-calendar');
+    });
+  });
 });

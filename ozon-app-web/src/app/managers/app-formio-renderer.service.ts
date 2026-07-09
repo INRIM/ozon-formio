@@ -824,6 +824,7 @@ export class AppFormioRendererService {
                 node['tableView'] = true; node['customClass'] = this.appendCustomClass(node['customClass'], 'ozon-form-table');
             } else if (type === 'datagrid' || type === 'editgrid') {
                 node['tableView'] = true; node['customClass'] = this.appendCustomClass(node['customClass'], 'ozon-form-datagrid');
+                if (type === 'datagrid') node['removeRow'] = this.readFirstString(node['removeRow'], 'Elimina');
             } else if (type === 'well' && this.isSearchAreaStub(node)) {
                 // The paired ozon_data_table (linked via properties.object_id) already renders its
                 // own fast-search filter form (RecordListComponent's built-in fastSearchSchema UI).

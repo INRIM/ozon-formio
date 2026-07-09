@@ -386,6 +386,42 @@ body {
   min-width: 640px;
 }
 
+.formio-component.ozon-form-datagrid .formio-button-remove-row {
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  padding: 0.35rem;
+  line-height: 1;
+}
+
+.formio-component.ozon-form-datagrid .formio-button-remove-row i {
+  display: inline-flex;
+  width: 1rem;
+  height: 1rem;
+  align-items: center;
+  justify-content: center;
+  font-style: normal;
+}
+
+.formio-component.ozon-form-datagrid .formio-button-remove-row i::before {
+  content: "X";
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.formio-component-datetime .input-group-text i[class*="calendar"],
+.formio-component-datetime .input-group-text i[class*="clock"],
+.formio-builder i[class*="it-calendar"],
+.formio-builder-sidebar i[class*="it-calendar"] {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  background-color: currentColor;
+  font-size: 0;
+  -webkit-mask: url("/bootstrap-italia/src/svg/it-calendar.svg") center / contain no-repeat;
+  mask: url("/bootstrap-italia/src/svg/it-calendar.svg") center / contain no-repeat;
+}
+
 /* =========================================================
    Form.io viewer fallbacks
    - readonly select rendered by Choices.js

@@ -421,7 +421,7 @@ export class AppFormioBuilderService {
             case 'textfield': return 'terminal';
             case 'textarea': return 'align-left';
             case 'number': return 'hashtag';
-            case 'datetime': return 'calendar';
+            case 'datetime': return 'it-calendar';
             case 'select': return 'list';
             case 'checkbox': return 'check-square';
             case 'radio': return 'dot-circle-o';

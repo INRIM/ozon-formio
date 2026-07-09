@@ -581,7 +581,7 @@ function createBuiltinBuilderConfig(): Record<string, unknown> {
         datetime: {
           title: 'Date / Time',
           group: 'advanced',
-          icon: 'calendar',
+          icon: 'it-calendar',
           weight: 40,
           schema: {
             type: 'datetime',
