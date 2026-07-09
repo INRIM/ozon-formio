@@ -49,6 +49,23 @@ describe('AppFormioRendererService', () => {
     expect(String(select['customClass'] ?? '')).toContain('ozon-select-readonly');
   });
 
+  it('should normalize datetime components to use the Bootstrap Italia calendar icon', () => {
+    const schema = {
+      components: [
+        {
+          type: 'datetime',
+          key: 'start_at',
+          input: true
+        }
+      ]
+    };
+
+    const prepared = service.prepareSchemaForRender(schema, null);
+    const datetime = (prepared['components'] as Array<Record<string, unknown>>)[0];
+
+    expect(datetime['icon']).toBe('it-calendar');
+  });
+
   it('should tag outline buttons for css fallback', () => {
     const schema = {
       components: [

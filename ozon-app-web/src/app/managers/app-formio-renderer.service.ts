@@ -941,6 +941,7 @@ export class AppFormioRendererService {
             if (!this.isRecord(node)) return;
             this.aliasFormVarsToDataInLogic(node);
             this.normalizeReadonlyComponent(node);
+            this.normalizeCalendarComponent(node);
             this.normalizeFileComponent(node);
             this.normalizeNativeSubmitButtonComponent(node);
             this.normalizeInlineActionButtonComponent(node);
@@ -948,6 +949,12 @@ export class AppFormioRendererService {
             Object.values(node).forEach(visit);
         };
         visit(schema);
+    }
+
+    private normalizeCalendarComponent(component: Record<string, unknown>): void {
+        const type = String(component['type'] ?? '').trim().toLowerCase();
+        if (type !== 'datetime') return;
+        component['icon'] = 'it-calendar';
     }
 
     /**

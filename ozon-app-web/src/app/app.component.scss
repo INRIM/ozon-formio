@@ -272,20 +272,22 @@
 }
 
 .ozon-dashboard-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 1rem;
 }
 
 .ozon-dashboard-card {
   width: 100%;
-  max-width: 100%;
+  flex: 1 1 calc((100% - 2rem) / 3);
+  max-width: calc((100% - 2rem) / 3);
   min-height: 12rem;
 }
 
 @media (max-width: 1199px) {
-  .ozon-dashboard-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .ozon-dashboard-card {
+    flex-basis: calc((100% - 1rem) / 2);
+    max-width: calc((100% - 1rem) / 2);
   }
 }
 
@@ -535,10 +537,11 @@
   }
 
   .ozon-dashboard-grid {
-    grid-template-columns: 1fr;
+    display: flex;
   }
 
   .ozon-dashboard-card {
+    flex-basis: 100%;
     min-height: 11rem;
     max-width: 100%;
   }
