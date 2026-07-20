@@ -1646,12 +1646,16 @@ export class AppActionManagerService {
                 selection_count: this.tableManager.selectedRows.length
             }
         };
-        console.log('[json-logic] variabili disponibili (top-level keys):', Object.keys(context));
-        console.log('[json-logic] context completo:', context);
-        console.log('[json-logic] data/form:', context.data);
-        console.log('[json-logic] user:', context.user);
-        console.log('[json-logic] session:', context.session);
-        console.log('[json-logic] app:', context.app, 'is_admin:', context.is_admin);
+        // DEBUG (opt-in via localStorage['ozon_debug_jsonlogic']): the context includes the
+        // session record which may carry sensitive fields — never log unconditionally.
+        if (typeof localStorage !== 'undefined' && localStorage.getItem('ozon_debug_jsonlogic')) {
+            console.log('[json-logic] variabili disponibili (top-level keys):', Object.keys(context));
+            console.log('[json-logic] context completo:', context);
+            console.log('[json-logic] data/form:', context.data);
+            console.log('[json-logic] user:', context.user);
+            console.log('[json-logic] session:', context.session);
+            console.log('[json-logic] app:', context.app, 'is_admin:', context.is_admin);
+        }
         return context;
     }
 

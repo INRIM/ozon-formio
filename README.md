@@ -24,45 +24,16 @@ Recommended Angular build via Docker (Node LTS):
 ## Setup
 
 ```bash
-npm install
 cp .env.example .env
 ```
 
 `.env` config:
 - `backendurl`
 - `BACKENDURL` (recommended for the Angular compose healthcheck)
-- `basetocken`
-- `TOKEN_HEADER`
-- `TOKEN_PREFIX` (optional, e.g. `Bearer`)
 - `BACKEND_DOCKER_NETWORK` (backend external network, e.g. `ozn-network`)
 
-## Automated check
-
-```bash
-npm test
-```
-
-`npm test` runs a full build plus a smoke test on the output files.
-
-## Development
-
-```bash
-npm run dev
-```
-
-## Production build
-
-```bash
-npm run dist
-```
-
-## Local run (dist)
-
-```bash
-npm start
-```
-
-Serves a static web app on `http://localhost:8080`.
+Auth is cookie-based (`ozon_session` httponly + `ozon_csrf`); no token is
+handled client-side. See `docAnalisi/SECURITY_KEYCLOAK_TOKEN_BRIEF_FRONTEND.it.md`.
 
 ## UI theme
 
@@ -84,13 +55,6 @@ Serves a static web app on `http://localhost:8080`.
   - the frontend automatically retries with alternate `order`/`query` formats on `422`
 - `GET /record/{model}/{rec_name}` a specific record
   - opens the record in the frontend with a single call: expected payload with `data` + `schema` (+ `rec_name`)
-
-Header used for all API calls:
-- `<TOKEN_HEADER>: <basetocken value>` (default `Authorization`)
-- if `TOKEN_PREFIX` is set, the sent value becomes `"<TOKEN_PREFIX> <basetocken>"`
-
-CORS note:
-- if `backendurl` has a different origin than the frontend, the client automatically uses the local proxy `"/__ozon_proxy"` to avoid a preflight `OPTIONS` on the backend.
 
 ## Container image & registries
 

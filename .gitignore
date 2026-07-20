@@ -6,7 +6,8 @@
 /.claude/
 
 # OS junk
-/.DS_Store
+.DS_Store
+**/.DS_Store
 
 # Node / Angular outputs
 /node_modules/

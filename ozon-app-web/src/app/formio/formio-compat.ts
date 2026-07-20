@@ -16,8 +16,18 @@ const FORMIO_CTX_LOG_LIMIT = 15;
 export class LegacyCompatibleFormioEvaluator extends FormioDefaultEvaluator {
   override execute(func: (...args: any[]) => any, args: any, context: any = {}, options: any = {}): any {
     const normalizedOptions = options && typeof options === 'object' ? options : { noeval: options };
-    // DEBUG: dump the variable bag Form.io exposes to native logic / calculateValue / conditional.
-    if (args && typeof args === 'object' && !Array.isArray(args) && formioCtxLogCount < FORMIO_CTX_LOG_LIMIT) {
+    // DEBUG (opt-in via localStorage['ozon_debug_formio_logic']): dump the variable bag
+    // Form.io exposes to native logic / calculateValue / conditional. Gated — never active
+    // in production bundles unless a developer explicitly enables it, to avoid leaking the
+    // session object (which may carry sensitive fields) to the console.
+    if (
+      args &&
+      typeof args === 'object' &&
+      !Array.isArray(args) &&
+      formioCtxLogCount < FORMIO_CTX_LOG_LIMIT &&
+      typeof localStorage !== 'undefined' &&
+      localStorage.getItem('ozon_debug_formio_logic')
+    ) {
       formioCtxLogCount++;
       console.log('[formio-logic] variabili disponibili (keys):', Object.keys(args));
       console.log('[formio-logic] data:', args.data, 'row:', args.row);
