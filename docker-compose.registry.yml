@@ -3,19 +3,27 @@ services:
     image: ${OZON_APP_WEB_IMAGE:-registry.w.ininrim.it/inrimsi/microservice/services-apps/ozon-formio:latest}
     platform: linux/amd64
     pull_policy: always
-    env_file:
-      - ./.env
+    # Solo le variabili che servono a runtime (docker-entrypoint.sh). Niente
+    # env_file: ./.env — quel file porta anche REGISTRY_USER/REGISTRY_PASSWORD,
+    # necessarie solo al `docker login` dell'host, non al container (A-11).
     environment:
       BACKEND_UPSTREAM: ${BACKEND_UPSTREAM:-http://ozon-env-app:8000}
+      SITE_URL: ${SITE_URL:-}
+      SESSION_CACHE_TTL_MS: ${SESSION_CACHE_TTL_MS:-30000}
+      AUTH_LOGIN_PATH: ${AUTH_LOGIN_PATH:-/api/login}
+      AUTH_LOGOUT_PATH: ${AUTH_LOGOUT_PATH:-/api/logout}
+      AUTH_REFRESH_PATH: ${AUTH_REFRESH_PATH:-/api/auth/refresh}
+      APP_CODE: ${APP_CODE:-}
+      APP_MODULE_NAME: ${APP_MODULE_NAME:-}
     ports:
-      - "${OZON_ANGULAR_PORT:-4200}:80"
+      - "${OZON_ANGULAR_PORT:-4200}:8080"
     networks:
       - backend
     restart: unless-stopped
     healthcheck:
       test:
         - CMD-SHELL
-        - wget -q -O /dev/null http://localhost/ || exit 1
+        - wget -q -O /dev/null http://localhost:8080/ || exit 1
       interval: 15s
       timeout: 8s
       retries: 6

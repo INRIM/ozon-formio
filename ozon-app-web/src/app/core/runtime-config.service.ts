@@ -100,11 +100,8 @@ export class RuntimeConfigService {
       siteUrl,
       allowedOrigins,
       baseToken: this.pickFirstString(
-        query['basetocken'],
-        query['token'],
         runtime['basetocken'],
         runtime['BASETOCKEN'],
-        stored?.baseToken,
         environment.baseToken
       ),
       useProxy: this.pickFirstBoolean(
@@ -324,7 +321,6 @@ export class RuntimeConfigService {
         backendUrl,
         siteUrl,
         allowedOrigins: this.normalizeAllowedOrigins(parsed.allowedOrigins ?? [], { backendUrl, siteUrl }),
-        baseToken: String(parsed.baseToken ?? ''),
         sessionCacheTtlMs: this.normalizeSessionCacheTtlMs(parsed.sessionCacheTtlMs ?? 30000),
         authMode: this.normalizeAuthMode(String(parsed.authMode ?? 'keycloak')),
         authLoginPath: this.normalizeEndpointPath(String(parsed.authLoginPath ?? '/api/login'), '/api/login'),
@@ -347,7 +343,8 @@ export class RuntimeConfigService {
     if (typeof window === 'undefined') {
       return;
     }
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+    const { baseToken: _baseToken, ...persisted } = config;
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
   }
 
   private readQuery(): Record<string, string> {

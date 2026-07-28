@@ -13,6 +13,7 @@ import {
 } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import Quill from 'quill';
+import DOMPurify from 'dompurify';
 
 @Component({
   selector: 'app-ozon-wysiwyg-editor',
@@ -69,7 +70,7 @@ export class OzonWysiwygEditorComponent implements AfterViewInit, OnChanges, OnD
         }
       });
       this.lastEditorValue = String(this.value ?? '');
-      this.editor.clipboard.dangerouslyPasteHTML(this.lastEditorValue);
+      this.editor.clipboard.dangerouslyPasteHTML(DOMPurify.sanitize(this.lastEditorValue));
       this.editor.on('text-change', () => {
         const nextValue = this.editor?.root.innerHTML ?? '';
         if (nextValue === this.lastEditorValue) return;
@@ -84,7 +85,7 @@ export class OzonWysiwygEditorComponent implements AfterViewInit, OnChanges, OnD
     const nextValue = String(this.value ?? '');
     if (nextValue === this.lastEditorValue) return;
     this.lastEditorValue = nextValue;
-    this.editor.clipboard.dangerouslyPasteHTML(nextValue);
+    this.editor.clipboard.dangerouslyPasteHTML(DOMPurify.sanitize(nextValue));
   }
 
   ngOnDestroy(): void {

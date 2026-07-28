@@ -32,8 +32,7 @@ export class LegacyCompatibleFormioEvaluator extends FormioDefaultEvaluator {
       console.log('[formio-logic] variabili disponibili (keys):', Object.keys(args));
       console.log('[formio-logic] data:', args.data, 'row:', args.row);
       console.log('[formio-logic] component.key:', args?.component?.key, 'value:', args.value);
-      console.log('[formio-logic] form/user/is_admin/session:', args.form, args.user, args.is_admin, args.session);
-      console.log('[formio-logic] context completo:', args);
+      console.log('[formio-logic] form/user/is_admin:', args.form, args.user, args.is_admin);
       if (formioCtxLogCount === FORMIO_CTX_LOG_LIMIT) console.log('[formio-logic] (log limitato ai primi', FORMIO_CTX_LOG_LIMIT, 'eval per non floodare)');
     }
     if (!Array.isArray(args) && args && typeof args === 'object' && typeof func === 'function' && func.length > 1) {
