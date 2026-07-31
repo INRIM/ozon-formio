@@ -133,7 +133,6 @@ export class WebSocketActionsService implements OnDestroy {
     const cfg = this.runtimeConfig.getConfig();
     const useProxy = cfg.useProxy;
     const backendUrl = cfg.backendUrl || '';
-    const token = cfg.baseToken?.trim() || '';
     const appCode = cfg.appCode?.trim() || '';
 
     let base = '';
@@ -151,9 +150,6 @@ export class WebSocketActionsService implements OnDestroy {
 
     let url = `${base}/ws/actions`;
     const params = new URLSearchParams();
-    if (token) {
-      params.set('token', token);
-    }
     if (appCode) {
       params.set('app_code', appCode);
     }

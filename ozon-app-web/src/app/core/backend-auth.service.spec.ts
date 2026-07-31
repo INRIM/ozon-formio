@@ -39,9 +39,11 @@ describe('BackendAuthService', () => {
     window.localStorage.clear();
   });
 
-  it('should sync internal session token from get_session in keycloak mode', async () => {
+  it('should authenticate from uid without ever syncing a session token (BE-2/BE-5)', async () => {
     apiMock.getSession.and.resolveTo({
       uid: 'alice',
+      // Backend guarantees /get_session never exposes a token (BE-2). Included here
+      // defensively: even if a token field showed up, the frontend must not store it.
       token: 'kc-token',
       user: {
         uid: 'alice'
@@ -54,7 +56,7 @@ describe('BackendAuthService', () => {
     expect(result.authenticated).toBeTrue();
     expect(result.loginRequired).toBeFalse();
     expect(result.remoteUser).toBe('alice');
-    expect(updated.baseToken).toBe('kc-token');
+    expect(updated.baseToken).toBe('');
     expect(service.consumeSessionPayload()).toEqual({
       uid: 'alice',
       token: 'kc-token',
@@ -65,7 +67,7 @@ describe('BackendAuthService', () => {
     expect(service.consumeSessionPayload()).toBeNull();
   });
 
-  it('should unwrap ozon-style session envelopes before storing token', async () => {
+  it('should unwrap ozon-style session envelopes without storing any token', async () => {
     apiMock.getSession.and.resolveTo({
       content: {
         data: {
@@ -79,7 +81,7 @@ describe('BackendAuthService', () => {
 
     expect(result.authenticated).toBeTrue();
     expect(result.remoteUser).toBe('bob');
-    expect(runtimeConfig.getConfig().baseToken).toBe('session-2');
+    expect(runtimeConfig.getConfig().baseToken).toBe('');
   });
 
   it('should ask for login when get_session returns unauthorized', async () => {
@@ -104,13 +106,11 @@ describe('BackendAuthService', () => {
     expect(service.consumeSessionPayload()).toBeNull();
   });
 
-  it('should clear token and expose logout navigation url', () => {
-    runtimeConfig.updateConfig({ baseToken: 'kc-token' });
-
+  it('should clear session state and expose logout navigation url', () => {
     const result = service.logout();
 
     expect(result.redirectUrl).toBe(`${window.location.origin}/logout`);
-    expect(runtimeConfig.getConfig().baseToken).toBe('');
+    expect(result.authenticated).toBeFalse();
     expect(apiMock.clearSessionCache).toHaveBeenCalled();
   });
 

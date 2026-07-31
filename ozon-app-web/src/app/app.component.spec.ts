@@ -2047,7 +2047,6 @@ describe('AppComponent', () => {
           type: 'button',
           label: 'Lista',
           leftIcon: 'it-list',
-          authtoken: '',
           req_id: 'req',
           btn_action_type: false,
           action_type: 'window',

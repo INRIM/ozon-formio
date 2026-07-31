@@ -72,7 +72,6 @@ export interface MenuButton {
     type: 'button';
     label: string;
     leftIcon: string;
-    authtoken: string;
     req_id: string;
     btn_action_type: 'post' | false | undefined;
     action_type: string;

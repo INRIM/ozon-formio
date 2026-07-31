@@ -1196,7 +1196,7 @@ export class AppActionManagerService {
             }
             buttons.push({
                 model: item.model, key: item.rec_name, type: 'button', label: item.title, leftIcon: item.button_icon,
-                authtoken: this.appManager.baseToken, req_id: this.uiReqId,
+                req_id: this.uiReqId,
                 btn_action_type: this.btnActionParser[item.action_type],
                 action_type: item.action_type, url_action: this.normalizeActionUrl(urlAction),
                 builder: item.builder_enabled, mode: item.mode, content: item.content, number: item.number,
@@ -1305,7 +1305,7 @@ export class AppActionManagerService {
         return {
             model: this.readFirstString(entry['model'], this.appManager.selectedModel), key: key || `action_${index}`, type: 'button',
             label: this.readFirstString(entry['label'], entry['title'], key || `Action ${index + 1}`) || `Action ${index + 1}`,
-            leftIcon: icon, authtoken: this.appManager.baseToken, req_id: this.uiReqId,
+            leftIcon: icon, req_id: this.uiReqId,
             btn_action_type: this.btnActionParser[actionType] ?? false, action_type: actionType,
             url_action: route.urlAction, builder: this.toBooleanFlag(entry['builder'] ?? entry['builder_enabled']),
             mode: this.readFirstString(entry['mode']), content, number, menu_group: buttonGroup, menu_type: buttonMenuType, is_admin: isAdmin
@@ -1346,7 +1346,6 @@ export class AppActionManagerService {
             type: 'button',
             label,
             leftIcon: this.readFirstString(component['leftIcon'], component['rightIcon'], 'pi pi-play') || 'pi pi-play',
-            authtoken: this.appManager.baseToken,
             req_id: this.uiReqId,
             btn_action_type: 'post',
             action_type: 'post',
@@ -1394,7 +1393,6 @@ export class AppActionManagerService {
                 type: 'button',
                 label,
                 leftIcon: this.readFirstString(component['leftIcon'], component['rightIcon'], 'pi pi-play') || 'pi pi-play',
-                authtoken: this.appManager.baseToken,
                 req_id: this.uiReqId,
                 btn_action_type: 'post',
                 action_type: 'post',
@@ -2689,7 +2687,7 @@ export class AppActionManagerService {
         const normalizedPath = this.normalizeFormSubmitActionCandidate(path);
         if (!normalizedPath) return null;
         const normalizedNextActionPath = this.normalizeFormSubmitActionCandidate(nextActionPath);
-        return { model: this.appManager.selectedModel, key: this.tableManager.selectedRecordName || 'save', type: 'button', label: this.formEditorSaveLabel, leftIcon: 'pi pi-save', authtoken: this.appManager.baseToken, req_id: this.uiReqId, btn_action_type: 'post', action_type: 'save', url_action: normalizedPath, builder: false, mode: 'form', content: normalizedPath, menu_group: 'form', menu_type: '', is_admin: false, next_action_path: normalizedNextActionPath || undefined };
+        return { model: this.appManager.selectedModel, key: this.tableManager.selectedRecordName || 'save', type: 'button', label: this.formEditorSaveLabel, leftIcon: 'pi pi-save', req_id: this.uiReqId, btn_action_type: 'post', action_type: 'save', url_action: normalizedPath, builder: false, mode: 'form', content: normalizedPath, menu_group: 'form', menu_type: '', is_admin: false, next_action_path: normalizedNextActionPath || undefined };
     }
 
     private buildFallbackFormActionButtons(): MenuButton[] {
@@ -2792,7 +2790,6 @@ export class AppActionManagerService {
             type: 'button',
             label: 'Abbandona',
             leftIcon: 'pi pi-times',
-            authtoken: this.appManager.baseToken,
             req_id: this.uiReqId,
             btn_action_type: false,
             action_type: 'abandon',
@@ -2862,7 +2859,6 @@ export class AppActionManagerService {
             type: 'button',
             label: this.formEditorSaveLabel,
             leftIcon: this.readFirstString(source?.leftIcon, 'pi pi-save') || 'pi pi-save',
-            authtoken: this.appManager.baseToken,
             req_id: this.uiReqId,
             btn_action_type: false,
             action_type: 'save',
@@ -2954,7 +2950,6 @@ export class AppActionManagerService {
             type: 'button',
             label: action.label,
             leftIcon: action.button_icon,
-            authtoken: this.appManager.baseToken,
             req_id: this.uiReqId,
             btn_action_type: isNavigate ? false : 'post',
             action_type: resolvedActionType,
@@ -2975,7 +2970,6 @@ export class AppActionManagerService {
             type: 'button',
             label: action.label,
             leftIcon: action.button_icon,
-            authtoken: '',
             req_id: '',
             btn_action_type: false,
             action_type: action.action_type,
