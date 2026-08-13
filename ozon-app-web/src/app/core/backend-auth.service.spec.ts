@@ -29,8 +29,7 @@ describe('BackendAuthService', () => {
       authLoginPath: '/login',
       authLogoutPath: '/logout',
       authRefreshPath: '/refresh',
-      sessionCacheTtlMs: 30000,
-      baseToken: ''
+      sessionCacheTtlMs: 30000
     });
     service = TestBed.inject(BackendAuthService);
   });
@@ -56,7 +55,7 @@ describe('BackendAuthService', () => {
     expect(result.authenticated).toBeTrue();
     expect(result.loginRequired).toBeFalse();
     expect(result.remoteUser).toBe('alice');
-    expect(updated.baseToken).toBe('');
+    expect('baseToken' in updated).toBeFalse();
     expect(service.consumeSessionPayload()).toEqual({
       uid: 'alice',
       token: 'kc-token',
@@ -81,7 +80,7 @@ describe('BackendAuthService', () => {
 
     expect(result.authenticated).toBeTrue();
     expect(result.remoteUser).toBe('bob');
-    expect(runtimeConfig.getConfig().baseToken).toBe('');
+    expect('baseToken' in runtimeConfig.getConfig()).toBeFalse();
   });
 
   it('should ask for login when get_session returns unauthorized', async () => {
@@ -92,7 +91,7 @@ describe('BackendAuthService', () => {
     expect(result.authenticated).toBeFalse();
     expect(result.loginRequired).toBeTrue();
     expect(result.redirectUrl).toBe(`${window.location.origin}/login`);
-    expect(runtimeConfig.getConfig().baseToken).toBe('');
+    expect('baseToken' in runtimeConfig.getConfig()).toBeFalse();
   });
 
   it('should ask for login when get_session resolves to non-session payload', async () => {

@@ -30,7 +30,7 @@ describe('WebSocketActionsService', () => {
 
     runtimeConfig = TestBed.inject(RuntimeConfigService);
     runtimeConfig.updateConfig({
-      backendUrl: 'http://api.example.com',
+      backendUrl: 'https://api.example.com',
       useProxy: false,
       appCode: 'test-app'
     });
@@ -44,7 +44,7 @@ describe('WebSocketActionsService', () => {
 
   it('should resolve and build the correct websocket URL without a token (BE-3: auth via session cookie)', () => {
     service.connect();
-    expect(mockWebSocket).toHaveBeenCalledWith('ws://api.example.com/ws/actions?app_code=test-app');
+    expect(mockWebSocket).toHaveBeenCalledWith('wss://api.example.com/ws/actions?app_code=test-app');
   });
 
   it('should transition connectionState to connected on open', fakeAsync(() => {

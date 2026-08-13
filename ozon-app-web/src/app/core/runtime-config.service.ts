@@ -99,11 +99,6 @@ export class RuntimeConfigService {
       backendUrl,
       siteUrl,
       allowedOrigins,
-      baseToken: this.pickFirstString(
-        runtime['basetocken'],
-        runtime['BASETOCKEN'],
-        environment.baseToken
-      ),
       useProxy: this.pickFirstBoolean(
         query['useproxy'],
         runtime['useproxy'],
@@ -343,8 +338,7 @@ export class RuntimeConfigService {
     if (typeof window === 'undefined') {
       return;
     }
-    const { baseToken: _baseToken, ...persisted } = config;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
   }
 
   private readQuery(): Record<string, string> {

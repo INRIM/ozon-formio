@@ -9,7 +9,6 @@ import { AppViewMode, FormNotification, MenuButton, MenuCard } from '../models/a
 @Injectable()
 export class AppManagerService {
     backendUrl = '';
-    baseToken = '';
     authMode: RuntimeAuthMode = 'keycloak';
 
     models: string[] = [];
@@ -88,9 +87,8 @@ export class AppManagerService {
     errorMessage(e: unknown): string { return e instanceof Error ? e.message : String(e); }
     isRecord(v: unknown): v is Record<string, unknown> { return !!v && typeof v === 'object' && !Array.isArray(v); }
 
-    applyRuntime(config: { backendUrl: string; baseToken: string; authMode: RuntimeAuthMode; appLogoUrl?: string }): void {
+    applyRuntime(config: { backendUrl: string; authMode: RuntimeAuthMode; appLogoUrl?: string }): void {
         this.backendUrl = config.backendUrl;
-        this.baseToken = config.baseToken;
         this.authMode = config.authMode;
         if (config.appLogoUrl) this.appLogoUrl = this.resolveBrandAssetUrl(config.appLogoUrl);
     }
@@ -200,7 +198,6 @@ export class AppManagerService {
     }
 
     resetClientState(statusMessage: string): void {
-        this.baseToken = '';
         this.dashboardMenu = [];
         this.dashboardCards = [];
         this.contextualActions = [];

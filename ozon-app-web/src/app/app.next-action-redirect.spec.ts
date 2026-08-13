@@ -54,7 +54,6 @@ describe('AppComponent next_action redirect mode', () => {
       backendUrl: '',
       siteUrl: '',
       allowedOrigins: [],
-      baseToken: '',
       useProxy: true,
       sessionCacheTtlMs: 30000,
       authMode: 'none' as const,

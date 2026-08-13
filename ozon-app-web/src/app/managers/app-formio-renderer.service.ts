@@ -6,6 +6,7 @@ import {
     selectOptionPrimitiveValue,
     toSelectValueOption as mapSelectValueOption
 } from '../core/select-option.util';
+import { UNSAFE_PATH_SEGMENTS } from '../core/utils';
 import { SelectValueOption } from '../models/app.types';
 import { ListRequestPayload, RemoteSelectRequestPayload, requireResponseObject } from '../models/ozon.types';
 
@@ -593,6 +594,9 @@ export class AppFormioRendererService {
         let curr: unknown = src;
         for (const p of norm.split('.').filter(Boolean)) {
             if (curr === null || typeof curr !== 'object') return undefined;
+            if (UNSAFE_PATH_SEGMENTS.has(p)) return undefined;
+            // Read-only traversal; prototype-reaching segments are rejected above.
+            // nosemgrep: javascript.lang.security.audit.prototype-pollution.prototype-pollution-loop.prototype-pollution-loop
             curr = (curr as Record<string, unknown>)[p];
             if (curr === undefined) return undefined;
         }

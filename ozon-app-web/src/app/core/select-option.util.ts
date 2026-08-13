@@ -1,4 +1,5 @@
 import { SelectValueOption } from '../models/app.types';
+import { isUnsafePathSegment } from './utils';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -29,12 +30,17 @@ function readPath(source: UnknownRecord | null, path: string): unknown {
     if (!source) return undefined;
     const normalized = String(path ?? '').trim();
     if (!normalized) return undefined;
-    if (!normalized.includes('.')) return source[normalized];
+    if (!normalized.includes('.')) {
+        return isUnsafePathSegment(normalized) ? undefined : source[normalized];
+    }
 
     let current: unknown = source;
     const segments = normalized.split('.').map(segment => segment.trim()).filter(Boolean);
     for (const segment of segments) {
         if (!isRecord(current)) return undefined;
+        if (isUnsafePathSegment(segment)) return undefined;
+        // Read-only traversal; prototype-reaching segments are rejected above.
+        // nosemgrep: javascript.lang.security.audit.prototype-pollution.prototype-pollution-loop.prototype-pollution-loop
         current = current[segment];
         if (current === undefined) return undefined;
     }
@@ -98,7 +104,7 @@ function applyOptionAliases(
     if (!isAliasablePrimitive(value)) return;
     const aliases = uniquePaths(aliasPaths, ['rec_name', 'id', '_id', 'value']);
     aliases.forEach((path) => {
-        if (!SIMPLE_PATH_PATTERN.test(path)) return;
+        if (!SIMPLE_PATH_PATTERN.test(path) || isUnsafePathSegment(path)) return;
         option[path] = value;
     });
 }

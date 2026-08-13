@@ -16,6 +16,17 @@ export function isRecord(v: any): v is Record<string, any> {
 }
 
 /**
+ * Path segments that must never be traversed or written when resolving a
+ * dotted path against untrusted (backend/schema-driven) data: they reach the
+ * object prototype instead of own data.
+ */
+export const UNSAFE_PATH_SEGMENTS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
+
+export function isUnsafePathSegment(segment: string): boolean {
+  return UNSAFE_PATH_SEGMENTS.has(segment);
+}
+
+/**
  * Extract string from candidate list, preferring non-empty trimmed string.
  * Implemented identically in runtime-config, app-action, app-manager, etc.
  */

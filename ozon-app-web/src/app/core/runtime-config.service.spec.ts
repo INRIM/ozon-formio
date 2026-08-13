@@ -11,7 +11,6 @@ describe('RuntimeConfigService', () => {
       backendUrl: '',
       siteUrl: '',
       allowedOrigins: [],
-      baseToken: '',
       useProxy: true,
       sessionCacheTtlMs: 30000,
       authMode: 'keycloak',

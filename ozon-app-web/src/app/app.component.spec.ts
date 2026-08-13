@@ -40,7 +40,6 @@ const runtimeConfig = {
   backendUrl: '',
   siteUrl: '',
   allowedOrigins: [] as string[],
-  baseToken: '',
   useProxy: true,
   sessionCacheTtlMs: 30000,
   authMode: 'none' as const,

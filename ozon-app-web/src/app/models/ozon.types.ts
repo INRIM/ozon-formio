@@ -4,7 +4,6 @@ export interface RuntimeConfig {
   backendUrl: string;
   siteUrl: string;
   allowedOrigins: string[];
-  baseToken: string;
   useProxy: boolean;
   sessionCacheTtlMs: number;
   authMode: RuntimeAuthMode;
