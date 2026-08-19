@@ -1959,7 +1959,9 @@ export class AppTableManagerService {
             ? false
             : type === 'time'
                 ? true
-                : enableTime ?? (format ? showTimeFromFormat : true);
+                : format
+                    ? showTimeFromFormat
+                    : enableTime ?? true;
         const showSeconds = format.includes('ss');
 
         const renderSingle = (entry: unknown): string => {

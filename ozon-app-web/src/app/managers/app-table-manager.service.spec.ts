@@ -92,13 +92,14 @@ describe('AppTableManagerService', () => {
     expect(service.displayCell(row, 'due_date')).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
   });
 
-  it('should infer date-only table cells from a lowercase month format', () => {
+  it('should honor a date-only format even when Form.io enables time by default', () => {
     service.rawFormSchema = {
       components: [
         {
           type: 'datetime',
           key: 'due_date',
-          format: 'dd/mm/YYYY'
+          format: 'dd/mm/YYYY',
+          enableTime: true
         }
       ]
     };
