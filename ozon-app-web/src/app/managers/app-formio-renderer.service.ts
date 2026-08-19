@@ -6,7 +6,7 @@ import {
     selectOptionPrimitiveValue,
     toSelectValueOption as mapSelectValueOption
 } from '../core/select-option.util';
-import { UNSAFE_PATH_SEGMENTS } from '../core/utils';
+import { normalizeFormioDateTimeFormat, UNSAFE_PATH_SEGMENTS } from '../core/utils';
 import { SelectValueOption } from '../models/app.types';
 import { ListRequestPayload, RemoteSelectRequestPayload, requireResponseObject } from '../models/ozon.types';
 
@@ -959,6 +959,34 @@ export class AppFormioRendererService {
         const type = String(component['type'] ?? '').trim().toLowerCase();
         if (type !== 'datetime') return;
         component['icon'] = 'it-calendar';
+        component['allowInput'] = true;
+
+        const enableDate = this.toOptionalBooleanFlag(component['enableDate']) !== false;
+        if (typeof component['format'] === 'string') {
+            component['format'] = normalizeFormioDateTimeFormat(component['format'], enableDate);
+        }
+
+        const rawCustomOptions = component['customOptions'];
+        if (this.isRecord(rawCustomOptions)) {
+            component['customOptions'] = this.normalizeCalendarCustomOptions(rawCustomOptions, enableDate);
+            return;
+        }
+        if (typeof rawCustomOptions !== 'string' || !rawCustomOptions.trim()) return;
+        try {
+            const parsed = JSON.parse(rawCustomOptions);
+            if (this.isRecord(parsed)) component['customOptions'] = this.normalizeCalendarCustomOptions(parsed, enableDate);
+        } catch {
+            // Form.io handles invalid custom options and reports the schema error itself.
+        }
+    }
+
+    private normalizeCalendarCustomOptions(options: Record<string, unknown>, enableDate: boolean): Record<string, unknown> {
+        const normalized: Record<string, unknown> = { ...options, allowInput: true };
+        const customEnableDate = this.toOptionalBooleanFlag(normalized['noCalendar']) === true ? false : enableDate;
+        if (typeof normalized['format'] === 'string') {
+            normalized['format'] = normalizeFormioDateTimeFormat(normalized['format'], customEnableDate);
+        }
+        return normalized;
     }
 
     /**

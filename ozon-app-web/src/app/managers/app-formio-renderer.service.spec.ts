@@ -49,13 +49,18 @@ describe('AppFormioRendererService', () => {
     expect(String(select['customClass'] ?? '')).toContain('ozon-select-readonly');
   });
 
-  it('should normalize datetime components to use the Bootstrap Italia calendar icon', () => {
+  it('should normalize datetime components for calendar and keyboard input', () => {
     const schema = {
       components: [
         {
           type: 'datetime',
           key: 'start_at',
-          input: true
+          input: true,
+          format: 'dd/mm/YYYY',
+          enableDate: true,
+          enableTime: false,
+          allowInput: false,
+          customOptions: JSON.stringify({ allowInput: false, clickOpens: true, format: 'dd/mm/YYYY' })
         }
       ]
     };
@@ -64,6 +69,13 @@ describe('AppFormioRendererService', () => {
     const datetime = (prepared['components'] as Array<Record<string, unknown>>)[0];
 
     expect(datetime['icon']).toBe('it-calendar');
+    expect(datetime['allowInput']).toBeTrue();
+    expect(datetime['format']).toBe('dd/MM/yyyy');
+    expect(datetime['customOptions']).toEqual(jasmine.objectContaining({
+      allowInput: true,
+      clickOpens: true,
+      format: 'dd/MM/yyyy'
+    }));
   });
 
   it('should tag outline buttons for css fallback', () => {

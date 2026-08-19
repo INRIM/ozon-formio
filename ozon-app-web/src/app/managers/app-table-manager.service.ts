@@ -7,7 +7,7 @@ import {
     selectOptionPrimitiveValue,
     toSelectValueOption as mapSelectValueOption
 } from '../core/select-option.util';
-import { UNSAFE_PATH_SEGMENTS } from '../core/utils';
+import { normalizeFormioDateTimeFormat, UNSAFE_PATH_SEGMENTS } from '../core/utils';
 import {
     ListPageChange, ListSortChange, ListRowReorderChange,
     TableColumn, TableRow, SelectValueOption, TableSortDirection,
@@ -1945,12 +1945,21 @@ export class AppTableManagerService {
         const widget = this.isRecord(component['widget']) ? component['widget'] : {};
         const showDateFromFormat = this.dateFormatContainsDateToken(format);
         const showTimeFromFormat = this.dateFormatContainsTimeToken(format);
-        const showDate = type === 'time' ? false : (showDateFromFormat || type === 'datetime' || type === 'day');
+        const enableDate = this.firstOptionalBooleanFlag(component['enableDate'], widget['enableDate']);
+        const enableTime = this.firstOptionalBooleanFlag(component['enableTime'], widget['enableTime']);
+        const noCalendar = this.firstOptionalBooleanFlag(widget['noCalendar']);
+        const showDate = type === 'time'
+            ? false
+            : type === 'day'
+                ? true
+                : noCalendar === true
+                    ? false
+                    : enableDate ?? (format ? showDateFromFormat : true);
         const showTime = type === 'day'
             ? false
-            : (showTimeFromFormat || type === 'datetime' || type === 'time'
-                || this.toOptionalBooleanFlag(component['enableTime']) === true
-                || this.toOptionalBooleanFlag(widget['enableTime']) === true);
+            : type === 'time'
+                ? true
+                : enableTime ?? (format ? showTimeFromFormat : true);
         const showSeconds = format.includes('ss');
 
         const renderSingle = (entry: unknown): string => {
@@ -1967,7 +1976,10 @@ export class AppTableManagerService {
     private readDateComponentFormat(component: Record<string, unknown>): string {
         const widget = this.isRecord(component['widget']) ? component['widget'] : {};
         const data = this.isRecord(component['data']) ? component['data'] : {};
-        return this.readFirstString(component['format'], widget['format'], data['format'], component['displayFormat']);
+        const format = this.readFirstString(component['format'], widget['format'], data['format'], component['displayFormat']);
+        const enableDate = this.firstOptionalBooleanFlag(component['enableDate'], widget['enableDate']) !== false
+            && this.firstOptionalBooleanFlag(widget['noCalendar']) !== true;
+        return normalizeFormioDateTimeFormat(format, enableDate);
     }
 
     private dateFormatContainsDateToken(format: string): boolean { return /[dDMyY]/.test(format); }
@@ -2045,6 +2057,14 @@ export class AppTableManagerService {
             if (['1', 'true', 'yes', 'on', 'si', 'sì'].includes(normalized)) return true;
             if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
             return null;
+        }
+        return null;
+    }
+
+    private firstOptionalBooleanFlag(...values: unknown[]): boolean | null {
+        for (const value of values) {
+            const flag = this.toOptionalBooleanFlag(value);
+            if (flag !== null) return flag;
         }
         return null;
     }

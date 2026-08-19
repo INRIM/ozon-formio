@@ -92,6 +92,27 @@ export function toBooleanFlag(value: unknown): boolean {
 }
 
 /**
+ * Convert common Moment-style date tokens to the Angular-style tokens expected
+ * by Form.io. Only the date portion is changed, so lowercase `mm` remains valid
+ * for minutes after an hour token.
+ */
+export function normalizeFormioDateTimeFormat(value: unknown, enableDate = true): string {
+  const format = String(value ?? '').trim();
+  if (!format) return '';
+
+  const normalizedYear = format.replace(/Y{2,4}/g, token => 'y'.repeat(token.length));
+  if (!enableDate) return normalizedYear;
+
+  const firstHourToken = normalizedYear.search(/[Hh]/);
+  const dateEnd = firstHourToken >= 0 ? firstHourToken : normalizedYear.length;
+  const datePart = normalizedYear
+    .slice(0, dateEnd)
+    .replace(/D{1,2}/g, token => 'd'.repeat(token.length))
+    .replace(/m{1,2}/g, token => 'M'.repeat(token.length));
+  return `${datePart}${normalizedYear.slice(dateEnd)}`;
+}
+
+/**
  * Extract string as first non-empty trimmed value, preferring explicit over fallbacks.
  */
 export function readFirstString(...candidates: unknown[]): string {

@@ -73,6 +73,61 @@ describe('AppTableManagerService', () => {
     expect(service.tableRenderLoading).toBeFalse();
   });
 
+  it('should omit the time for date-only datetime table cells', () => {
+    service.rawFormSchema = {
+      components: [
+        {
+          type: 'datetime',
+          key: 'due_date',
+          format: 'dd/mm/YYYY',
+          enableDate: true,
+          enableTime: false
+        }
+      ]
+    };
+    const row = { __rowid: 1, __rec_name: 'REQ-1', due_date: '2025-01-15T14:30:00Z' };
+
+    service.prepareTableCellRenderers([row]);
+
+    expect(service.displayCell(row, 'due_date')).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+  });
+
+  it('should infer date-only table cells from a lowercase month format', () => {
+    service.rawFormSchema = {
+      components: [
+        {
+          type: 'datetime',
+          key: 'due_date',
+          format: 'dd/mm/YYYY'
+        }
+      ]
+    };
+    const row = { __rowid: 1, __rec_name: 'REQ-1', due_date: '2025-01-15T14:30:00Z' };
+
+    service.prepareTableCellRenderers([row]);
+
+    expect(service.displayCell(row, 'due_date')).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+  });
+
+  it('should keep the time for datetime table cells with time enabled', () => {
+    service.rawFormSchema = {
+      components: [
+        {
+          type: 'datetime',
+          key: 'created_at',
+          format: 'yyyy-MM-dd HH:mm',
+          enableDate: true,
+          enableTime: true
+        }
+      ]
+    };
+    const row = { __rowid: 1, __rec_name: 'REQ-1', created_at: '2025-01-15T14:30:00Z' };
+
+    service.prepareTableCellRenderers([row]);
+
+    expect(service.displayCell(row, 'created_at')).toContain(':');
+  });
+
   it('should select a row before opening it from desktop row click', async () => {
     const row = { __rowid: 1, __rec_name: 'REC-1' };
     const rebuildMenus = jasmine.createSpy('rebuildMenus');
