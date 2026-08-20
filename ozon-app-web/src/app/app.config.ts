@@ -1,10 +1,8 @@
 import { provideHttpClient, withInterceptorsFromDi } from '@angular/common/http';
 import { APP_INITIALIZER, ApplicationConfig, ApplicationRef, ErrorHandler } from '@angular/core';
 import { provideAnimationsAsync } from '@angular/platform-browser/animations/async';
-import { provideRouter, withDisabledInitialNavigation } from '@angular/router';
 import { provideDesignAngularKit } from 'design-angular-kit';
 import { FORMIO_CONFIG, FormioAppConfig } from '@formio/angular';
-import { routes } from './app.routes';
 import { GlobalErrorHandler } from './core/global-error-handler';
 import { RuntimeConfigService } from './core/runtime-config.service';
 
@@ -31,8 +29,8 @@ export const appConfig: ApplicationConfig = {
       multi: true
     },
     // URL routing is handled by AppComponent (history + action router endpoints).
-    // Disable Angular Router initial navigation to avoid NG04002 on /dashboard,/action/*.
-    provideRouter(routes, withDisabledInitialNavigation()),
+    // Angular Router is intentionally not provided: no router-outlet/routerLink exists,
+    // and an active Router with an empty route table throws NG04002 on browser back/forward.
     provideHttpClient(withInterceptorsFromDi()),
     provideAnimationsAsync(),
     provideDesignAngularKit(),
