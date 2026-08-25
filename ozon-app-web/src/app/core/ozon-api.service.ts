@@ -115,8 +115,24 @@ export class OzonApiService {
 
     getRecordSchema(m: string): Promise<unknown> { return this.fetchJson(`/record/${encodeURIComponent(m)}`); }
     getRecord(m: string, r: string): Promise<unknown> { return this.fetchJson(`/record/${encodeURIComponent(m)}/${encodeURIComponent(r)}`); }
+    /**
+     * `owner_uid` is stripped here rather than at each call site: on an ordinary save the backend
+     * ignores it on update and overwrites it with the session uid on insert, so sending it is at
+     * best dead weight. It routinely rides along because the submission data comes straight from
+     * a previous GET - and "duplicate"/"save as new" flows, which restart from a read record,
+     * would otherwise post another user's uid on what is really an insert.
+     */
     updateRecord(m: string, r: string, payload: Record<string, unknown>): Promise<unknown> {
-        return this.fetchJson(`/record/${encodeURIComponent(m)}/${encodeURIComponent(r)}`, { method: 'POST', body: payload });
+        return this.fetchJson(
+            `/record/${encodeURIComponent(m)}/${encodeURIComponent(r)}`,
+            { method: 'POST', body: this.withoutOwnerUid(payload) }
+        );
+    }
+
+    private withoutOwnerUid(payload: Record<string, unknown>): Record<string, unknown> {
+        if (!this.isRecord(payload) || !Object.prototype.hasOwnProperty.call(payload, 'owner_uid')) return payload;
+        const { owner_uid, ...rest } = payload;
+        return rest;
     }
 
     getRemoteSelect(p: RemoteSelectRequestPayload): Promise<unknown> {
@@ -135,8 +151,16 @@ export class OzonApiService {
         return this.fetchJson('/data/fast_search_eval', { method: 'POST', body: payload });
     }
 
-    importData(model: string, payload: ImportRecordPayload): Promise<unknown> {
-        return this.fetchJson(`/import/${encodeURIComponent(String(model).trim())}`, { method: 'POST', body: payload });
+    /**
+     * `take_ownership` MUST travel in the query string: the import body is the record itself and
+     * has no allowlist, so a `take_ownership` key inside the payload would be stored as record
+     * data instead of read as an option. Omitted entirely when false (the endpoint default) so
+     * the plain-import URL stays unchanged.
+     */
+    importData(model: string, payload: ImportRecordPayload, options: { takeOwnership?: boolean } = {}): Promise<unknown> {
+        const path = `/import/${encodeURIComponent(String(model).trim())}`;
+        const query = options.takeOwnership === true ? '?take_ownership=true' : '';
+        return this.fetchJson(`${path}${query}`, { method: 'POST', body: payload, skipUnauthorizedRedirect: true });
     }
 
     importClean(model: string): Promise<unknown> {
@@ -724,11 +748,21 @@ export class OzonApiService {
         setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
     }
 
+    /**
+     * `opt.skipUnauthorizedRedirect` opts a single request out of the global 401/403 ->
+     * `unauthorized$` -> `login()` redirect (AppActionManagerService.initSubscriptions).
+     * Needed where a 403 is a *business* answer the caller must handle rather than an expired
+     * session: the import ownership gate returns 403 when a non-admin imports a record carrying
+     * someone else's `owner_uid`, and bouncing to Keycloak there would both lose the user's
+     * uploaded file and hide the actionable "retry with take_ownership=true" message.
+     */
     private async fetchJson(path: string, opt?: any): Promise<any> {
         const r = await this.fetchRaw(path, opt);
         const t = await r.text();
         if (!r.ok) {
-            if (r.status === 401 || r.status === 403) this.unauthorizedSubject.next();
+            if ((r.status === 401 || r.status === 403) && !opt?.skipUnauthorizedRedirect) {
+                this.unauthorizedSubject.next();
+            }
             throw this.createApiError(r.status, this.parseJsonOrText(t), t);
         }
         return this.normalizeResponsePayload(this.parseJsonOrText(t));

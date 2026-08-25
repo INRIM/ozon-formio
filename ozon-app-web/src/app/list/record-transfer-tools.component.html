@@ -79,6 +79,34 @@
       File: {{ selectedFileName }}
     </div>
 
+    <fieldset class="mt-3" *ngIf="previewRows.length && canKeepOriginalOwner">
+      <legend class="small text-muted mb-1">Autore dei record importati</legend>
+      <label class="form-check d-flex align-items-center gap-2 m-0">
+        <input
+          class="form-check-input mt-0"
+          type="radio"
+          name="ozonImportOwnership"
+          [checked]="!takeOwnership"
+          (change)="setTakeOwnership(false)"
+        />
+        <span class="form-check-label">Mantieni gli autori originali</span>
+      </label>
+      <label class="form-check d-flex align-items-center gap-2 m-0">
+        <input
+          class="form-check-input mt-0"
+          type="radio"
+          name="ozonImportOwnership"
+          [checked]="takeOwnership"
+          (change)="setTakeOwnership(true)"
+        />
+        <span class="form-check-label">Importa a mio nome</span>
+      </label>
+      <div class="small text-muted mt-1">
+        L’autore vale solo per i record nuovi: su un <code>rec_name</code> già esistente l’import è
+        un aggiornamento e l’autore attuale non cambia.
+      </div>
+    </fieldset>
+
     <div class="d-flex flex-wrap align-items-center gap-3 mt-3" *ngIf="previewRows.length">
       <label class="form-check d-flex align-items-center gap-2 m-0">
         <input class="form-check-input mt-0" type="checkbox" [(ngModel)]="deleteBefore" />

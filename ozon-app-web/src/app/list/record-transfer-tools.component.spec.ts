@@ -1,6 +1,13 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { RecordTransferToolsComponent } from './record-transfer-tools.component';
 import { OzonApiService } from '../core/ozon-api.service';
+import { createApiError } from '../core/url.service';
+
+/** Builds the ApiError exactly as OzonApiService.fetchJson does on a 403: the raw response body
+ * is both parsed into `payload` and kept as the Error message, so an unrecognized reason still
+ * surfaces the backend text instead of an empty string. */
+const gateError = (payload: Record<string, unknown>) =>
+  createApiError(403, payload, JSON.stringify(payload));
 
 describe('RecordTransferToolsComponent', () => {
   let fixture: ComponentFixture<RecordTransferToolsComponent>;
@@ -237,11 +244,156 @@ describe('RecordTransferToolsComponent', () => {
       jasmine.objectContaining({
         rec_name: 'row-1',
         qty: 4
-      })
+      }),
+      { takeOwnership: true }
     );
     expect(apiMock.importClean).not.toHaveBeenCalled();
     expect(apiMock.updateRecord).not.toHaveBeenCalled();
     expect(component.panelMessage).toContain('Import completato: 1');
+  });
+
+  it('should default an admin to keeping the original authors', () => {
+    component.isAdmin = true;
+
+    expect(component.takeOwnership).toBeFalse();
+    expect(component.canKeepOriginalOwner).toBeTrue();
+  });
+
+  it('should default a non-admin to importing under their own uid', () => {
+    component.isAdmin = false;
+
+    expect(component.takeOwnership).toBeTrue();
+    expect(component.canKeepOriginalOwner).toBeFalse();
+  });
+
+  it('should forward the payload owner_uid when an admin keeps the original authors', async () => {
+    component.importConfig = {
+      visible: true,
+      model: 'demo.model',
+      title: 'Import Data'
+    };
+    component.isAdmin = true;
+    component.setTakeOwnership(false);
+    component.previewColumns = ['rec_name', 'owner_uid'];
+    component.previewRows = [{ rec_name: 'row-1', owner_uid: 'someone-else' }];
+
+    await component.submitImport();
+
+    expect(apiMock.importData).toHaveBeenCalledWith(
+      'demo.model',
+      jasmine.objectContaining({
+        rec_name: 'row-1',
+        owner_uid: 'someone-else'
+      }),
+      { takeOwnership: false }
+    );
+  });
+
+  it('should strip the payload owner_uid when importing under my own uid', async () => {
+    component.importConfig = {
+      visible: true,
+      model: 'demo.model',
+      title: 'Import Data'
+    };
+    component.isAdmin = true;
+    component.setTakeOwnership(true);
+    component.previewColumns = ['rec_name', 'owner_uid'];
+    component.previewRows = [{ rec_name: 'row-1', owner_uid: 'someone-else' }];
+
+    await component.submitImport();
+
+    const payload = apiMock.importData.calls.mostRecent().args[1] as Record<string, unknown>;
+    expect(payload['owner_uid']).toBeUndefined();
+    expect(apiMock.importData.calls.mostRecent().args[2]).toEqual({ takeOwnership: true } as any);
+  });
+
+  it('should never keep the original owner for a non-admin, whatever the radio says', async () => {
+    component.importConfig = {
+      visible: true,
+      model: 'demo.model',
+      title: 'Import Data'
+    };
+    component.isAdmin = false;
+    component.setTakeOwnership(false);
+    component.previewColumns = ['rec_name', 'owner_uid'];
+    component.previewRows = [{ rec_name: 'row-1', owner_uid: 'someone-else' }];
+
+    await component.submitImport();
+
+    const payload = apiMock.importData.calls.mostRecent().args[1] as Record<string, unknown>;
+    expect(payload['owner_uid']).toBeUndefined();
+    expect(apiMock.importData.calls.mostRecent().args[2]).toEqual({ takeOwnership: true } as any);
+  });
+
+  it('should surface the ownership gate 403 as an actionable retry hint', async () => {
+    component.importConfig = {
+      visible: true,
+      model: 'demo.model',
+      title: 'Import Data'
+    };
+    component.isAdmin = true;
+    component.setTakeOwnership(false);
+    component.previewColumns = ['rec_name', 'owner_uid'];
+    component.previewRows = [{ rec_name: 'row-1', owner_uid: 'someone-else' }];
+    apiMock.importData.and.rejectWith(gateError({
+      detail: {
+        message: 'Importing a record owned by another user requires admin; pass take_ownership=true to import it under your own uid',
+        reason: 'foreign_owner_requires_admin',
+        model: 'demo.model'
+      }
+    }));
+
+    await component.submitImport();
+
+    expect(component.importResultLines.join(' ')).toContain('Importa a mio nome');
+    expect(component.importResultLines.join(' ')).toContain('profilo admin');
+    expect(component.importResultLines.join(' ')).not.toContain('take_ownership=true to import');
+  });
+
+  it('should surface the field-ACL 403 with its own remediation', async () => {
+    component.importConfig = {
+      visible: true,
+      model: 'demo.model',
+      title: 'Import Data'
+    };
+    component.isAdmin = true;
+    component.setTakeOwnership(false);
+    component.previewColumns = ['rec_name', 'owner_uid'];
+    component.previewRows = [{ rec_name: 'row-1', owner_uid: 'someone-else' }];
+    apiMock.importData.and.rejectWith(gateError({
+      detail: {
+        message: 'A field ACL policy denies writing owner_uid on create: the record owner cannot be preserved. Pass take_ownership=true to import it under your own uid, or remove the policy on owner_uid',
+        reason: 'owner_uid_denied_by_field_acl',
+        model: 'demo.model'
+      }
+    }));
+
+    await component.submitImport();
+
+    const lines = component.importResultLines.join(' ');
+    // An admin CAN hit this one - it is a config problem, not a permission problem, so the
+    // remediation names the policy rather than blaming the user's role.
+    expect(lines).toContain('field ACL policy');
+    expect(lines).toContain('Importa a mio nome');
+    expect(lines).not.toContain('profilo admin');
+  });
+
+  it('should not rewrite a 403 whose reason it does not recognize', async () => {
+    component.importConfig = {
+      visible: true,
+      model: 'demo.model',
+      title: 'Import Data'
+    };
+    component.previewColumns = ['rec_name'];
+    component.previewRows = [{ rec_name: 'row-1' }];
+    apiMock.importData.and.rejectWith(gateError({
+      detail: { message: 'Some other refusal', reason: 'something_else', model: 'demo.model' }
+    }));
+
+    await component.submitImport();
+
+    expect(component.importResultLines.join(' ')).toContain('Some other refusal');
+    expect(component.importResultLines.join(' ')).not.toContain('Importa a mio nome');
   });
 
   it('should emit global import lifecycle events even when a row import fails', async () => {
@@ -302,14 +454,16 @@ describe('RecordTransferToolsComponent', () => {
       jasmine.objectContaining({
         rec_name: 'row-1',
         qty: 4
-      })
+      }),
+      { takeOwnership: true }
     ]);
     expect(apiMock.importData.calls.argsFor(1)).toEqual([
       'demo.model',
       jasmine.objectContaining({
         rec_name: 'row-2',
         qty: 5
-      })
+      }),
+      { takeOwnership: true }
     ]);
     expect(component.importRowStatuses).toEqual([
       jasmine.objectContaining({ rowReference: 'row-1', recName: 'row-1', ok: true }),
@@ -397,14 +551,16 @@ describe('RecordTransferToolsComponent', () => {
       jasmine.objectContaining({
         rec_name: 'apps-empty',
         apps: []
-      })
+      }),
+      { takeOwnership: true }
     ]);
     expect(apiMock.importData.calls.argsFor(1)).toEqual([
       'menu_group',
       jasmine.objectContaining({
         rec_name: 'apps-list',
         apps: ['persona', 'core']
-      })
+      }),
+      { takeOwnership: true }
     ]);
     expect(component.panelMessage).toContain('Import completato: 2');
   });
@@ -444,14 +600,16 @@ describe('RecordTransferToolsComponent', () => {
       jasmine.objectContaining({
         rec_name: 'apps-empty-formio',
         apps: []
-      })
+      }),
+      { takeOwnership: true }
     ]);
     expect(apiMock.importData.calls.argsFor(1)).toEqual([
       'menu_group',
       jasmine.objectContaining({
         rec_name: 'apps-list-formio',
         apps: ['persona', 'core']
-      })
+      }),
+      { takeOwnership: true }
     ]);
     expect(component.panelMessage).toContain('Import completato: 2');
   });
@@ -478,7 +636,8 @@ describe('RecordTransferToolsComponent', () => {
         rec_name: 'row-1',
         tags: '',
         authenticate: ''
-      })
+      }),
+      { takeOwnership: true }
     );
     expect(apiMock.updateRecord).not.toHaveBeenCalled();
     expect(component.panelMessage).toContain('Import completato: 1');
@@ -502,7 +661,7 @@ describe('RecordTransferToolsComponent', () => {
       form: {},
       container: document.createElement('div')
     });
-    spyOn<any>(component, 'extractFormioSubmissionData').and.returnValue({
+    spyOn<any>(component, 'extractFormioSubmissionData').and.resolveTo({
       rec_name: 'submit_action',
       user_function: {},
       model: {},
@@ -534,7 +693,8 @@ describe('RecordTransferToolsComponent', () => {
         model: 'resource',
         menu_group: 'Config',
         next_action_name: ''
-      })
+      }),
+      { takeOwnership: true }
     );
     expect(component.panelMessage).toContain('Import completato: 1');
   });
@@ -576,14 +736,16 @@ describe('RecordTransferToolsComponent', () => {
       jasmine.objectContaining({
         rec_name: 'row-empty',
         app_code: ''
-      })
+      }),
+      { takeOwnership: true }
     ]);
     expect(apiMock.importData.calls.argsFor(1)).toEqual([
       'demo.model',
       jasmine.objectContaining({
         rec_name: 'row-single',
         app_code: 'nob-test'
-      })
+      }),
+      { takeOwnership: true }
     ]);
     expect(component.panelMessage).toContain('Import completato: 2');
   });
@@ -625,14 +787,16 @@ describe('RecordTransferToolsComponent', () => {
       jasmine.objectContaining({
         rec_name: 'row-single-json',
         app_code: 'persona'
-      })
+      }),
+      { takeOwnership: true }
     ]);
     expect(apiMock.importData.calls.argsFor(1)).toEqual([
       'menu_group',
       jasmine.objectContaining({
         rec_name: 'row-multi-python',
         app_code: 'persona,core'
-      })
+      }),
+      { takeOwnership: true }
     ]);
     expect(component.panelMessage).toContain('Import completato: 2');
   });
@@ -674,14 +838,16 @@ describe('RecordTransferToolsComponent', () => {
       jasmine.objectContaining({
         rec_name: 'json-single',
         app_code: 'persona'
-      })
+      }),
+      { takeOwnership: true }
     ]);
     expect(apiMock.importData.calls.argsFor(1)).toEqual([
       'menu_group',
       jasmine.objectContaining({
         rec_name: 'json-multi',
         app_code: 'persona,core'
-      })
+      }),
+      { takeOwnership: true }
     ]);
     expect(component.panelMessage).toContain('Import completato: 2');
   });
@@ -736,14 +902,16 @@ describe('RecordTransferToolsComponent', () => {
         jasmine.objectContaining({
           rec_name: 'xls-single',
           app_code: 'persona'
-        })
+        }),
+        { takeOwnership: true }
       ]);
       expect(apiMock.importData.calls.argsFor(1)).toEqual([
         'menu_group',
         jasmine.objectContaining({
           rec_name: 'xls-multi',
           app_code: 'persona,core'
-        })
+        }),
+        { takeOwnership: true }
       ]);
       expect(component.panelMessage).toContain('Import completato: 2');
     } finally {
@@ -788,14 +956,16 @@ describe('RecordTransferToolsComponent', () => {
       jasmine.objectContaining({
         rec_name: 'apps-empty',
         apps: []
-      })
+      }),
+      { takeOwnership: true }
     ]);
     expect(apiMock.importData.calls.argsFor(1)).toEqual([
       'menu_group',
       jasmine.objectContaining({
         rec_name: 'apps-list',
         apps: ['persona', 'core']
-      })
+      }),
+      { takeOwnership: true }
     ]);
     expect(component.panelMessage).toContain('Import completato: 2');
   });
@@ -832,7 +1002,8 @@ describe('RecordTransferToolsComponent', () => {
             input: true
           })
         ]
-      })
+      }),
+      { takeOwnership: true }
     );
     expect(apiMock.updateRecord).not.toHaveBeenCalled();
     expect(component.panelMessage).toContain('Import completato: 1');
@@ -869,7 +1040,8 @@ describe('RecordTransferToolsComponent', () => {
             input: true
           })
         ]
-      })
+      }),
+      { takeOwnership: true }
     );
     expect(apiMock.updateRecord).not.toHaveBeenCalled();
     expect(component.panelMessage).toContain('Import completato: 1');
@@ -915,7 +1087,8 @@ describe('RecordTransferToolsComponent', () => {
             input: true
           })
         ]
-      })
+      }),
+      { takeOwnership: true }
     );
     expect(component.panelMessage).toContain('Import completato: 1');
   });
@@ -961,7 +1134,8 @@ describe('RecordTransferToolsComponent', () => {
             type: 'panel'
           })
         ])
-      })
+      }),
+      { takeOwnership: true }
     );
 
     const importedPayload = apiMock.importData.calls.mostRecent().args[1] as any;
@@ -992,7 +1166,9 @@ describe('RecordTransferToolsComponent', () => {
 
     const importedPayload = apiMock.importData.calls.mostRecent().args[1] as any;
 
-    expect(apiMock.importData).toHaveBeenCalledWith('component', jasmine.any(Object));
+    expect(apiMock.importData).toHaveBeenCalledWith('component', jasmine.any(Object),
+      { takeOwnership: true }
+    );
     expect(Object.keys(importedPayload)).toContain('components');
     expect(Object.keys(importedPayload)).not.toContain('_id');
     expect(Object.keys(importedPayload)).not.toContain('status');
@@ -1125,7 +1301,8 @@ describe('RecordTransferToolsComponent', () => {
         rec_name: 'row-1',
         tags: [],
         authenticate: false
-      })
+      }),
+      { takeOwnership: true }
     );
     expect(apiMock.updateRecord).not.toHaveBeenCalled();
     expect(component.panelMessage).toContain('Import completato: 1');
@@ -1215,7 +1392,8 @@ describe('RecordTransferToolsComponent', () => {
         links: jasmine.objectContaining({
           self: '/form/nullaOstaBandiRequest'
         })
-      })
+      }),
+      { takeOwnership: true }
     );
 
     const importedPayload = apiMock.importData.calls.mostRecent().args[1] as any;
@@ -1327,10 +1505,81 @@ describe('RecordTransferToolsComponent', () => {
       jasmine.objectContaining({
         rec_name: 'broken-component',
         properties: "{'broken': "
-      })
+      }),
+      { takeOwnership: true }
     );
     expect(apiMock.updateRecord).not.toHaveBeenCalled();
     expect(component.panelError).toBeFalse();
     expect(component.panelMessage).toContain('Import completato: 1');
+  });
+  // Regression: assigning `form.submission` settles asynchronously, so reading
+  // `form.submission.data` on the next line yields the component defaults. An
+  // imported checkbox came back false and mergePreparedWithFormioData then
+  // wrote that false over the true from the file. Text fields hid the bug:
+  // isScalarStringField skips them before the merge can touch them.
+  it('keeps imported checkbox values true through formio normalization', async () => {
+    const schema = {
+      components: [
+        { label: 'Todo 1', key: 'todo1', type: 'checkbox', defaultValue: false, input: true },
+        { label: 'Hostname', key: 'hostname', type: 'textfield', input: true }
+      ]
+    };
+    const handle = await (component as any).createFormInstanceForImport(schema);
+    expect(handle).not.toBeNull();
+    try {
+      const data = await (component as any).extractFormioSubmissionData(handle.form, {
+        todo1: true,
+        hostname: 'fracal'
+      });
+      expect(data['todo1']).toBeTrue();
+      expect(data['hostname']).toBe('fracal');
+    } finally {
+      (component as any).destroyFormInstance(handle);
+    }
+  });
+
+  // The merge above used to be a near no-op: formio handed back blanks and
+  // shouldKeepPreparedValue swallowed them, so only non-empty-but-wrong values
+  // (checkbox false, number 0) ever landed. Now that the read-back is real, the
+  // merge applies to every non-string field the schema covers — textfield and
+  // textarea are the only types isScalarStringField skips. This pins down that
+  // the field types which now go through it keep their imported values,
+  // including a select whose remote data source cannot resolve in a detached
+  // form.
+  it('does not mangle select, number or radio values it now actually merges', async () => {
+    const schema = {
+      components: [
+        {
+          label: 'Sector', key: 'owner_sector_id', type: 'number', input: true
+        },
+        {
+          label: 'Classificazione',
+          key: 'classificazione',
+          type: 'select',
+          widget: 'choicesjs',
+          dataSrc: 'url',
+          data: { url: '/models/distinct', headers: [{ key: '', value: '' }] },
+          properties: { id: 'rec_name', label: 'rec_name', model: 'persona' },
+          input: true
+        },
+        { label: 'My dev', key: 'my_dev', type: 'radio', values: [
+          { label: 'Si', value: 'si' }, { label: 'No', value: 'no' }
+        ], input: true }
+      ]
+    };
+    const handle = await (component as any).createFormInstanceForImport(schema);
+    expect(handle).not.toBeNull();
+    try {
+      const data = await (component as any).extractFormioSubmissionData(handle.form, {
+        owner_sector_id: 36,
+        classificazione: 'dipendente',
+        my_dev: 'no'
+      });
+      expect(data['owner_sector_id']).toBe(36);
+      expect(data['classificazione']).toBe('dipendente');
+      expect(data['my_dev']).toBe('no');
+    } finally {
+      (component as any).destroyFormInstance(handle);
+    }
   });
 });

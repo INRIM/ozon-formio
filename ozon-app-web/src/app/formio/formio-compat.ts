@@ -4,6 +4,7 @@ import Quill from 'quill';
 import { ozonFileTemplate } from './ozon-file-template';
 import { installOzonJsonEditorFormioComponent } from './ozon-json-editor-formio';
 import { installOzonDataTableFormioComponent } from './ozon-data-table-formio';
+import { installOzonInputmaskCompat } from './ozon-inputmask-compat';
 
 /**
  * Form.io ships builder edit-form callbacks in both modern context-object form
@@ -60,6 +61,9 @@ let installed = false;
 
 export function installFormioCompatibility(): void {
   if (installed) return;
+  // Must land before the first form renders or validates — main.ts calls this
+  // ahead of bootstrapApplication, so nothing has created a form yet.
+  installOzonInputmaskCompat();
   const evaluator = new LegacyCompatibleFormioEvaluator();
   registerCoreEvaluator(evaluator);
   Formio.use({ evaluator });

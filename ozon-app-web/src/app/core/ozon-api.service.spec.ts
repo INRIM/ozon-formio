@@ -126,6 +126,65 @@ describe('OzonApiService', () => {
     });
   });
 
+  it('should carry take_ownership in the query string, never in the import body', async () => {
+    const fetchSpy = spyOn(globalThis, 'fetch').and.resolveTo(jsonResponse({ status: 'ok', rec_name: 'row-1' }));
+
+    await service.importData('demo.model', { rec_name: 'row-1' }, { takeOwnership: true });
+
+    expect(fetchSpy.calls.mostRecent().args[0]).toBe('/api/import/demo.model?take_ownership=true');
+    // The import body is the record itself and has no allowlist: a take_ownership key in there
+    // would be stored as record data instead of read as an option.
+    expect(JSON.parse((fetchSpy.calls.mostRecent().args[1] as RequestInit).body as string)).toEqual({
+      rec_name: 'row-1'
+    });
+  });
+
+  it('should omit take_ownership when importing under the endpoint default', async () => {
+    const fetchSpy = spyOn(globalThis, 'fetch').and.resolveTo(jsonResponse({ status: 'ok', rec_name: 'row-1' }));
+
+    await service.importData('demo.model', { rec_name: 'row-1' }, { takeOwnership: false });
+
+    expect(fetchSpy.calls.mostRecent().args[0]).toBe('/api/import/demo.model');
+  });
+
+  it('should not trigger the login redirect when the import ownership gate answers 403', async () => {
+    spyOn(globalThis, 'fetch').and.resolveTo(new Response(
+      JSON.stringify({ detail: { message: 'requires admin; pass take_ownership=true', model: 'component' } }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } }
+    ));
+    let redirected = false;
+    service.unauthorized$.subscribe(() => { redirected = true; });
+
+    await expectAsync(service.importData('demo.model', { rec_name: 'row-1', owner_uid: 'someone-else' }))
+      .toBeRejected();
+
+    expect(redirected).toBeFalse();
+  });
+
+  it('should still trigger the login redirect on a 403 outside the import gate', async () => {
+    // Paired with the import test above: proves the opt-out is per-request, not global.
+    spyOn(globalThis, 'fetch').and.resolveTo(new Response('{"detail":"forbidden"}', {
+      status: 403, headers: { 'Content-Type': 'application/json' }
+    }));
+    let redirected = false;
+    service.unauthorized$.subscribe(() => { redirected = true; });
+
+    await expectAsync(service.updateRecord('demo.model', 'row-1', { rec_name: 'row-1' })).toBeRejected();
+
+    expect(redirected).toBeTrue();
+  });
+
+  it('should strip owner_uid from ordinary record saves', async () => {
+    const fetchSpy = spyOn(globalThis, 'fetch').and.resolveTo(jsonResponse({ status: 'ok' }));
+
+    await service.updateRecord('demo.model', 'row-1', { rec_name: 'row-1', owner_uid: 'someone-else', qty: 4 });
+
+    expect(JSON.parse((fetchSpy.calls.mostRecent().args[1] as RequestInit).body as string)).toEqual({
+      rec_name: 'row-1',
+      qty: 4
+    });
+  });
+
   it('should post import clean requests to the backend api', async () => {
     const fetchSpy = spyOn(globalThis, 'fetch').and.resolveTo(jsonResponse({ status: 'ok', model: 'demo.model' }));
 

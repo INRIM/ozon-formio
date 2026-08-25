@@ -727,7 +727,7 @@ function createBuiltinBuilderConfig(): Record<string, unknown> {
                 key: 'btn_admin_todo',
                 properties: {
                   btn_action_type: 'post',
-                  url_action: '/action/_model/supervised_todo',
+                  url_action: '/step/',
                   leftIcon: 'it-check-circle'
                 },
                 logic: [
@@ -741,23 +741,7 @@ function createBuiltinBuilderConfig(): Record<string, unknown> {
                       {
                         name: 'set visible',
                         type: 'value',
-                        value: 'hidden={"!":[{"and":[{"var":["form.todo", false]},{"var":["is_admin", false]}]}]}'
-                      }
-                    ]
-                  },
-                  {
-                    name: 'eval url',
-                    trigger: {
-                      type: 'json',
-                      json: {
-                        cat: ['/action/', { var: 'app.curr_model' }, '_supervised_todo', '/', { var: 'form.rec_name' }]
-                      }
-                    },
-                    actions: [
-                      {
-                        name: 'set value',
-                        type: 'value',
-                        value: 'value = result;'
+                        value: 'hidden={"!":[{"and":[{"var":["data.todo", false]},{"var":["is_admin", false]}]}]}'
                       }
                     ]
                   }
@@ -771,91 +755,7 @@ function createBuiltinBuilderConfig(): Record<string, unknown> {
                 label: 'Todo',
                 hidden: true,
                 tableView: false,
-                defaultValue: false,
-                calculateValue: 'eval_data',
-                calculateServer: true,
-                key: 'todo',
-                type: 'checkbox',
-                input: true
-              }
-            ]
-          }
-        },
-        user_todo: {
-          title: 'Todo User',
-          group: 'advanced',
-          icon: 'list-ul',
-          schema: {
-            legend: 'User Todo',
-            key: 'user_todo',
-            properties: {
-              rec_name: 'user_todo',
-              action_type: 'task',
-              type: 'data',
-              mode: 'form'
-            },
-            type: 'fieldset',
-            label: 'User Todo',
-            input: false,
-            tableView: false,
-            components: [
-              {
-                label: 'Fatto',
-                showValidations: false,
-                theme: 'warning',
-                block: true,
-                customClass: 'btn-outline-primary',
-                tableView: false,
-                key: 'btn_user_todo',
-                properties: {
-                  btn_action_type: 'post',
-                  url_action: '/action/model/submit_test_todo',
-                  leftIcon: 'it-check-circle'
-                },
-                logic: [
-                  {
-                    name: 'check',
-                    trigger: {
-                      type: 'json',
-                      json: { '==': [1, 1] }
-                    },
-                    actions: [
-                      {
-                        name: 'set visible',
-                        type: 'value',
-                        value: 'hidden={"!":{"var":["form.todo", false]}}'
-                      }
-                    ]
-                  },
-                  {
-                    name: 'eval url',
-                    trigger: {
-                      type: 'json',
-                      json: {
-                        cat: ['/action/', { var: 'app.curr_model' }, '_user_todo', '/', { var: 'form.rec_name' }]
-                      }
-                    },
-                    actions: [
-                      {
-                        name: 'set value',
-                        type: 'value',
-                        value: 'value = result;'
-                      }
-                    ]
-                  }
-                ],
-                type: 'button',
-                input: true,
-                hideOnChildrenHidden: false,
-                saveOnEnter: false
-              },
-              {
-                label: 'Todo',
-                hidden: true,
-                tableView: false,
-                defaultValue: false,
-                calculateValue: 'eval_user_todo',
-                calculateServer: true,
+                defaultValue: true,
                 key: 'todo',
                 type: 'checkbox',
                 input: true

@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { Formio } from '@formio/js';
 import { eachComponent as formioEachComponent } from '@formio/js/utils';
 import { OzonApiService } from '../core/ozon-api.service';
+import { ApiError } from '../core/url.service';
 import {
     ExportFileType,
     ImportPreviewRow,
@@ -267,12 +268,23 @@ class PythonLiteralParser {
 export class RecordTransferToolsComponent {
     @Input() exportConfig: ListExportConfig | null = null;
     @Input() importConfig: ListImportConfig | null = null;
+    private _isAdmin = false;
+    @Input() set isAdmin(value: boolean) {
+        this._isAdmin = Boolean(value);
+        // Directive default: admins land on "keep the original authors", everyone else on
+        // "import under my name" - the only option the backend will accept for them.
+        this.takeOwnership = !this._isAdmin;
+    }
+    get isAdmin(): boolean { return this._isAdmin; }
     @Input() searchContext: ListSearchSessionContext | null = null;
     @Output() importBusyChange = new EventEmitter<boolean>();
     @Output() importFinished = new EventEmitter<void>();
 
+    /** `owner_uid` is deliberately NOT here: it is stripped conditionally in `prepareImportRow`,
+     * because preserving it is exactly what `take_ownership=false` means. Every other `owner_*`
+     * field stays unconditionally stripped - the backend derives them from the uid it resolves. */
     private readonly importMetadataKeys = new Set([
-        '_id', 'id', 'owner_uid', 'owner_name', 'owner_sector', 'owner_sector_id',
+        '_id', 'id', 'owner_name', 'owner_sector', 'owner_sector_id',
         'owner_function', 'update_datetime', 'create_datetime', 'owner_mail',
         'update_uid', 'owner_function_type', 'demo', 'deleted', 'list_order',
         'owner_personal_type', 'owner_job_title', 'childs', '__sourceRow',
@@ -286,6 +298,8 @@ export class RecordTransferToolsComponent {
     ]);
 
     importPanelOpen = false;
+    /** false = keep the payload's original owner_uid (admin only); true = import under my uid. */
+    takeOwnership = true;
     exportBusy = false;
     templateBusy = false;
     importBusy = false;
@@ -311,6 +325,24 @@ export class RecordTransferToolsComponent {
 
     get hasImport(): boolean {
         return Boolean(this.importConfig?.visible && this.importConfig.model);
+    }
+
+    /** Importing while keeping the payload's original owner_uid assigns visibility and, through
+     * the `$owner` write sentinel, write permissions to another user - so the backend gates it on
+     * admin and answers 403 otherwise. Hiding the option for non-admins keeps that 403 an edge
+     * case (tampered payload, expired session) instead of the normal flow. */
+    get canKeepOriginalOwner(): boolean {
+        return this.isAdmin;
+    }
+
+    setTakeOwnership(value: boolean): void {
+        this.takeOwnership = value || !this.canKeepOriginalOwner;
+    }
+
+    /** The flag actually sent: a non-admin can never keep the original owner, whatever the
+     * radio state is (it is hidden for them, but the guard keeps the payload honest). */
+    private get effectiveTakeOwnership(): boolean {
+        return this.takeOwnership || !this.canKeepOriginalOwner;
     }
 
     get previewRowsVisible(): ImportPreviewRow[] {
@@ -392,7 +424,7 @@ export class RecordTransferToolsComponent {
                     // Formio submission normalization: override manually-coerced values with
                     // formio-typed values for fields the form schema knows about.
                     if (formHandle) {
-                        const formioData = this.extractFormioSubmissionData(formHandle.form, prepared);
+                        const formioData = await this.extractFormioSubmissionData(formHandle.form, prepared);
                         this.mergePreparedWithFormioData(prepared, formioData, fieldMap);
                         // Re-serialize any dict/array that formio parsed but the backend field expects as string.
                         for (const [key, value] of Object.entries(prepared)) {
@@ -445,7 +477,9 @@ export class RecordTransferToolsComponent {
                 }
 
                 try {
-                    const response = await this.api.importData(importModel, row.prepared);
+                    const response = await this.api.importData(
+                        importModel, row.prepared, { takeOwnership: this.effectiveTakeOwnership }
+                    );
                     const importResult = this.normalizeImportResponse(response);
                     const rowError = importResult.failed
                         ? (importResult.message || importResult.errorLines[0] || 'Import fallito.')
@@ -836,6 +870,9 @@ export class RecordTransferToolsComponent {
         Object.entries(row).forEach(([key, value]) => {
             const normalizedKey = String(key ?? '').trim();
             if (!normalizedKey || this.importMetadataKeys.has(normalizedKey)) return;
+            // Only worth sending when we are asking the backend to preserve it; under
+            // take_ownership=true it would be overwritten with the importing user's uid anyway.
+            if (normalizedKey === 'owner_uid' && this.effectiveTakeOwnership) return;
             const definition = fieldMap.get(normalizedKey);
             const structured = this.coerceStructuredFieldValue(normalizedKey, value, model);
             if (structured.handled) {
@@ -1070,12 +1107,21 @@ export class RecordTransferToolsComponent {
         handle.container.remove();
     }
 
-    private extractFormioSubmissionData(
+    /**
+     * Assigning `form.submission` settles asynchronously, so reading the data
+     * back on the next line returns the component defaults rather than the row
+     * — a checkbox imported as `true` came back `false`, and
+     * `mergePreparedWithFormioData` then wrote that `false` over the prepared
+     * row. Awaiting `setSubmission` is what guarantees the value has reached
+     * the components. Text fields masked the bug: `isScalarStringField` skips
+     * them before the merge can overwrite anything.
+     */
+    private async extractFormioSubmissionData(
         form: any,
         row: Record<string, unknown>
-    ): Record<string, unknown> {
+    ): Promise<Record<string, unknown>> {
         try {
-            form.submission = { data: { ...row } };
+            await form.setSubmission({ data: { ...row } });
             const data = form.submission?.data;
             return this.isRecord(data) ? { ...data as Record<string, unknown> } : {};
         } catch {
@@ -1580,7 +1626,37 @@ export class RecordTransferToolsComponent {
     }
 
     private errorMessage(error: unknown): string {
-        return error instanceof Error ? error.message : String(error);
+        return this.ownershipGateMessage(error) || (error instanceof Error ? error.message : String(error));
+    }
+
+    /**
+     * The import ownership gate answers 403 when the payload carries someone else's `owner_uid`
+     * and the importing user is not admin. Raw, its `detail.message` is an English backend string;
+     * the actionable answer is to re-run the import under one's own uid, so say that instead.
+     * Reached only as an edge case (tampered file, session downgraded between load and submit) -
+     * the panel hides the "keep original authors" option for non-admins.
+     */
+    private ownershipGateMessage(error: unknown): string {
+        if (!(error instanceof ApiError) || error.status !== 403) return '';
+        const payload = this.isRecord(error.payload) ? error.payload : null;
+        const detail = payload && this.isRecord(payload['detail']) ? payload['detail'] : null;
+        // Discriminate on `reason`, never on the message text: the import answers 403 for two
+        // distinct causes whose remediation differs, and the messages are English backend prose
+        // free to change.
+        switch (String(detail?.['reason'] ?? '')) {
+            case 'foreign_owner_requires_admin':
+                return 'Il record appartiene a un altro utente: serve un profilo admin per '
+                    + 'conservarne l\'autore. Ripeti l\'import con "Importa a mio nome" per '
+                    + 'intestarlo a te.';
+            case 'owner_uid_denied_by_field_acl':
+                // The backend raises instead of silently falling back to "owner = importer":
+                // that would reassign ownership behind the user's back, skipping the admin gate.
+                return 'Una field ACL policy vieta di scrivere owner_uid in creazione, quindi '
+                    + 'l\'autore originale non e\' conservabile. Ripeti l\'import con "Importa a '
+                    + 'mio nome", oppure fai rimuovere la policy su owner_uid.';
+            default:
+                return '';
+        }
     }
 
     private buildTimestamp(date = new Date()): string {

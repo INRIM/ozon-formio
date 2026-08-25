@@ -839,24 +839,41 @@ export class AppActionManagerService {
                 return;
             }
             const response = await this.api.updateRecord(selectedModel, recName, payload);
-            try {
-                const submission = this.renderer.extractSubmission(response);
-                if (submission) this.renderer.formSubmission = submission;
-            } catch { /* schema may not be in update response, keep existing submission */ }
-            this.tableManager.selectedRecordName = recName;
-            this.rebuildMenus();
-            this.appManager.clearFormNotifications();
-            this.setStatus(`Record salvato: ${recName}`, false);
-            if (this.builder.formEditorDesignContext && this.currentFormOriginPath) {
-                await this.navigateToPath(this.currentFormOriginPath, true);
-                return;
-            }
-            if (this.currentFormSubmitNextActionPath) { await this.navigateToPath(this.currentFormSubmitNextActionPath, true); return; }
-            if (!this.builder.formEditorDesignContext) {
-                const actionName = this.resolveCurrentActionName();
-                if (actionName) await this.runNextActionRoute([actionName, recName]);
-            }
+            await this.applyRecordWriteTail(response, recName, `Record salvato: ${recName}`);
         } catch (error) { this.setStatus(this.errorMessage(error), true); }
+    }
+
+    /**
+     * Coda condivisa di una scrittura andata a buon fine sul record corrente:
+     * rinfresca la submission dalla risposta, riallinea i menu, poi risolve la
+     * destinazione successiva — `currentFormSubmitNextActionPath` se il form ne
+     * dichiara una, altrimenti la next_action dell'action corrente.
+     *
+     * La usano sia il salvataggio normale sia il completamento di uno step
+     * supervisionato (`POST /step/{model}/{name}`): lo step scrive il record
+     * passando da `Service.upsert` esattamente come il salvataggio, quindi deve
+     * finire dove finisce il salvataggio. Prima lo step cadeva in
+     * `applyInvokedActionResponse` -> `applyActionResponse` (mode="form") e si
+     * limitava a ri-renderizzare il form.
+     */
+    private async applyRecordWriteTail(response: unknown, recName: string, statusMessage: string): Promise<void> {
+        try {
+            const submission = this.renderer.extractSubmission(response);
+            if (submission) this.renderer.formSubmission = submission;
+        } catch { /* schema may not be in update response, keep existing submission */ }
+        this.tableManager.selectedRecordName = recName;
+        this.rebuildMenus();
+        this.appManager.clearFormNotifications();
+        this.setStatus(statusMessage, false);
+        if (this.builder.formEditorDesignContext && this.currentFormOriginPath) {
+            await this.navigateToPath(this.currentFormOriginPath, true);
+            return;
+        }
+        if (this.currentFormSubmitNextActionPath) { await this.navigateToPath(this.currentFormSubmitNextActionPath, true); return; }
+        if (!this.builder.formEditorDesignContext) {
+            const actionName = this.resolveCurrentActionName();
+            if (actionName) await this.runNextActionRoute([actionName, recName]);
+        }
     }
 
     async onCopyRow(row: { __rec_name: unknown; __rowid: unknown }, event: Event): Promise<void> {
@@ -1795,8 +1812,24 @@ export class AppActionManagerService {
                 this.setStatus(`Azione "${button.label}" eseguita`, false);
                 return;
             }
+            // Uno step supervisionato scrive il record come il salvataggio
+            // normale e deve finire dove finisce il salvataggio, non
+            // ri-renderizzare il form: stessa coda, stessa next_action.
+            if (this.isStepActionPath(actionPath)) {
+                if (!this.isCurrentPageContext(pageContextId)) return;
+                const obj = requireResponseObject(response);
+                if (obj.fail) { this.setStatus(obj.message || 'Errore', true); return; }
+                const stepRecName = this.getActiveRecName()
+                    || this.readFirstString(obj.content.rec_name, payload['rec_name']);
+                await this.applyRecordWriteTail(response, stepRecName, `Azione "${button.label}" eseguita`);
+                return;
+            }
             await this.applyInvokedActionResponse(response, button.next_action_path, pageContextId);
         } catch (error) { this.setStatus(this.errorMessage(error), true); }
+    }
+
+    private isStepActionPath(actionPath: string): boolean {
+        return this.normalizeActionUrl(actionPath).startsWith('/step/');
     }
 
     private tryResponseObject(payload: unknown): ResponseObject | null {

@@ -1646,6 +1646,88 @@ describe('AppComponent', () => {
     expect(app.formSubmission.data.delete_cascade).toEqual([]);
   });
 
+  it('should run the same post-save tail after a supervised step completes', async () => {
+    // Il bottone "Fatto" di supervised_todo scrive il record passando da
+    // Service.upsert come il salvataggio: deve finire dove finisce il
+    // salvataggio (next_action dell'action corrente), non ri-renderizzare
+    // il form.
+    apiMock.postActionPath.and.resolveTo(makeResponse({
+      mode: 'form',
+      model: 'ipa_request',
+      rec_name: 'REQ-1',
+      data: { rec_name: 'REQ-1', todo: false }
+    }));
+    apiMock.getNextAction.and.resolveTo(makeResponse({
+      mode: 'redirect',
+      next_action_url: '/action/list_ipa_request'
+    }));
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.appManager.selectedModel = 'ipa_request';
+    app.actionManager.currentActionName = 'form_form_ipa_request';
+    app.renderer.formSubmission = { data: { rec_name: 'REQ-1', todo: true } };
+
+    await app.onFormCustomEvent({
+      type: 'ozonInlineAction',
+      component: {
+        type: 'button',
+        key: 'btn_admin_todo',
+        label: 'Fatto',
+        showValidations: false,
+        properties: {
+          btn_action_type: 'post',
+          url_action: '/step/ipa_request/supervised_todo_dhcp'
+        }
+      },
+      data: { rec_name: 'REQ-1', todo: true }
+    });
+
+    expect(apiMock.postActionPath).toHaveBeenCalledWith(
+      '/step/ipa_request/supervised_todo_dhcp',
+      jasmine.objectContaining({ rec_name: 'REQ-1' })
+    );
+    expect(apiMock.getNextAction).toHaveBeenCalledWith('form_form_ipa_request', 'REQ-1');
+  });
+
+  it('should honour the form submit_next_action after a supervised step instead of next_action', async () => {
+    // Parita' col salvataggio anche sull'altro ramo della coda: se il form
+    // dichiara una submit_next_action quella vince, e next_action non viene
+    // nemmeno interrogata.
+    apiMock.postActionPath.and.resolveTo(makeResponse({
+      mode: 'form',
+      model: 'ipa_request',
+      rec_name: 'REQ-1',
+      data: { rec_name: 'REQ-1', todo: false }
+    }));
+
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+    app.appManager.selectedModel = 'ipa_request';
+    app.actionManager.currentActionName = 'form_form_ipa_request';
+    app.actionManager.currentFormSubmitNextActionPath = '/action/list_ipa_request';
+    app.renderer.formSubmission = { data: { rec_name: 'REQ-1', todo: true } };
+    const navigateSpy = spyOn(app.actionManager as any, 'navigateToPath').and.resolveTo();
+
+    await app.onFormCustomEvent({
+      type: 'ozonInlineAction',
+      component: {
+        type: 'button',
+        key: 'btn_admin_todo',
+        label: 'Fatto',
+        showValidations: false,
+        properties: {
+          btn_action_type: 'post',
+          url_action: '/step/ipa_request/supervised_todo_dhcp'
+        }
+      },
+      data: { rec_name: 'REQ-1', todo: true }
+    });
+
+    expect(navigateSpy).toHaveBeenCalledWith('/action/list_ipa_request', true);
+    expect(apiMock.getNextAction).not.toHaveBeenCalled();
+  });
+
   it('should block post actions when Formio validation returns required-field errors', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
