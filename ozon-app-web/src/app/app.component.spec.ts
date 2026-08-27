@@ -1848,6 +1848,48 @@ describe('AppComponent', () => {
     });
   });
 
+  it('should render payload obfucated_fields empty and readonly', async () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const app = fixture.componentInstance as any;
+
+    await app.actionManager.applyActionResponse(makeResponse({
+      mode: 'form',
+      model: 'modulo_dati_persona',
+      rec_name: 'PERSONA-1',
+      editable: true,
+      can_create: true,
+      obfucated_fields: ['field_1', 'field_2'],
+      data: {
+        rec_name: 'PERSONA-1',
+        field_1: 'secret 1',
+        field_2: 'secret 2',
+        visible: 'visible value'
+      },
+      schema: {
+        display: 'form',
+        components: [
+          { type: 'textfield', key: 'field_1', input: true },
+          {
+            type: 'panel',
+            key: 'nested',
+            components: [{ type: 'textfield', key: 'field_2', input: true }]
+          },
+          { type: 'textfield', key: 'visible', input: true }
+        ]
+      }
+    }));
+
+    const components = app.formSchema.components as Array<Record<string, any>>;
+    expect(app.formSubmission.data).toEqual(jasmine.objectContaining({
+      field_1: '',
+      field_2: '',
+      visible: 'visible value'
+    }));
+    expect(components[0]).toEqual(jasmine.objectContaining({ disabled: true, readOnly: true, defaultValue: '' }));
+    expect(components[1]['components'][0]).toEqual(jasmine.objectContaining({ disabled: true, readOnly: true, defaultValue: '' }));
+    expect(components[2]['disabled']).toBeUndefined();
+  });
+
   it('should prefer the origin action over abandon_action for Abbandona', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;

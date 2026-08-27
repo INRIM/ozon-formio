@@ -121,7 +121,7 @@ Relevant fields:
 | `context_actions` | Context actions defined by the backend. |
 | `editable` and `can_create` | Permissions controlling writes and read-only mode. |
 | `editable_fields` | Informational list of editable fields returned by the backend. |
-| `obfucated_fields` | List of obfuscated fields returned by the backend. |
+| `obfucated_fields` | Fields rendered empty and read-only; received values are also removed from the frontend submission. Nested Form.io components are supported. |
 
 ## Lists
 
@@ -402,4 +402,3 @@ During development, `ng serve` uses `proxy.conf.json`. In the Docker image, the 
 - [Action Router, layout, and menu integration](ACTION_ROUTER_LAYOUT_MENU.md)
 - [Remote select contract](REMOTE_SELECT_REQUEST.md)
 - [Frontend README](../README.md)
-

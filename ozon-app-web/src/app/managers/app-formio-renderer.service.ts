@@ -192,14 +192,22 @@ export class AppFormioRendererService {
     }
 
     /** Sync-only: clone + normalize schema, apply inline/custom selects. Remote selects get empty options. */
-    prepareSchemaForRender(schema: Record<string, unknown>, sub: Record<string, unknown> | null): Record<string, unknown> {
+    prepareSchemaForRender(
+        schema: Record<string, unknown>,
+        sub: Record<string, unknown> | null,
+        obfuscatedFields: unknown = []
+    ): Record<string, unknown> {
         const hydrated = this.cloneSchema(schema);
+        this.applyObfuscatedFieldRestrictions(hydrated, sub, obfuscatedFields);
         const formKey = String(hydrated['key'] || hydrated['name'] || hydrated['path'] || this.selectedModel || '').trim();
         this.normalizeFormTableComponents(hydrated);
         this.normalizeFormWysiwygComponents(hydrated, sub);
         this.normalizeFormContentComponents(hydrated);
         this.normalizeInteractiveSchemaComponents(hydrated);
         this.normalizeFormJsonEditorComponents(hydrated);
+        // Some component normalizers can seed values from authored defaults. Re-apply the
+        // restriction after normalization so an obfuscated field stays empty for the whole render.
+        this.applyObfuscatedFieldRestrictions(hydrated, sub, obfuscatedFields);
         this.stripClobberingDefaultsForSavedValues(hydrated, sub);
 
         for (const comp of this.findSelectComponents(hydrated)) {
@@ -225,6 +233,54 @@ export class AppFormioRendererService {
             this.ensureSelectTemplate(comp);
         }
         return hydrated;
+    }
+
+    private applyObfuscatedFieldRestrictions(
+        schema: Record<string, unknown>,
+        submission: Record<string, unknown> | null,
+        rawFields: unknown
+    ): void {
+        const fields = Array.isArray(rawFields)
+            ? rawFields.map(field => String(field ?? '').trim()).filter(Boolean)
+            : [];
+        if (!fields.length) return;
+
+        if (submission) {
+            for (const field of fields) {
+                this.clearSubmissionField(submission, field);
+                const nestedData = this.asRecord(submission['data']);
+                if (nestedData) this.clearSubmissionField(nestedData, field);
+            }
+        }
+
+        const fieldSet = new Set(fields);
+        if (!Array.isArray(schema['components'])) return;
+        formioEachComponent(schema['components'] as any[], (component: Record<string, unknown>) => {
+            if (!this.isRecord(component)) return false;
+            const key = String(component['key'] ?? '').trim();
+            const path = String(component['path'] ?? '').trim();
+            if (!fieldSet.has(key) && !fieldSet.has(path)) return false;
+            component['disabled'] = true;
+            component['readOnly'] = true;
+            component['defaultValue'] = '';
+            delete component['customDefaultValue'];
+            delete component['calculateValue'];
+            return false;
+        }, true);
+    }
+
+    private clearSubmissionField(submission: Record<string, unknown>, field: string): void {
+        if (Object.prototype.hasOwnProperty.call(submission, field)) submission[field] = '';
+        const segments = field.split('.').map(segment => segment.trim()).filter(Boolean);
+        if (!segments.length || segments.some(segment => UNSAFE_PATH_SEGMENTS.has(segment))) return;
+        let current: Record<string, unknown> = submission;
+        for (const segment of segments.slice(0, -1)) {
+            const next = this.asRecord(current[segment]);
+            if (!next) return;
+            current = next;
+        }
+        const leaf = segments[segments.length - 1];
+        if (Object.prototype.hasOwnProperty.call(current, leaf)) current[leaf] = '';
     }
 
     /** Sync-only: normalize a fast-actions schema so button components behave like inline actions. */

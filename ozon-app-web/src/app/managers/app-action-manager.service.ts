@@ -348,7 +348,7 @@ export class AppActionManagerService {
             this.currentFormSubmitActionPath = '';
             this.currentFormSubmitNextActionPath = '';
             this.renderer.beginFormViewerLoad();
-            this.renderer.formSchema = this.renderer.prepareSchemaForRender(schema, null);
+            this.renderer.formSchema = this.renderer.prepareSchemaForRender(schema, null, obj.content.obfucated_fields);
             await this.tableManager.refreshTableCellRenderers(this.tableManager.allRows);
             this.rebuildMenus();
             this.setStatus(`Schema caricato: ${selectedModel}`, false);
@@ -501,7 +501,9 @@ export class AppActionManagerService {
             this.currentFormSubmitNextActionPath = '';
             const submissionData = this.isRecord(submission.data) ? submission.data : null;
             this.renderer.beginFormViewerLoad();
-            this.renderer.formSchema = this.renderer.prepareSchemaForRender(schema as Record<string, unknown>, submissionData);
+            this.renderer.formSchema = this.renderer.prepareSchemaForRender(
+                schema as Record<string, unknown>, submissionData, recordObj.content.obfucated_fields
+            );
             if (!this.isCurrentPageContext(pageContextId)) return;
             this.renderer.seedSubmissionDefaultsIntoSchema(this.renderer.formSchema, submission.data);
             this.renderer.formSubmission = submission;
@@ -577,7 +579,9 @@ export class AppActionManagerService {
         }
         if (!schema) throw new Error(`Schema non trovato per "${model}"`);
         const normalizedData = this.renderer.normalizeFormSubmissionData(data, schema);
-        const renderSchema = this.renderer.prepareSchemaForRender(this.cloneSchema(schema), normalizedData);
+        const renderSchema = this.renderer.prepareSchemaForRender(
+            this.cloneSchema(schema), normalizedData, content.obfucated_fields
+        );
         this.renderer.seedSubmissionDefaultsIntoSchema(renderSchema, normalizedData);
         const submitActionPath = this.resolveSubmitActionFromFields(content.fields);
         const title = this.readFirstString(content.title, model);
@@ -2427,7 +2431,9 @@ export class AppActionManagerService {
             normalizedData['title'] = '';
             normalizedData['rec_name'] = '';
         }
-        const renderSchema = this.renderer.prepareSchemaForRender(this.cloneSchema(schema), normalizedData);
+        const renderSchema = this.renderer.prepareSchemaForRender(
+            this.cloneSchema(schema), normalizedData, content.obfucated_fields
+        );
         this.renderer.formSchema = renderSchema;
         if (!this.isCurrentPageContext(pageContextId)) { this.renderer.cancelFormViewerLoad(); return; }
         this.renderer.seedSubmissionDefaultsIntoSchema(renderSchema, normalizedData);

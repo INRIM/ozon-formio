@@ -49,6 +49,52 @@ describe('AppFormioRendererService', () => {
     expect(String(select['customClass'] ?? '')).toContain('ozon-select-readonly');
   });
 
+  it('should clear and disable obfuscated fields, including nested components and data wrappers', () => {
+    const schema = {
+      components: [
+        {
+          type: 'panel',
+          key: 'personal_data',
+          components: [
+            {
+              type: 'textfield',
+              key: 'field_1',
+              input: true,
+              defaultValue: 'schema secret',
+              customDefaultValue: 'value = "computed secret"',
+              calculateValue: 'value = "calculated secret"'
+            },
+            { type: 'select', key: 'field_2', input: true }
+          ]
+        }
+      ]
+    };
+    const submission: Record<string, unknown> = {
+      field_1: 'top-level secret 1',
+      field_2: 'top-level secret 2',
+      visible: 'allowed',
+      data: {
+        field_1: 'nested secret 1',
+        field_2: 'nested secret 2'
+      }
+    };
+
+    const prepared = service.prepareSchemaForRender(schema, submission, ['field_1', 'field_2']);
+    const panel = (prepared['components'] as Array<Record<string, unknown>>)[0];
+    const [field1, field2] = panel['components'] as Array<Record<string, unknown>>;
+
+    expect(submission['field_1']).toBe('');
+    expect(submission['field_2']).toBe('');
+    expect(submission['visible']).toBe('allowed');
+    expect(submission['data']).toEqual({ field_1: '', field_2: '' });
+    expect(field1).toEqual(jasmine.objectContaining({ disabled: true, readOnly: true, defaultValue: '' }));
+    expect(field1['customDefaultValue']).toBeUndefined();
+    expect(field1['calculateValue']).toBeUndefined();
+    expect(field2).toEqual(jasmine.objectContaining({ disabled: true, readOnly: true, defaultValue: '' }));
+    expect(String(field2['customClass'] ?? '')).toContain('ozon-select-readonly');
+    expect((schema.components[0].components[0] as Record<string, unknown>)['disabled']).toBeUndefined();
+  });
+
   it('should normalize datetime components for calendar and keyboard input', () => {
     const schema = {
       components: [

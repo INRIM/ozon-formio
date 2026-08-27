@@ -121,7 +121,7 @@ Campi rilevanti:
 | `context_actions` | Azioni contestuali definite dal backend. |
 | `editable` e `can_create` | Permessi che governano scrittura e readonly. |
 | `editable_fields` | Elenco informativo dei campi modificabili restituito dal backend. |
-| `obfucated_fields` | Elenco dei campi offuscati restituito dal backend. |
+| `obfucated_fields` | Campi da mostrare vuoti e readonly; il valore ricevuto viene rimosso anche dalla submission frontend. Sono supportati componenti Form.io annidati. |
 
 ## Liste
 
@@ -402,4 +402,3 @@ In sviluppo `ng serve` usa `proxy.conf.json`. Nell'immagine Docker l'app viene c
 - [Integrazione Action Router, layout e menu](ACTION_ROUTER_LAYOUT_MENU.md)
 - [Contratto remote select](REMOTE_SELECT_REQUEST.md)
 - [README del frontend](../README.md)
-
