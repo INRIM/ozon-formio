@@ -67,6 +67,10 @@ export class AppActionManagerService {
     currentFormSubmitNextActionPath = '';
     currentFormAbandonActionPath = '';
     currentFormCancelButtonVisible = false;
+    private currentResponseEditable: boolean | null = null;
+    private currentResponseCanCreate: boolean | null = null;
+    private readonlyRenderOptionsSource: Record<string, unknown> | null = null;
+    private readonlyRenderOptions: Record<string, unknown> | null = null;
 
     confirmModalVisible = false;
     confirmModalConfig: ButtonModalConfig | null = null;
@@ -112,6 +116,10 @@ export class AppActionManagerService {
         this.currentFormOriginPath = '';
         this.currentFormAbandonActionPath = '';
         this.currentFormCancelButtonVisible = false;
+        this.currentResponseEditable = null;
+        this.currentResponseCanCreate = null;
+        this.readonlyRenderOptionsSource = null;
+        this.readonlyRenderOptions = null;
     }
 
     private beginPageContext(): number {
@@ -336,6 +344,7 @@ export class AppActionManagerService {
             this.renderer.formSchema = null;
             this.renderer.formSubmission = null;
             this.resetContextActionState();
+            this.applyResponsePermissions(obj.content);
             this.currentFormSubmitActionPath = '';
             this.currentFormSubmitNextActionPath = '';
             this.renderer.beginFormViewerLoad();
@@ -487,6 +496,7 @@ export class AppActionManagerService {
             this.renderer.formSchema = null;
             this.renderer.formSubmission = null;
             this.resetContextActionState();
+            this.applyResponsePermissions(recordObj.content);
             this.currentFormSubmitActionPath = '';
             this.currentFormSubmitNextActionPath = '';
             const submissionData = this.isRecord(submission.data) ? submission.data : null;
@@ -1024,8 +1034,24 @@ export class AppActionManagerService {
     }
 
     get canOpenRecord(): boolean { return Boolean(this.appManager.selectedModel && this.tableManager.selectedRecordName); }
-    get canOpenNewRecord(): boolean { return Boolean(this.resolveCurrentActionName()); }
+    get canOpenNewRecord(): boolean {
+        return this.responseAllowsWrite() && Boolean(this.resolveCurrentActionName());
+    }
     get showListActionButtonsFallback(): boolean { return !this.hasContextActionsPayload; }
+
+    get currentFormReadOnly(): boolean {
+        return this.appManager.viewMode === 'form' && !this.responseAllowsWrite();
+    }
+
+    get formViewerRenderOptions(): Record<string, unknown> {
+        const source = this.appManager.formioRenderOptions;
+        if (!this.currentFormReadOnly) return source;
+        if (this.readonlyRenderOptionsSource !== source || !this.readonlyRenderOptions) {
+            this.readonlyRenderOptionsSource = source;
+            this.readonlyRenderOptions = { ...source, readOnly: true };
+        }
+        return this.readonlyRenderOptions;
+    }
 
     get showFormViewerActionButtons(): boolean {
         return this.appManager.viewMode === 'form' && !this.builder.isFormEditorPage && !this.builder.formEditorDesignContext;
@@ -1041,16 +1067,18 @@ export class AppActionManagerService {
         // Prefer payload context buttons for form mode when present.
         const formCtx = this.formContextActions;
         if (formCtx.length) {
-            return this.finalizeFormContextActionButtons(formCtx);
+            return this.filterWriteButtonsWhenReadOnly(this.finalizeFormContextActionButtons(formCtx));
         }
         const responseButtons = this.ensureCopyFormActionButton(this.formResponseActionButtons);
-        return this.finalizeCurrentFormActionButtons(this.mergeFormResponseButtonsWithFallback(responseButtons));
+        return this.filterWriteButtonsWhenReadOnly(
+            this.finalizeCurrentFormActionButtons(this.mergeFormResponseButtonsWithFallback(responseButtons))
+        );
     }
 
     get listContextActions(): ContextAction[] {
         return this.contextActions.filter(a => {
             const modes = a.context_button_mode;
-            return modes.includes('list');
+            return modes.includes('list') && (this.responseAllowsWrite() || !this.isWriteContextAction(a));
         });
     }
 
@@ -2230,6 +2258,7 @@ export class AppActionManagerService {
         }
         this.renderer.formSubmission = null;
         this.resetContextActionState();
+        this.applyResponsePermissions(content);
         this.currentFormSubmitActionPath = '';
         this.currentFormSubmitNextActionPath = '';
         this.currentFormPageTitle = content.title;
@@ -2360,6 +2389,7 @@ export class AppActionManagerService {
     ): Promise<void> {
         this.renderer.beginFormViewerLoad();
         if (!this.isCurrentPageContext(pageContextId)) { this.renderer.cancelFormViewerLoad(); return; }
+        this.applyResponsePermissions(content);
         const data = this.isRecord(content.data) ? content.data : {};
         const model = this.resolveModelName(content, this.currentActionName) || this.tableManager.selectedModel || this.appManager.selectedModel;
         if (!model) { this.renderer.cancelFormViewerLoad(); throw new Error('Model non trovato nella risposta'); }
@@ -3009,6 +3039,52 @@ export class AppActionManagerService {
             url_action: action.url_action,
             builder: false
         });
+    }
+
+    private applyResponsePermissions(content: ResponseObjectData): void {
+        const raw = content as unknown as Record<string, unknown>;
+        this.currentResponseEditable = this.readOptionalBooleanFlag(raw, 'editable');
+        this.currentResponseCanCreate = this.readOptionalBooleanFlag(raw, 'can_create', 'canCreate');
+        this.readonlyRenderOptionsSource = null;
+        this.readonlyRenderOptions = null;
+    }
+
+    private readOptionalBooleanFlag(source: Record<string, unknown>, ...keys: string[]): boolean | null {
+        for (const key of keys) {
+            if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+            return this.toBooleanFlag(source[key]);
+        }
+        return null;
+    }
+
+    private responseAllowsWrite(): boolean {
+        return this.currentResponseEditable !== false && this.currentResponseCanCreate !== false;
+    }
+
+    private filterWriteButtonsWhenReadOnly(buttons: MenuButton[]): MenuButton[] {
+        if (this.responseAllowsWrite()) return buttons;
+        return buttons.filter(button => !this.isWriteFormButton(button));
+    }
+
+    private isWriteContextAction(action: ContextAction): boolean {
+        const text = [action.rec_name, action.label, action.action_type, action.url_action]
+            .map(value => String(value ?? '').toLowerCase())
+            .join(' ');
+        return this.matchesWriteActionText(text);
+    }
+
+    private isWriteFormButton(button: MenuButton): boolean {
+        const actionType = this.normalizeMenuType(button.action_type);
+        if (['save', 'copy', 'create', 'update', 'delete', 'remove', 'duplicate'].includes(actionType)) return true;
+        if (this.isPrimaryFormSubmitButton(button)) return true;
+        const text = [button.key, button.label, button.action_type, this.getButtonActionPath(button)]
+            .map(value => String(value ?? '').toLowerCase())
+            .join(' ');
+        return this.matchesWriteActionText(text);
+    }
+
+    private matchesWriteActionText(text: string): boolean {
+        return /(^|[^a-z0-9])(nuov[oa]|new|crea(?:te)?|salva|save|aggiorna|update|duplica|duplicate|copia|copy|elimina|delete|remove)([^a-z0-9]|$)/i.test(text);
     }
 
     private ensureCopyFormActionButton(buttons: MenuButton[]): MenuButton[] {

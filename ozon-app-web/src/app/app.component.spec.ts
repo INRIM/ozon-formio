@@ -15,7 +15,7 @@ const makeResponse = (content: Partial<ResponseObjectData>, fail = false, messag
     data: {},
     readable: true,
     editable: true,
-    can_create: false,
+    can_create: true,
     model: '',
     query: {},
     obfucated_fields: [],
@@ -1815,6 +1815,39 @@ describe('AppComponent', () => {
     }
   });
 
+  [
+    { name: 'editable is false', editable: false, can_create: true },
+    { name: 'can_create is false', editable: true, can_create: false }
+  ].forEach(permission => {
+    it(`should render the form readonly and hide write actions when ${permission.name}`, async () => {
+      const fixture = TestBed.createComponent(AppComponent);
+      const app = fixture.componentInstance as any;
+
+      await app.actionManager.applyActionResponse(makeResponse({
+        mode: 'form',
+        model: 'modulo_dati_persona',
+        rec_name: 'PERSONA-1',
+        editable: permission.editable,
+        can_create: permission.can_create,
+        fields: {
+          action_name: 'form_form_modulo_dati_persona',
+          submit_action: 'submit_modulo_dati_persona',
+          cancel_button: true
+        } as any,
+        data: { rec_name: 'PERSONA-1', nome: 'Mario' },
+        schema: {
+          display: 'form',
+          components: [{ type: 'textfield', key: 'nome', input: true }]
+        },
+        context_actions: []
+      }));
+
+      expect(app.actionManager.currentFormReadOnly).toBeTrue();
+      expect(app.formViewerRenderOptions).toEqual(jasmine.objectContaining({ readOnly: true }));
+      expect(app.currentFormActionButtons.map((button: any) => button.label)).toEqual(['Abbandona']);
+    });
+  });
+
   it('should prefer the origin action over abandon_action for Abbandona', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance as any;
@@ -3022,6 +3055,31 @@ describe('AppComponent', () => {
         url_action: '/action/new_customer'
       })
     ]);
+  });
+
+  [
+    { name: 'editable is false', editable: false, can_create: true },
+    { name: 'can_create is false', editable: true, can_create: false }
+  ].forEach(permission => {
+    it(`should hide Nuovo record from lists when ${permission.name}`, async () => {
+      const fixture = TestBed.createComponent(AppComponent);
+      const app = fixture.componentInstance as any;
+
+      await app.actionManager.applyActionResponse(makeResponse({
+        mode: 'list',
+        model: 'modulo_dati_persona',
+        editable: permission.editable,
+        can_create: permission.can_create,
+        fields: { action_name: 'list_modulo_dati_persona' },
+        columns: { rec_name: 'Record' },
+        data: [{ rec_name: 'PERSONA-1' }],
+        context_actions: []
+      }));
+      fixture.detectChanges();
+
+      expect(app.canOpenNewRecord).toBeFalse();
+      expect(String(fixture.nativeElement.textContent || '')).not.toContain('Nuovo record');
+    });
   });
 
   it('should hide list action buttons when context_button_mode is empty', async () => {

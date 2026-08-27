@@ -322,6 +322,7 @@ export class AppComponent implements OnInit, OnDestroy {
     get fastActionsSchema(): Record<string, unknown> | null { return this.tableManager.fastActionsSchema; }
     get tableRenderLoading(): boolean { return this.tableManager.tableRenderLoading; }
     get formioRenderOptions(): Record<string, unknown> { return this.appManager.formioRenderOptions; }
+    get formViewerRenderOptions(): Record<string, unknown> { return this.actionManager.formViewerRenderOptions; }
     get formViewerLoading(): boolean { return this.renderer.formViewerLoading; }
     get showFormViewerShell(): boolean {
         return this.isFormPage

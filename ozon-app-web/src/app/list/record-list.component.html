@@ -43,9 +43,8 @@
                             Apri record
                         </button>
                     </div>
-                    <div class="d-grid">
-                        <button class="btn btn-primary" type="button" [disabled]="!canOpenNewRecord"
-                                (click)="openNewRecord.emit()">
+                    <div class="d-grid" *ngIf="canOpenNewRecord">
+                        <button class="btn btn-primary" type="button" (click)="openNewRecord.emit()">
                             Nuovo record
                         </button>
                     </div>
