@@ -111,6 +111,9 @@ Environment:
   NODE_DOCKER_IMAGE   Node image tag (default: node:22-bookworm)
   OZON_ANGULAR_NODE_MODULES_VOLUME  Docker volume for Linux node_modules
   OZON_ANGULAR_NPM_CACHE_VOLUME     Docker volume for npm cache
+  OZON_FORMIO_COMPOSE_PROJECT       Unique Compose namespace for this instance
+                                    (default: ozon-formio-<OZON_ANGULAR_PORT>)
+  OZON_ANGULAR_PORT                 Published host port (default: 4200)
   BACKEND_DOCKER_NETWORK            External backend network name for compose
 EOF
     exit 1

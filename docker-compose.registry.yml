@@ -1,3 +1,5 @@
+name: "${OZON_FORMIO_COMPOSE_PROJECT:-ozon-formio-${OZON_ANGULAR_PORT:-4200}}"
+
 services:
   ozon-app-web:
     image: ${OZON_APP_WEB_IMAGE:-registry.w.ininrim.it/inrimsi/microservice/services-apps/ozon-formio:latest}

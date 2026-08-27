@@ -50,6 +50,8 @@ Il runtime viene letto da:
 - `localStorage` (`ozon-app-web.runtime`)
 
 Per layout/menu action router e compatibilita' remote select vedi:
+- `docs/FRONTEND_FEATURES.it.md` (documentazione funzionale italiana)
+- `docs/FRONTEND_FEATURES.en.md` (English functional documentation)
 - `docs/ACTION_ROUTER_LAYOUT_MENU.md`
 - `docs/REMOTE_SELECT_REQUEST.md`
 

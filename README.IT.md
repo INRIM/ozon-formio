@@ -21,6 +21,18 @@ Compilazione Angular consigliata via Docker (Node LTS):
 
 `start` usa `docker-compose.angular.yml`, esegue la build dell'immagine frontend e serve gli asset statici con `nginx`. Non usa `ng serve`. Passa automaticamente `.env` e collega il frontend alla rete esterna `${BACKEND_DOCKER_NETWORK}` (default `backend_default`).
 
+Ogni istanza Compose ha un namespace isolato. Per impostazione predefinita viene derivato da
+`OZON_ANGULAR_PORT` (per esempio `ozon-formio-4200`). Per avviare più istanze, assegna una porta
+diversa a ciascuna oppure configura un nome univoco esplicito:
+
+```dotenv
+OZON_FORMIO_COMPOSE_PROJECT=ozon-formio-cliente-a
+OZON_ANGULAR_PORT=4201
+```
+
+La stessa regola vale per `docker-compose.registry.yml`. Non va aggiunto un `container_name`
+statico: Compose genera nomi container isolati usando il namespace del progetto.
+
 ## Setup
 
 ```bash
@@ -31,6 +43,8 @@ Config `.env`:
 - `backendurl`
 - `BACKENDURL` (consigliato per healthcheck compose Angular)
 - `BACKEND_DOCKER_NETWORK` (rete esterna backend, es. `ozn-network`)
+- `OZON_FORMIO_COMPOSE_PROJECT` (namespace Compose univoco opzionale per istanze parallele)
+- `OZON_ANGULAR_PORT` (porta host, usata anche dal namespace Compose predefinito)
 
 L'auth è cookie-based (`ozon_session` httponly + `ozon_csrf`); nessun token
 gestito lato client. Vedi `docAnalisi/SECURITY_KEYCLOAK_TOKEN_BRIEF_FRONTEND.it.md`.
