@@ -263,6 +263,13 @@ export class AppFormioRendererService {
             component['disabled'] = true;
             component['readOnly'] = true;
             component['defaultValue'] = '';
+            // An obfuscated field always renders empty, so a required flag would keep the form
+            // permanently invalid and block saves/actions the user is otherwise allowed to run.
+            // Drop the requirement client-side: the server still enforces its own rules.
+            component['required'] = false;
+            const validate = this.asRecord(component['validate']);
+            if (validate) validate['required'] = false;
+            else component['validate'] = { required: false };
             delete component['customDefaultValue'];
             delete component['calculateValue'];
             return false;

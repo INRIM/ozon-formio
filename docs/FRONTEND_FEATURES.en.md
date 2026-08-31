@@ -121,7 +121,7 @@ Relevant fields:
 | `context_actions` | Context actions defined by the backend. |
 | `editable` and `can_create` | Permissions controlling writes and read-only mode. |
 | `editable_fields` | Informational list of editable fields returned by the backend. |
-| `obfucated_fields` | Fields rendered empty and read-only; received values are also removed from the frontend submission. Nested Form.io components are supported. |
+| `obfucated_fields` | Fields rendered empty and read-only; received values are also removed from the frontend submission. The required flag is cleared (`required` and `validate.required`) so an obfuscated field never blocks saves or actions. Nested Form.io components are supported. |
 
 ## Lists
 

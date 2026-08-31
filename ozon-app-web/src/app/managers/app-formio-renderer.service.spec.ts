@@ -62,9 +62,10 @@ describe('AppFormioRendererService', () => {
               input: true,
               defaultValue: 'schema secret',
               customDefaultValue: 'value = "computed secret"',
-              calculateValue: 'value = "calculated secret"'
+              calculateValue: 'value = "calculated secret"',
+              validate: { required: true, maxLength: 20 }
             },
-            { type: 'select', key: 'field_2', input: true }
+            { type: 'select', key: 'field_2', input: true, required: true }
           ]
         }
       ]
@@ -90,6 +91,11 @@ describe('AppFormioRendererService', () => {
     expect(field1).toEqual(jasmine.objectContaining({ disabled: true, readOnly: true, defaultValue: '' }));
     expect(field1['customDefaultValue']).toBeUndefined();
     expect(field1['calculateValue']).toBeUndefined();
+    // Required must be dropped: an obfuscated field renders empty and would block every save.
+    expect(field1['required']).toBeFalse();
+    expect(field1['validate']).toEqual({ required: false, maxLength: 20 });
+    expect(field2['required']).toBeFalse();
+    expect((field2['validate'] as Record<string, unknown>)['required']).toBeFalse();
     expect(field2).toEqual(jasmine.objectContaining({ disabled: true, readOnly: true, defaultValue: '' }));
     expect(String(field2['customClass'] ?? '')).toContain('ozon-select-readonly');
     expect((schema.components[0].components[0] as Record<string, unknown>)['disabled']).toBeUndefined();

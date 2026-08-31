@@ -121,7 +121,7 @@ Campi rilevanti:
 | `context_actions` | Azioni contestuali definite dal backend. |
 | `editable` e `can_create` | Permessi che governano scrittura e readonly. |
 | `editable_fields` | Elenco informativo dei campi modificabili restituito dal backend. |
-| `obfucated_fields` | Campi da mostrare vuoti e readonly; il valore ricevuto viene rimosso anche dalla submission frontend. Sono supportati componenti Form.io annidati. |
+| `obfucated_fields` | Campi da mostrare vuoti e readonly; il valore ricevuto viene rimosso anche dalla submission frontend. Il flag obbligatorio viene azzerato (`required` e `validate.required`) cosi un campo offuscato non blocca salvataggi e azioni. Sono supportati componenti Form.io annidati. |
 
 ## Liste
 
